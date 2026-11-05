@@ -24,6 +24,7 @@
 #include "nvmtl_log_failure.h"
 #include "nvmtl_glcpu4.h"
 #include "nvmtl_env_knobs.h"
+#include "nvmtl_claims.h"
 #include <sys/sysctl.h>
 #ifndef NVMTL_RELEASE
 #define NVMTL_RELEASE 0
@@ -936,6 +937,12 @@ static void nvmtl_install_hw_resource_pools(id dev)
 }
 - (instancetype)initWithAcceleratorPort:(mach_port_t)port {
     nvlog("-[NVMTLDevice initWithAcceleratorPort:%u] in %s", port, getprogname());
+    {   /* the 2.x driver is built for macOS 15 and 26 only: on any later macOS, or when the version cannot be
+           read, it creates no device, before touching the accelerator */
+        char v[32] = {0}; size_t n = sizeof v - 1;
+        int major = sysctlbyname("kern.osproductversion", v, &n, NULL, 0) == 0 ? atoi(v) : 0;
+        if (major < 15 || major > 26) { nvlog("  macOS %s is not supported by this driver: no device", v[0] ? v : "unknown"); return nil; }
+    }
     self = [super initWithAcceleratorPort:port];
     if (!self) { nvlog("  super initWithAcceleratorPort: returned nil"); return nil; }
     nvmtl_device_model_from(port);
@@ -2183,6 +2190,7 @@ static void nvmtl_log_compute_descriptor(MTLComputePipelineDescriptor *d) {
     id<MTLComputePipelineState> ps = [self newComputePipelineStateWithFunction:kfn error:err];
     if ([(id)ps isKindOfClass:[NVMTLComputePipelineState class]]) { ((NVMTLComputePipelineState *)ps)->_icb = d.supportIndirectCommandBuffers;
         ((NVMTLComputePipelineState *)ps)->_askT = d.maxTotalThreadsPerThreadgroup;
+        ((NVMTLComputePipelineState *)ps)->_reqTG = nvmtl_desc_size(d, @selector(requiredThreadsPerThreadgroup));
         ((NVMTLComputePipelineState *)ps)->_label = [d.label copy]; }
     if (r) *r = ps ? (MTLComputePipelineReflection *)nvmtl_compute_reflection(kfn) : nil;
     return ps;
@@ -2215,7 +2223,10 @@ static void nvmtl_log_compute_descriptor(MTLComputePipelineDescriptor *d) {
 - (id<MTLDynamicLibrary>)newDynamicLibrary:(id<MTLLibrary>)lib error:(NSError **)err { return nvmtl_new_dylib(lib, err); }
 - (id<MTLDynamicLibrary>)newDynamicLibraryWithURL:(NSURL *)url error:(NSError **)err { return nvmtl_new_dylib_url(url, err); }
 - (id<MTLBinaryArchive>)newBinaryArchiveWithDescriptor:(MTLBinaryArchiveDescriptor *)d error:(NSError **)err { return nvmtl_new_binary_archive(d, err); }
-- (BOOL)supportsShaderBarycentricCoordinates { return YES; }
+- (BOOL)supportsShaderBarycentricCoordinates {
+    struct nvmtl_caps c = { nvmtl_vk_barycentrics_available(), nvmtl_vk_rt_available() };
+    return nvmtl_claim_barycentrics(&c) ? YES : NO;
+}
 - (BOOL)areBarycentricCoordsSupported { return YES; }
 - (BOOL)supportsPrimitiveMotionBlur { return NO; }
 - (NSMutableDictionary *)copyIOSurfaceSharedTextureProperties:(MTLTextureDescriptor *)d {

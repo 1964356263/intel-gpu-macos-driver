@@ -90,6 +90,7 @@ typedef struct { void *rp; void *pipe; void *layout; int has_depth; uint32_t dfm
     void *ubo_src;         /* what the pipeline was made from (nvmtl_ubo_src), to build ubo_twin when a draw needs it */
     void *ubo_twin;        /* the same pipeline without the pass, made on the first draw whose binding breaks a promise */
     uint32_t ubo_twin_failed;
+    uint32_t db_dyn;   /* the depth bounds test and its range are dynamic state of this pipeline (depth attachment + depthBounds feature) */
 } nvk_pipeline;
 void nvmtl_vk_pipeline_destroy(nvk_pipeline *p);
 typedef struct { void *pool; nvk_buffer stage; } nvk_queue;
@@ -165,6 +166,9 @@ typedef struct { void *cb; void *fb; void *pool; void *dset[2]; void *depth_view
                  uint64_t hz_lo[32], hz_hi[32]; uint32_t hz_wr, hz_n; uint8_t hz_unknown;
                  void *asq_pages; uint32_t asq_count;   /* acceleration structure compacted-size queries (nvmtl_vk_cmd_write_compacted_size) */
                  uint8_t life_live;   /* nm271 grace: counted in g_cb_live from nvmtl_vk_cmd_begin to nvmtl_cmd_retire */
+                 /* the encoder's depth bounds (setDepthTestMinBound:maxBound:), re-emitted when a pipeline that has them as
+                    dynamic state is bound, since binding a pipeline without them leaves that state undefined */
+                 uint8_t db_on; float db_lo, db_hi;
                } nvk_cmdbuf;
 #define NVMTL_VBC_NOSTRIDE (~0ull)
 int  nvmtl_vk_init(void);
@@ -223,6 +227,7 @@ uint64_t nvmtl_vk_rt_limit(int which);
    VkTransformMatrixKHR (3 rows of 4) at dst+dst_off, as copies in c's order (the build reads it when it runs) */
 int  nvmtl_vk_cmd_transform_matrix(nvk_cmdbuf *c, const nvk_buffer *src, uint64_t src_off, int rowmajor, nvk_buffer *dst, uint64_t dst_off);
 int  nvmtl_vk_rt_available(void);
+int  nvmtl_vk_barycentrics_available(void);   // VK_KHR_fragment_shader_barycentric present and enabled-capable
 uint32_t nvmtl_vk_cs_simd(void);
 /* compute2: the serial-dispatch barrier before a dispatch of p (NVMTL_CS_BAR: narrow sync2 masks for p's reads), and
    NVMTL_CS_HAZARD: 1 = a barrier is needed before p's dispatch (forced: the caller needs one anyway), 0 = p cannot reach
@@ -312,6 +317,7 @@ void nvmtl_vk_cmd_set_provoking_last(nvk_cmdbuf *c, int last);
 void nvmtl_vk_cmd_set_blend_color(nvk_cmdbuf *c, const float rgba[4]);
 void nvmtl_vk_cmd_set_stencil_ref(nvk_cmdbuf *c, uint32_t front, uint32_t back);
 void nvmtl_vk_cmd_set_depth_bias(nvk_cmdbuf *c, float constant, float slope, float clamp);
+int  nvmtl_vk_cmd_set_depth_bounds(nvk_cmdbuf *c, int on, float lo, float hi);
 void nvmtl_vk_cmd_set_line_width(nvk_cmdbuf *c, float w);
 int  nvmtl_vk_fill_buffer(nvk_queue *q, nvk_buffer *b, size_t offset, size_t size, uint8_t value);
 int  nvmtl_vk_bind_buffer(nvk_cmdbuf *c, uint32_t set, uint32_t index, nvk_buffer *b, size_t offset);
