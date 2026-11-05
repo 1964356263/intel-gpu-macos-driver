@@ -1,0 +1,5 @@
+copy     EFI/OC/Kexts/IntelXe.kext (version 9.9.9)
+config   Kernel > Add, item 15 (IntelXe.kext): Enabled false -> true
+copy     EFI/OC/ACPI/SSDT-ARCOFF.aml (names \_SB.PC00.PEG1.PEGP, this card's port)
+config   ACPI > Add, item 5 (SSDT-ARCOFF.aml): Enabled false -> true
+config   Misc > Security > ExposeSensitiveData: 6 -> 7 (OpenCore then records which EFI it booted from, for this script)

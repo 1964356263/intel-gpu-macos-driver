@@ -11,11 +11,12 @@
 # written next to this script (release/install.sh, release/README-INSTALL.md), for reading in the repository.
 # Writes to OUT_DIR:
 #   intel-gpu-macos-driver-VERSION-tahoe.zip, -sequoia.zip   (unpack on macOS: ditto -x -k)
-#   intel-gpu-macos-driver-VERSION-efi.zip                    (the OpenCore pieces, the same in both; any system)
+#   intel-gpu-macos-driver-VERSION-efi.zip                    (the OpenCore pieces, the same in both; any system;
+#                                                              with windows/IntelXe-EFI.ps1 and its README)
 #   intel-gpu-macos-driver-VERSION.sha256
 # With ZINK_DIR set in the environment also intel-gpu-macos-driver-VERSION-zink-gl.zip (see below).
 set -euo pipefail
-[ $# = 4 ] || { sed -n '3,16p' "$0"; exit 2; }
+[ $# = 4 ] || { sed -n '3,17p' "$0"; exit 2; }
 VER=$1 T=$2 S=$3 OUT=$4
 R=$(cd "$(dirname "$0")" && pwd)
 N=intel-gpu-macos-driver-$VER
@@ -72,12 +73,16 @@ done
 e=$W/$N-efi
 mkdir -p "$e"
 ditto "$T/EFI" "$e/EFI"
+cp "$R/../windows/IntelXe-EFI.ps1" "$e/IntelXe-EFI.ps1"   # stages 2 and 4 on Windows, in the EFI folder the user picks
+cp "$R/../windows/README.md" "$e/README-Windows.md"
 cat > "$e/README.txt" <<EOF
 intel-gpu-macos-driver $VER: the OpenCore pieces (the same for macOS 26 Tahoe and macOS 15 Sequoia)
 
 EFI/OC/Kexts/IntelXe.kext       -> EFI/OC/Kexts/, config.plist Kernel > Add
 EFI/OC/ACPI/SSDT-ARCOFF.aml     -> EFI/OC/ACPI/, config.plist ACPI > Add (check the ACPI path first)
 EFI/OC/ACPI/SSDT-ARCOFF.dsl     its source, to adapt with iasl when your board's path differs
+IntelXe-EFI.ps1                 on Windows: makes stages 2 and 4 in the EFI folder you choose, with a
+                                backup and an undo (right-click > Run with PowerShell; README-Windows.md)
 
 Add them in stage 4 of README-INSTALL.md (in the macOS package, and at
 https://github.com/yusufklncc/intel-gpu-macos-driver/blob/v$VER/release/README-INSTALL.md), after

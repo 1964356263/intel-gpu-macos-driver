@@ -1,0 +1,6 @@
+config   Booter > Quirks > ResizeAppleGpuBars: -1 -> 10 (a 1 GB window on the B580's VRAM)
+config   Kernel > Quirks > DisableIoMapper: false -> true
+config   UEFI > Output > ReconnectGraphicsOnConnect: true -> false (with true, OpenCore's RELEASE build boots without a console and watchdogd panics)
+config   NVRAM > Add > 7C436110-AB2A-4BBB-A880-FE41995C9F82 > csr-active-config: 0x0 -> 0x803 (SIP lets unsigned kexts load from the Auxiliary Kernel Collection)
+config   NVRAM > Add > 7C436110-AB2A-4BBB-A880-FE41995C9F82 > boot-args: add amfi_get_out_of_my_way=0x1 intelxe_surfvram=2 ('keepsyms=1 debug=0x100 darkwake=0 -btlfxboardid revcpu=1 ctrsmt=off' -> 'keepsyms=1 debug=0x100 darkwake=0 -btlfxboardid revcpu=1 ctrsmt=off amfi_get_out_of_my_way=0x1 intelxe_surfvram=2')
+config   NVRAM > Delete > 7C436110-AB2A-4BBB-A880-FE41995C9F82: add boot-args (so that the new value replaces the old one at boot)

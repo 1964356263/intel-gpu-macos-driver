@@ -1,0 +1,5 @@
+copy     EFI/OC/Kexts/IntelXe.kext (version 9.9.9)
+config   Kernel > Add: add IntelXe.kext (ExecutablePath Contents/MacOS/IntelXe, PlistPath Contents/Info.plist, Enabled)
+copy     EFI/OC/ACPI/SSDT-ARCOFF.aml (names \_SB.PC00.PEG1.PEGP, this card's port)
+config   ACPI > Add: add SSDT-ARCOFF.aml (Enabled)
+config   Misc > Security > ExposeSensitiveData: 6 -> 7 (OpenCore then records which EFI it booted from, for this script)
