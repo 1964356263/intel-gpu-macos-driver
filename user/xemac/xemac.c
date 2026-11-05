@@ -17,7 +17,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#include <CoreFoundation/CFNumber.h>
+#include <CoreFoundation/CoreFoundation.h>
 #include <IOKit/IOKitLib.h>
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
@@ -26,6 +26,8 @@
 #include "drm-uapi/xe_drm.h"
 #include "../uapi/intelxe_drm.h"   // IntelXe.kext extensions (surface fences)
 #include "xemac.h"
+
+static bool window_background(void);
 
 #define MAX_FD 1024
 
@@ -1304,6 +1306,48 @@ int64_t xemac_obj_size(int fd, int obj_fd)
 	return (int64_t)info.size;
 }
 
+// ---- the CPU-visible VRAM window ---------------------------------------------------------------------------------
+// The BAR window the CPU reaches VRAM through is 1 GB on macOS (OpenCore's ResizeAppleGpuBars; macOS addresses no larger
+// BAR) and every Vulkan process shares it. A BO there that the CPU has mapped cannot be moved out later (an IOKit user
+// mapping of device memory cannot be redirected), so whoever came first kept it: at login twenty-odd agents and
+// extensions took most of it, and a game started later had its mapped buffers spilled to system memory and ran at half
+// speed (Minecraft + Sodium + BSL, 5 Nov). So the processes that do little GPU work put their CPU-visible BOs in system
+// memory from the start, as the kernel does anyway once the window is full (the placement allows it): agents, menu-bar
+// and background-only apps (LSUIElement, LSBackgroundOnly), app extensions (.appex), and launchd jobs that are no bundle.
+// Applications, their XPC services (WebKit's GPU process), WindowServer and anything another process started (a game's
+// java) keep the window. INTELXE_WINDOW=normal|background decides instead.
+static bool window_background(void)
+{
+	static int cls = -1;   // 0 normal, 1 background
+	if (cls >= 0) return cls == 1;
+	int bg = 0;
+	const char *e = getenv("INTELXE_WINDOW");
+	if (e && !strcmp(e, "background")) bg = 1;
+	else if (e && !strcmp(e, "normal")) bg = 0;
+	else if (!strcmp(getprogname(), "WindowServer")) bg = 0;
+	else {
+		char path[1024] = "";
+		CFBundleRef b = CFBundleGetMainBundle();
+		CFURLRef u = b ? CFBundleCopyBundleURL(b) : NULL;
+		if (u) { CFURLGetFileSystemRepresentation(u, true, (UInt8 *)path, sizeof path); CFRelease(u); }
+		const size_t n = strlen(path);
+		const bool app = n > 4 && !strcmp(path + n - 4, ".app"), appex = n > 6 && !strcmp(path + n - 6, ".appex"),
+		           xpc = n > 4 && !strcmp(path + n - 4, ".xpc");
+		if (app) {
+			for (int k = 0; k < 2 && !bg; k++) {
+				CFTypeRef v = CFBundleGetValueForInfoDictionaryKey(b, k ? CFSTR("LSBackgroundOnly") : CFSTR("LSUIElement"));
+				if (v && CFGetTypeID(v) == CFBooleanGetTypeID()) bg = CFBooleanGetValue((CFBooleanRef)v);
+				else if (v && CFGetTypeID(v) == CFStringGetTypeID()) bg = CFStringGetIntValue((CFStringRef)v) != 0;
+			}
+		} else if (appex) bg = 1;
+		else if (!xpc && getppid() == 1) bg = 1;   // a launchd job, not a bundle
+	}
+	cls = bg;
+	if (tracing())
+		fprintf(stderr, "xemac: %s: CPU-visible BOs in %s\n", getprogname(), bg ? "system memory (background process)" : "the VRAM window");
+	return bg;
+}
+
 int xemac_ioctl(int fd, unsigned long request, void *arg)
 {
 	struct file *file = file_of(fd);
@@ -1374,6 +1418,19 @@ int xemac_ioctl(int fd, unsigned long request, void *arg)
 	if (deadline)
 		saved_deadline = *deadline, *deadline = monotonic_to_uptime(*deadline);
 
+	// a background process's CPU-visible BO that may live in system memory goes there (window_background)
+	struct drm_xe_gem_create *gc = NULL;
+	uint32_t gc_placement = 0, gc_flags = 0;
+	if (request == DRM_IOCTL_XE_GEM_CREATE && !file->fake) {
+		struct drm_xe_gem_create *g = arg;
+		if ((g->flags & DRM_XE_GEM_CREATE_FLAG_NEEDS_VISIBLE_VRAM) && (g->placement & 1u) && (g->placement & ~1u) &&
+		    !(g->flags & DRM_XE_GEM_CREATE_FLAG_SCANOUT) && window_background()) {
+			gc = g; gc_placement = g->placement; gc_flags = g->flags;
+			g->placement = 1u;   // instance 0: system memory
+			g->flags &= ~(uint32_t)DRM_XE_GEM_CREATE_FLAG_NEEDS_VISIBLE_VRAM;
+		}
+	}
+
 	int err;
 	if (file->fake) {
 		pthread_mutex_lock(&fake_lock);
@@ -1386,6 +1443,7 @@ int xemac_ioctl(int fd, unsigned long request, void *arg)
 		err = kr != KERN_SUCCESS ? EIO : (int)out[0];
 	}
 
+	if (gc) gc->placement = gc_placement, gc->flags = gc_flags;
 	if (timeout)
 		*timeout = saved_timeout;
 	if (deadline)
