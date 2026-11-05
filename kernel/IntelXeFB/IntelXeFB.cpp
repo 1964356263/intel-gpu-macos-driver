@@ -17,6 +17,7 @@
 // display 12+ layout, Linux i915/display), same 60 Hz-style VBL timer and power answers. Lives in the AuxKC because it
 // links IOGraphicsFamily. SSDT-ARCOFF stays: it keeps IONDRVFramebuffer off the card; this matches by PCI ID.
 
+#include <IOKit/IONVRAM.h>
 #include <IOKit/IOLib.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <IOKit/IOCommandGate.h>
@@ -66,18 +67,16 @@ static void nvramWrite(const char *key, const char *val)
 	if (val) {
 		if (OSString *v = OSString::withCString(val)) { opt->setProperty(key, v); v->release(); }
 	} else if (OSString *v = OSString::withCString("ok")) {
-		// "ok", never a delete: removeProperty() reads back as gone but does not reach flash (5 Nov: a guard cleared at
-		// 20:21:47 was read as accel1 after a power cut at 20:23). Every reader treats "ok" as absent.
+		// "ok", never a delete (removeProperty() is checked by a read-back only): every reader treats "ok" as absent
 		opt->setProperty(key, v);
 		v->release();
 	}
-	// To flash now: without it the value lives in memory until a clean shutdown, and after a power cut the next boot reads
-	// a stale "accel" from long ago. XNU acts on this key only with an OSString value (a boolean is refused without a
-	// word), and throttles the plain SyncNow key to once in 15 minutes; these writes are a few per boot.
-	if (OSString *v = OSString::withCString("IONVRAM-FORCESYNCNOW-PROPERTY")) {
-		if (!opt->setProperty("IONVRAM-FORCESYNCNOW-PROPERTY", v)) IOLog("IntelXeFB: guard: NVRAM sync refused after %s\n", key);
-		v->release();
-	}
+	// To flash now. The IONVRAM-(FORCE)SYNCNOW-PROPERTY keys are handled only by XNU's own IODTNVRAM: x86 macOS has
+	// AppleEFINVRAM, which stored them as two ordinary variables and wrote nothing. Without a sync, a value written after
+	// boot reached flash only at a clean shutdown, and a power cut brought back the guard's "accel" of that boot (5 Nov).
+	// sync() is what Lilu's NVStorage calls.
+	if (IODTNVRAM *nv = OSDynamicCast(IODTNVRAM, opt)) nv->sync();
+	else IOLog("IntelXeFB: guard: /options is not an IODTNVRAM: %s is not synced\n", key);
 	opt->release();
 }
 static bool bootArg(const char *name) { char d[8]; return intelxeBootArg("IntelXeFB", name, d, sizeof d); }
