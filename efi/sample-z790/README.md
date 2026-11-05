@@ -67,6 +67,8 @@ for anything that differs on your machine.
    - `CpuTopologyRebuild.kext`, `AirportItlwm.kext` and `HybridPM.kext` disabled, and `ctrsmt=off`, `itlwm_he=1`
      removed from the boot-args. So the install needs Ethernet (AppleIGC here);
    - `csr-active-config` = `00000000` and no `amfi_get_out_of_my_way=0x1`, `intelxe_surfvram=2` (stage 2 adds them);
+   - `ResizeAppleGpuBars = 10` and `ReconnectGraphicsOnConnect = false` were the same in the installer EFI (stage 1
+     of the guide asks for both);
    - `-v` added to the boot-args, to see where it stops. Remove it afterwards: CpuTopologyRebuild warns of random boot
      failures with verbose boot, and the test machine saw that too.
 

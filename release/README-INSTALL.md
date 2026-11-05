@@ -72,8 +72,10 @@ fresh install.
    [SSDTTime](https://github.com/corpnewt/SSDTTime) (the SSDTs from your board's DSDT; Windows and Linux can dump the
    DSDT), [USBToolBox](https://github.com/USBToolBox/tool) (USB map, on Windows) and
    [GenSMBIOS](https://github.com/corpnewt/GenSMBIOS) (serial numbers). Nothing GPU-specific for the B580 yet: no
-   `DeviceProperties` and no WhateverGreen settings for it. Keep `UEFI > Output > ReconnectGraphicsOnConnect = false`
-   (Dortania's sample has it so); see stage 2.
+   `DeviceProperties` and no WhateverGreen settings for it. Two settings for the B580 already now: keep
+   `UEFI > Output > ReconnectGraphicsOnConnect = false` (Dortania's sample has it so), and set
+   `Booter > Quirks > ResizeAppleGpuBars = 10` (Dortania's default is `-1`). The test machine installed macOS with
+   both; with `-1` and Resizable BAR on, the install on the B580 was not tried. Stage 2 explains both.
 4. Install macOS and finish the setup assistant. The screen runs on the B580's firmware output (UEFI GOP) through
    macOS's generic display driver: one resolution, no acceleration, everything slow, and sleep does not work yet.
    That is expected.

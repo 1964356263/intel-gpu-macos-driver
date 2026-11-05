@@ -81,8 +81,10 @@ Takıldığınız yeri bildirirseniz rehberi düzeltiriz.
    SSDT'ler; DSDT'yi Windows ve Linux'ta alabilir), [USBToolBox](https://github.com/USBToolBox/tool) (USB haritası, Windows'ta)
    ve [GenSMBIOS](https://github.com/corpnewt/GenSMBIOS) (seri numaraları).
 
-   B580'e özel bir şey eklemeyin: `DeviceProperties` ve WhateverGreen ayarı gerekmiyor. `UEFI > Output >
-   ReconnectGraphicsOnConnect` ayarını `false` bırakın (nedeni 2. aşamada).
+   B580'e özel bir şey eklemeyin: `DeviceProperties` ve WhateverGreen ayarı gerekmiyor. B580 için iki ayar şimdiden:
+   `UEFI > Output > ReconnectGraphicsOnConnect` ayarını `false` bırakın (Dortania'nın örneğinde öyle) ve
+   `Booter > Quirks > ResizeAppleGpuBars = 10` yapın (Dortania'da varsayılan `-1`). Test makinesi macOS'u ikisiyle
+   kurdu; `-1` ve açık Resizable BAR ile B580'de kurulum denenmedi. İkisinin nedeni 2. aşamada.
 4. macOS'u kurup ilk açılış sihirbazını bitirin. Ekran, macOS'un genel ekran sürücüsüyle B580'in UEFI çıktısında (GOP) çalışır:
    tek çözünürlük, hızlandırma yok, her şey yavaş, uyku da henüz çalışmaz. Bu aşamada bu normal.
 
