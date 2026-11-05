@@ -965,14 +965,6 @@ public:
                 return false;
             }
             ALOG("NMXGPU drives %04x:%04x - starting", pci->configRead16(0x00), pci->configRead16(0x02));
-            // IntelXeFB's boot guard holds acceleration: not started at all. Even unregistered, IOGraphicsAccelerator2::
-            // start ties the framebuffer to this accelerator (IOAccelTypes on IntelXeFramebuffer), WindowServer then looks
-            // for a display pipe that is never armed and marks the display offline: the Apple logo stayed (5 Nov).
-            char heldWhy[160];
-            if (pci->configRead16(0x00) == 0x8086 && nmxGuardHolds(heldWhy, sizeof heldWhy)) {
-                ALOG("boot guard holds acceleration (%s): NOT starting; WindowServer runs on IntelXeFB alone", heldWhy);
-                return false;
-            }
         }
 #else
         uint32_t gate = 0;
