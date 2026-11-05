@@ -383,6 +383,7 @@ struct XeQueue {
 	uint32_t flushedGen;        // vm->ptGen this queue's last TLB-invalidating job saw (xe_exec_queue tlb_flush_seqno)
 	uint32_t ringPos[256];
 	XeJob *jobHead, *jobTail;
+	uint32_t jobCount;          // jobs in jobHead's FIFO (xe's job_cnt counts the running ones too)
 	XeQueue *schedNext;
 	bool onSched, closed;
 	volatile bool banned;
@@ -2574,6 +2575,7 @@ static void queueDropJobs(XeQueue *q) {
 		jobFree(j);
 	}
 	q->jobHead = q->jobTail = nullptr;
+	q->jobCount = 0;
 }
 
 // xe_guc_exec_queue_reset_trigger_cleanup: the queue is banned, its waiting jobs are dropped and its seqno jumps to
@@ -2717,6 +2719,7 @@ static void workRun(thread_call_param_t, thread_call_param_t) {
 			if (keep || !queueEmit(q, j->batch, j->seqno)) break;
 			q->jobHead = j->next;
 			if (!q->jobHead) q->jobTail = nullptr;
+			q->jobCount--;
 			jobFree(j);
 			gStats.jobsDeferred++;
 		}
@@ -4151,6 +4154,7 @@ template <typename T> static int answer(drm_xe_device_query *q, const T *data, u
 }
 
 static int deviceQuery(drm_xe_device_query *q) {
+	if (q->extensions || q->reserved[0] || q->reserved[1]) return EINVAL;   // xe_query_ioctl
 	switch (q->query) {
 		case DRM_XE_DEVICE_QUERY_ENGINES: {
 			struct { drm_xe_query_engines h; drm_xe_engine e[12]; } r = {};
@@ -4315,13 +4319,34 @@ struct SyncList {
 	drm_xe_sync *s {local};
 	uint32_t n {0};
 	int load(uint64_t uaddr, uint32_t num) {
-		if (num > 1024) return EINVAL;
+		if (num > DRM_XE_MAX_SYNCS) return EINVAL;
 		if (num > 16 && !(s = static_cast<drm_xe_sync *>(IOMalloc(num * sizeof(drm_xe_sync))))) {
 			s = local;
 			return ENOMEM;
 		}
 		n = num;
-		return num ? getUser(uaddr, s, num * sizeof(drm_xe_sync)) : 0;
+		if (!num) return 0;
+		if (int err = getUser(uaddr, s, num * sizeof(drm_xe_sync))) return err;
+		// xe_sync_entry_parse, for every entry before anything is done: only the SIGNAL flag, reserved zero, a 32-bit
+		// syncobj handle (it shares a union with addr), a nonzero timeline point, and a known type. WAS: none of these;
+		// an unknown signal type was taken as a binary syncobj.
+		for (uint32_t i = 0; i < num; i++) {
+			const drm_xe_sync &e = s[i];
+			if ((e.flags & ~(uint32_t)DRM_XE_SYNC_FLAG_SIGNAL) || e.reserved[0] || e.reserved[1]) return EINVAL;
+			switch (e.type) {
+				case DRM_XE_SYNC_TYPE_TIMELINE_SYNCOBJ:
+					if (!e.timeline_value) return EINVAL;
+					[[fallthrough]];
+				case DRM_XE_SYNC_TYPE_SYNCOBJ:
+					if (e.addr >> 32) return EINVAL;
+					break;
+				case DRM_XE_SYNC_TYPE_USER_FENCE:
+					break;   // refused where it is used (not supported here)
+				default:
+					return EINVAL;
+			}
+		}
+		return 0;
 	}
 	~SyncList() {
 		if (s != local) IOFree(s, n * sizeof(drm_xe_sync));
@@ -4440,6 +4465,8 @@ static int signalSyncsOut(XeClientState *c, const SyncList &sl, XeFence f) {
 // xe_exec_ioctl -> drm_sched: the job takes the queue's next seqno now (its out-fences exist when the ioctl returns) and
 // goes to the ring at once if nothing is ahead of it and its in-fences have signaled; otherwise it waits in the FIFO
 // for the submit worker. An exec without batch: its fence is the queue's last one, or, with in-fences, a ring-only job.
+static constexpr uint32_t kMaxJobsPerQueue = 1000;   // XE_MAX_JOB_COUNT_PER_EXEC_QUEUE
+
 static int queueExec(XeQueue *q, uint64_t batch, const DepList &deps, XeFence *out) {
 	XeJob *j = nullptr;
 	if (batch || deps.n) {
@@ -4457,6 +4484,8 @@ static int queueExec(XeQueue *q, uint64_t batch, const DepList &deps, XeFence *o
 	IOLockLock(gSchedLock);
 	if (q->banned || q->closed || gWedged) {
 		err = ECANCELED;
+	} else if (j && q->jobCount >= kMaxJobsPerQueue) {
+		err = EAGAIN;   // xe_exec_ioctl: job_cnt >= XE_MAX_JOB_COUNT_PER_EXEC_QUEUE (WAS unbounded: kernel memory per job)
 	} else if (!j) {
 		*out = {0, q->slot, q->gen, q->seqno};
 	} else if (!q->jobHead && !deps.n && !q->tdr && !gResetting && !gSuspended && queueEmit(q, batch, q->seqno + 1)) {
@@ -4464,6 +4493,7 @@ static int queueExec(XeQueue *q, uint64_t batch, const DepList &deps, XeFence *o
 		gStats.jobsDirect++;
 	} else {
 		j->seqno = ++q->seqno;
+		q->jobCount++;
 		if (q->jobTail) q->jobTail->next = j;
 		else q->jobHead = j;
 		q->jobTail = j;
@@ -4535,6 +4565,9 @@ static int patCheck(const drm_xe_vm_bind_op &op) {
 	return 0;
 }
 
+// VM_BIND ops one call may carry (64 bytes each: 4 MB). xe has no fixed limit, only what kvmalloc gives (ENOBUFS).
+static constexpr uint32_t kMaxBindOps = 65536;
+
 static int bindOpCheck(const drm_xe_vm_bind_op &op) {
 	constexpr uint32_t kSupported = DRM_XE_VM_BIND_FLAG_READONLY | DRM_XE_VM_BIND_FLAG_IMMEDIATE | DRM_XE_VM_BIND_FLAG_NULL |
 		DRM_XE_VM_BIND_FLAG_DUMPABLE | DRM_XE_VM_BIND_FLAG_CHECK_PXP | DRM_XE_VM_BIND_FLAG_CPU_ADDR_MIRROR |
@@ -4559,6 +4592,10 @@ static int bindOpCheck(const drm_xe_vm_bind_op &op) {
 	if ((op.obj_offset & 0xfff) || (op.addr & 0xfff) || (op.range & 0xfff) ||
 		(!op.range && op.op != DRM_XE_VM_BIND_OP_UNMAP_ALL))
 		return EINVAL;
+	// xe_vm_bind_ioctl: range > vm->size || addr > vm->size - range (vm->size = 1 << va_bits, 48 as the query says).
+	// WAS missing: the page walk masks each level's index, so an address at or above 2^48 aliased a low one.
+	constexpr uint64_t kVmSize = 1ull << 48;
+	if (op.range > kVmSize || op.addr > kVmSize - op.range) return EINVAL;
 	if (decomp) return EOPNOTSUPP;
 	return 0;
 }
@@ -4574,6 +4611,8 @@ static int vmBindOp(XeClientState *c, XeVm *vm, const drm_xe_vm_bind_op &op, Bin
 				// xe_vm_bind_ioctl_validate_bo, in its overflow-safe form (WAS obj_offset + range > size, which wraps)
 				if (!bo || op.range > bo->size || op.obj_offset > bo->size - op.range) return EINVAL;
 				if (bo->noComp && comp) return EINVAL;   // xe_vm_bind_ioctl_validate_bo
+				// xe_vm_bind_ioctl_validate_bo: a BO the CPU caches (WB) needs a coherent PAT index (XE_COH_NONE refused)
+				if (bo->caching == DRM_XE_GEM_CPU_CACHING_WB && !((kPatCoherent >> op.pat_index) & 1)) return EINVAL;
 				// rb7r: xe_vma_create: a new mapping (WILLNEED) of a DONTNEED BO EBUSY, of a purged one EINVAL
 				if (bo->purgeTrack && bo->purgeState != kMadvWillneed) {
 					if (bo->purgeState == kMadvDontneed) gPurgeSt.bindBusy++;
@@ -7321,6 +7360,8 @@ static int xeIoctlLocked(XeClientState *c, uint32_t request, uint8_t *buf) {
 		}
 		case DRM_IOCTL_XE_GEM_MMAP_OFFSET: {
 			auto *m = reinterpret_cast<drm_xe_gem_mmap_offset *>(buf);
+			// xe_gem_mmap_offset_ioctl: extensions and reserved zero; the PCI barrier page (its only flag) is not offered
+			if (m->extensions || m->reserved[0] || m->reserved[1] || m->flags) return EINVAL;
 			auto *bo = static_cast<XeBo *>(c->bos.get(m->handle));
 			if (!bo) return ENOENT;
 			// rb7r: a DONTNEED or purged BO: the offset is handed out as xe does (xe_gem_mmap_offset_ioctl does not look at
@@ -7400,6 +7441,7 @@ static int xeIoctlLocked(XeClientState *c, uint32_t request, uint8_t *buf) {
 		}
 		case DRM_IOCTL_XE_VM_DESTROY: {
 			auto *v = reinterpret_cast<drm_xe_vm_destroy *>(buf);
+			if (v->pad || v->reserved[0] || v->reserved[1]) return EINVAL;   // xe_vm_destroy_ioctl
 			auto *vm = static_cast<XeVm *>(c->vms.take(v->vm_id));
 			if (!vm) return ENOENT;
 			// rb7r: its bindings stop counting for their BOs' purgeable state now (xe_vm_close_and_put destroys the VMAs);
@@ -7416,12 +7458,23 @@ static int xeIoctlLocked(XeClientState *c, uint32_t request, uint8_t *buf) {
 			auto *b = reinterpret_cast<drm_xe_vm_bind *>(buf);
 			// rb7j: vm_bind_ioctl_check_args, before anything is done: unknown bits and fields that must be zero
 			if (b->pad || b->pad2 || b->reserved[0] || b->reserved[1] || b->extensions) return EINVAL;
-			for (uint32_t i = 0; i < b->num_binds; i++) {
-				drm_xe_vm_bind_op op;
-				if (b->num_binds == 1) op = b->bind;
-				else if ((err = getUser(b->vector_of_binds + i * sizeof(op), &op, sizeof(op)))) return err;
-				if ((err = bindOpCheck(op))) return err;
+			// xe vm_bind_ioctl_check_args: the ops are copied from the caller once, and the checks and the binds use that
+			// copy. WAS read from user memory again for each pass, so ops changed after the checks were bound unchecked.
+			struct OpsCopy {
+				drm_xe_vm_bind_op *p = nullptr; size_t size = 0;
+				~OpsCopy() { if (p) IOFree(p, size); }
+			} copy;
+			const drm_xe_vm_bind_op *ops = &b->bind;
+			if (b->num_binds > 1) {
+				if (b->num_binds > kMaxBindOps) return ENOBUFS;   // xe answers ENOBUFS when it cannot allocate the array
+				copy.size = (size_t)b->num_binds * sizeof(drm_xe_vm_bind_op);
+				copy.p = static_cast<drm_xe_vm_bind_op *>(IOMalloc(copy.size));
+				if (!copy.p) { copy.size = 0; return ENOBUFS; }
+				if ((err = getUser(b->vector_of_binds, copy.p, copy.size))) return err;
+				ops = copy.p;
 			}
+			for (uint32_t i = 0; i < b->num_binds; i++)
+				if ((err = bindOpCheck(ops[i]))) return err;
 			SyncList sl;
 			if ((err = sl.load(b->syncs, b->num_syncs)) || (err = waitSyncsIn(c, sl))) return err;
 			if (c->migrating && (err = waitUntil(c, (int64_t)(nowNs() + 10000000000ull), kWaitMigrate, [&] { return !c->migrating; })))
@@ -7438,9 +7491,7 @@ static int xeIoctlLocked(XeClientState *c, uint32_t request, uint8_t *buf) {
 					continue;
 				}
 				for (uint32_t i = 0; gSharedMoving > 0 && i < b->num_binds && !err && !again; i++) {
-					drm_xe_vm_bind_op op;
-					if (b->num_binds == 1) op = b->bind;
-					else if ((err = getUser(b->vector_of_binds + i * sizeof(op), &op, sizeof(op)))) break;
+					const drm_xe_vm_bind_op &op = ops[i];
 					if (op.op != DRM_XE_VM_BIND_OP_MAP || !op.obj) continue;
 					auto *bo = static_cast<XeBo *>(c->bos.get(op.obj));
 					if (!bo || !bo->migrating) continue;
@@ -7456,12 +7507,7 @@ static int xeIoctlLocked(XeClientState *c, uint32_t request, uint8_t *buf) {
 			if (!vm) return EINVAL;
 			BindCtx ctx = {};
 			ctx.clear = {0, ~0u, 0, 0};
-			for (uint32_t i = 0; i < b->num_binds && !err; i++) {
-				drm_xe_vm_bind_op op;
-				if (b->num_binds == 1) op = b->bind;
-				else if ((err = getUser(b->vector_of_binds + i * sizeof(op), &op, sizeof(op)))) break;
-				err = vmBindOp(c, vm, op, &ctx);
-			}
+			for (uint32_t i = 0; i < b->num_binds && !err; i++) err = vmBindOp(c, vm, ops[i], &ctx);
 			asm volatile("sfence" : : : "memory");   // PTE writes (BAR2, write-combined) before anything uses them
 			OSIncrementAtomic(reinterpret_cast<volatile SInt32 *>(&vm->ptGen));   // next batch of each queue invalidates
 			// A bind over scratch entries needs no invalidation here: the next batch's ring prologue invalidates the TLB
@@ -7542,6 +7588,7 @@ static int xeIoctlLocked(XeClientState *c, uint32_t request, uint8_t *buf) {
 		}
 		case DRM_IOCTL_XE_EXEC_QUEUE_DESTROY: {
 			auto *e = reinterpret_cast<drm_xe_exec_queue_destroy *>(buf);
+			if (e->pad || e->reserved[0] || e->reserved[1]) return EINVAL;   // xe_exec_queue_destroy_ioctl
 			void *q = c->queues.take(e->exec_queue_id);
 			if (!q) return ENOENT;
 			if (q != static_cast<void *>(kBindQueue)) queueClose(static_cast<XeQueue *>(q));
@@ -7596,6 +7643,8 @@ static int xeIoctlLocked(XeClientState *c, uint32_t request, uint8_t *buf) {
 		}
 		case DRM_IOCTL_XE_EXEC: {
 			auto *x = reinterpret_cast<drm_xe_exec *>(buf);
+			// xe_exec_ioctl: extensions, pad and reserved zero (WAS: not checked)
+			if (x->extensions || x->pad[0] || x->pad[1] || x->pad[2] || x->reserved[0] || x->reserved[1]) return EINVAL;
 			if (x->num_batch_buffer > 1) return EINVAL;
 			SyncList sl;
 			if ((err = sl.load(x->syncs, x->num_syncs))) return err;
@@ -7634,6 +7683,7 @@ static int xeIoctlLocked(XeClientState *c, uint32_t request, uint8_t *buf) {
 		}
 		case DRM_IOCTL_SYNCOBJ_CREATE: {
 			auto *s = reinterpret_cast<drm_syncobj_create *>(buf);
+			if (s->flags & ~(uint32_t)DRM_SYNCOBJ_CREATE_SIGNALED) return EINVAL;   // drm_syncobj_create_ioctl
 			auto *so = syncNew();   // rb7t: one reference, the handle's
 			if (!so) return ENOMEM;
 			if (s->flags & DRM_SYNCOBJ_CREATE_SIGNALED) syncReplace(so, XeFence{0, ~0u, 0, 0});
@@ -7646,6 +7696,7 @@ static int xeIoctlLocked(XeClientState *c, uint32_t request, uint8_t *buf) {
 		}
 		case DRM_IOCTL_SYNCOBJ_DESTROY: {
 			auto *s = reinterpret_cast<drm_syncobj_destroy *>(buf);
+			if (s->pad) return EINVAL;   // drm_syncobj_destroy_ioctl
 			auto *so = static_cast<XeSyncobj *>(c->syncs.take(s->handle));
 			if (!so) return ENOENT;
 			syncPut(so);   // rb7t: the handle's reference; an fd or another client's handle may keep it
@@ -7664,6 +7715,7 @@ static int xeIoctlLocked(XeClientState *c, uint32_t request, uint8_t *buf) {
 		case DRM_IOCTL_SYNCOBJ_RESET:
 		case DRM_IOCTL_SYNCOBJ_SIGNAL: {
 			auto *a = reinterpret_cast<drm_syncobj_array *>(buf);
+			if (a->pad || !a->count_handles) return EINVAL;   // drm_syncobj_reset_ioctl / drm_syncobj_signal_ioctl
 			for (uint32_t i = 0; i < a->count_handles && !err; i++) {
 				uint32_t h;
 				if ((err = getUser(a->handles + i * 4, &h, 4))) break;
@@ -7682,6 +7734,10 @@ static int xeIoctlLocked(XeClientState *c, uint32_t request, uint8_t *buf) {
 		case DRM_IOCTL_SYNCOBJ_TIMELINE_SIGNAL:
 		case DRM_IOCTL_SYNCOBJ_QUERY: {
 			auto *a = reinterpret_cast<drm_syncobj_timeline_array *>(buf);
+			// drm_syncobj_timeline_signal_ioctl: no flags; drm_syncobj_query_ioctl: LAST_SUBMITTED only; both: handles
+			if (!a->count_handles) return EINVAL;
+			if (request == DRM_IOCTL_SYNCOBJ_TIMELINE_SIGNAL ? a->flags != 0 : (a->flags & ~(uint32_t)DRM_SYNCOBJ_QUERY_FLAGS_LAST_SUBMITTED))
+				return EINVAL;
 			for (uint32_t i = 0; i < a->count_handles && !err; i++) {
 				uint32_t h;
 				uint64_t p;
@@ -7708,6 +7764,7 @@ static int xeIoctlLocked(XeClientState *c, uint32_t request, uint8_t *buf) {
 		}
 		case DRM_IOCTL_SYNCOBJ_TRANSFER: {
 			auto *t = reinterpret_cast<drm_syncobj_transfer *>(buf);
+			if (t->pad) return EINVAL;   // drm_syncobj_transfer_ioctl
 			auto *src = static_cast<XeSyncobj *>(c->syncs.get(t->src_handle));
 			auto *dst = static_cast<XeSyncobj *>(c->syncs.get(t->dst_handle));
 			XeFence f;
