@@ -1,7 +1,7 @@
 #!/bin/bash
 # SPDX-License-Identifier: MIT
 # test-install-flow.sh PACKAGE_DIR: runs install.sh's whole flow against a throwaway root, without root and without kmutil:
-# install, the same again, a damaged file, repair, an edited allow-list, undo (with the version it puts back), uninstall. Each step's --status is checked.
+# install, the same again, a damaged file, repair, an edited allow-list, an earlier release's allow-list, undo (with the version it puts back), uninstall. Each step's --status is checked.
 set -uo pipefail
 PKG=$(cd "$1" && pwd)
 ROOT=$(mktemp -d -t ixeflow)
@@ -73,6 +73,18 @@ expect "after --uninstall" installed_state absent
 expect "after --uninstall" guard_daemon no
 expect "after --uninstall" installed_version none
 [ -d "$backup" ] && echo "ok    uninstall keeps backups" || { echo "FAIL  backups are gone"; fails=$((fails + 1)); }
+
+# the allow-list an earlier release installed is replaced, one the user edited is kept
+A="$ROOT/Library/GPUBundles/nvmtl-allow.txt"; mkdir -p "$ROOT/Library/GPUBundles"
+printf '%s\n' "# B580: which processes get the B580 Metal device (-Name denies, !Name = only when armed; NVMTL_ENABLE=1 bypasses)" \
+    "# 4 Nov Tahoe: Safari's GPU process restarted 16 times in 2 min on the plugin (black page content): kept off until fixed" \
+    -com.apple.WebKit.GPU -com.apple.dock.extra mtl_smoke '!WindowServer' '!*' > "$A"
+step --apply
+cmp -s "$A" "$T/Library/GPUBundles/nvmtl-allow.txt" && echo "ok    apply replaces 0.1.1's allow-list" || { echo "FAIL  0.1.1's allow-list was kept"; fails=$((fails + 1)); }
+echo "+ my.app" >> "$A"
+step --apply
+grep -q "my.app" "$A" && echo "ok    apply keeps an edited allow-list" || { echo "FAIL  apply replaced an edited allow-list"; fails=$((fails + 1)); }
+step --uninstall
 grep -q "remove IntelXe.kext" "$ROOT/last.log" && echo "ok    uninstall says to remove the kext from the EFI" || { echo "FAIL  no EFI note"; fails=$((fails + 1)); }
 
 [ -n "$ROOT" ] && rm -rf -- "$ROOT"

@@ -89,6 +89,16 @@ check() {
     return $FAILS
 }
 
+# allow_earlier: the installed nvmtl-allow.txt is one an earlier release put there (0.1.0 and 0.1.1; 0.1.1's with the
+# -NotificationCenter line its guide asked for; the repository's before 0.1.2), not one the user wrote: replace it
+allow_earlier() {
+    case "$(shasum -a 256 < $GB/nvmtl-allow.txt | cut -c1-64)" in
+        bda5a52913d4d38b737677181ae3a6600518a5273d054b7cf3a198f192bd8469|11dd4cd6811a4cda28f9558db412b9d55ae8f9da5c5262e3790388e9ca475b61|\
+        9461be74412922ae50689f8dd1cc72e59e78b937c23c7f77948e3105bf1a6c04|4046773b7550de5840d9c8b8d76fa340e574e80e4b1f64cdea52487f628f3ef3) return 0;;
+    esac
+    return 1
+}
+
 rebuild_auxkc() {
     local KC=/Library/KernelCollections/AuxiliaryKernelExtensions.kc K=/System/Library/Kernels/kernel KA=(--allow-missing-kdk) log
     [ -f $K ] && KA+=(--kernel $K)
@@ -179,7 +189,7 @@ apply() {
     [ -f "$mark" ] && { keep=$(mktemp -t ssvmark); cp -p "$mark" "$keep"; }
     put "$H/Library/GPUBundles/nvmtl" $GB/nvmtl; echo "  ok    $GB/nvmtl"
     [ -n "$keep" ] && { cp -p "$keep" "$mark"; rm -f "$keep"; echo "  keep  $mark (system-volume copy record)"; }
-    if [ -e $GB/nvmtl-allow.txt ] && ! cmp -s $GB/nvmtl-allow.txt "$H/Library/GPUBundles/nvmtl-allow.txt"; then
+    if [ -e $GB/nvmtl-allow.txt ] && ! cmp -s $GB/nvmtl-allow.txt "$H/Library/GPUBundles/nvmtl-allow.txt" && ! allow_earlier; then
         echo "  keep  $GB/nvmtl-allow.txt (yours differs from the package's; the package's is in $H/Library/GPUBundles)"
     else install -o root -g wheel -m 644 "$H/Library/GPUBundles/nvmtl-allow.txt" $GB/nvmtl-allow.txt; echo "  ok    $GB/nvmtl-allow.txt"; fi
     # a system-volume copy of another release cannot drive these kexts: NMXAccel takes the /Library copy until this

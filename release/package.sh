@@ -14,9 +14,10 @@
 #   intel-gpu-macos-driver-VERSION-efi.zip                    (the OpenCore pieces, the same in both; any system;
 #                                                              with windows/IntelXe-EFI.ps1 and its README)
 #   intel-gpu-macos-driver-VERSION.sha256
-# With ZINK_DIR set in the environment also intel-gpu-macos-driver-VERSION-zink-gl.zip (see below).
+# With ZINK_DIR set in the environment also intel-gpu-macos-driver-VERSION-zink-gl.zip (see below), and with APP_DIR
+# (the folder app/build.sh wrote) IntelXe-Manager-VERSION.zip, the app.
 set -euo pipefail
-[ $# = 4 ] || { sed -n '3,17p' "$0"; exit 2; }
+[ $# = 4 ] || { sed -n '3,18p' "$0"; exit 2; }
 VER=$1 T=$2 S=$3 OUT=$4
 R=$(cd "$(dirname "$0")" && pwd)
 N=intel-gpu-macos-driver-$VER
@@ -106,6 +107,18 @@ if [ -n "${ZINK_DIR:-}" ]; then
     (cd "$z" && find . -type f ! -name SHA256SUMS | sed 's#^\./##' | LC_ALL=C sort | while IFS= read -r f; do shasum -a 256 "$f"; done > SHA256SUMS)
     zipdir "$W" "$N-zink-gl"
     ZIPS+=("$N-zink-gl.zip")
+fi
+# APP_DIR: the output folder of app/build.sh. The app's name must not end like a package (-tahoe.zip, -sequoia.zip,
+# -zink-gl.zip): the app finds a release's packages by those endings.
+if [ -n "${APP_DIR:-}" ]; then
+    a=$W/app; mkdir -p "$a"
+    ditto "$APP_DIR/IntelXe Manager.app" "$a/IntelXe Manager.app"
+    [ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$a/IntelXe Manager.app/Contents/Info.plist")" = "$VER" ] ||
+        { echo "the app was built for another version than $VER"; exit 1; }
+    codesign -v "$a/IntelXe Manager.app" || { echo "the app's signature does not verify"; exit 1; }
+    rm -f "$OUT/IntelXe-Manager-$VER.zip"
+    (cd "$a" && ditto -c -k --norsrc --noextattr --noacl --keepParent "IntelXe Manager.app" "$OUT/IntelXe-Manager-$VER.zip")
+    ZIPS+=("IntelXe-Manager-$VER.zip")
 fi
 (cd "$OUT" && shasum -a 256 "${ZIPS[@]}" > "$N.sha256")
 cat "$OUT/$N.sha256"
