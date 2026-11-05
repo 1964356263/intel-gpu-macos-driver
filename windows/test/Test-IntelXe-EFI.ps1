@@ -313,7 +313,7 @@ try {
         $h = ''
         foreach ($l in $lines) { if ($l -like '== plan SHA-256: *') { $h = $l.Substring(17).Trim() } }
         $out = Invoke-Tool @('-Apply', 'settings', '-Efi', $F, '-Package', $Pk, '-Expect', $h)
-        Check ($script:code -eq 0 -and (Test-Path -LiteralPath (Join-Path $Root 'efi\IntelXe-EFI-backups'))) 'without -BackupDir: the backup next to the EFI folder'
+        Check ($script:code -eq 0 -and (Test-Path -LiteralPath (Join-Path $F 'IntelXe-EFI-backups'))) 'without -BackupDir: the backup next to the EFI folder'
         $lines = Invoke-Tool @('-Plan', 'undo', '-Efi', $F)
         foreach ($l in $lines) { if ($l -like '== plan SHA-256: *') { $h = $l.Substring(17).Trim() } }
         $out = Invoke-Tool @('-Undo', '-Efi', $F, '-Expect', $h)
