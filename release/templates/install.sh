@@ -1,0 +1,168 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# install.sh: the /Library part of intel-gpu-macos-driver @VER@ for @MACOS@ (Intel Arc B580, 8086:e20b).
+#
+#   ./install.sh               check only (the default): macOS version, SIP, AMFI boot-arg, the card, IntelXe.kext,
+#                              the package's checksums and code signatures. Changes nothing.
+#   sudo ./install.sh --apply  back up what it replaces, copy the kexts and the Metal driver into /Library, rebuild the
+#                              Auxiliary Kernel Collection. Reboot afterwards.
+#   sudo ./install.sh --undo   put the last backup back and rebuild the Auxiliary Kernel Collection. Reboot afterwards.
+#
+# Not done here, because they live in your OpenCore EFI (see README-INSTALL.md): EFI/OC/Kexts/IntelXe.kext and
+# EFI/OC/ACPI/SSDT-ARCOFF.aml with their config.plist entries, SIP and the AMFI boot-arg. The optional system-volume copy
+# (Safari WebGL) is system-volume/ssv-install.sh. Backups go to /Library/Application Support/intel-gpu-macos-driver/.
+#
+# Upgrading from a build with the earlier names (the stack was renamed from B580 to IntelXe in 0.1.0): --apply
+# backs up and removes /Library/Extensions/B580FB.kext (two framebuffer kexts must never both be in the Auxiliary
+# Kernel Collection), and --undo puts it back. Swap B580.kext for IntelXe.kext in your EFI before you reboot.
+set -euo pipefail
+H=$(cd "$(dirname "$0")" && pwd)
+VER=@VER@
+MACOS_MAJOR=@MAJOR@   # the macOS this package is built for (NMXAccel differs: 26 Tahoe, 15 Sequoia)
+BK="/Library/Application Support/intel-gpu-macos-driver"
+KEXTS=(IntelXeFB NMXAccel NMXAGDC)
+OLD_KEXTS=(B580FB)   # the same kexts under their earlier names: removed by --apply, restored by --undo
+GB=/Library/GPUBundles
+SSV=/System/Library/Extensions/NVMTLDriver.bundle   # system-volume/ssv-install.sh's copy
+USELIB=$GB/NVMTLDriver.use-library                  # NMXAccel: use the /Library copy even when $SSV exists
+FAILS=0
+ok()  { printf '  ok    %s\n' "$*"; }
+bad() { printf '  FAIL  %s\n' "$*"; FAILS=$((FAILS + 1)); }
+warn(){ printf '  warn  %s\n' "$*"; }
+
+# the system-volume copy is installed and its Mesa is not this package's (another release)
+ssv_stale() {
+    [ -f "$SSV/Contents/MacOS/NVMTLDriver" ] || return 1
+    ! cmp -s "$SSV/Contents/Frameworks/nvmtl/libvulkan_intel.dylib" "$H/Library/GPUBundles/nvmtl/libvulkan_intel.dylib"
+}
+
+check() {
+    echo "== intel-gpu-macos-driver $VER: checks"
+    local v; v=$(sw_vers -productVersion)
+    case "$MACOS_MAJOR:$v" in
+        26:26.7*) ok "macOS $v";;
+        26:26.*) warn "macOS $v: this package was tested on 26.7.1 only";;
+        15:15.*) ok "macOS $v (note: the Sequoia package was built from the same sources but not re-tested on Sequoia)";;
+        *) bad "macOS $v: this package is for macOS $MACOS_MAJOR (use the other package)";;
+    esac
+    [ "$(uname -m)" = x86_64 ] && ok "x86_64" || bad "not an x86_64 Mac"
+    local sip; sip=$(csrutil status 2>/dev/null || true)
+    case "$sip" in *disabled*|*Custom\ Configuration*) ok "SIP relaxed ($(echo "$sip" | head -1))";; *) bad "SIP is enabled: csr-active-config 0x803 (AwgAAA==) in OpenCore, see README-INSTALL.md, stage 2";; esac
+    local ba; ba=$(nvram boot-args 2>/dev/null | cut -f2- || true)
+    case "$ba" in *amfi_get_out_of_my_way=1*|*amfi_get_out_of_my_way=0x1*|*amfi=0x80*|*amfi=128*) ok "AMFI relaxed in boot-args";;
+        *) bad "no AMFI boot-arg (amfi_get_out_of_my_way=0x1): WindowServer would refuse the unsigned Metal driver";; esac
+    local old; old=$(printf '%s\n' $ba | grep -E '^-?b580' | tr '\n' ' ' || true)   # intelxe-rename: keep
+    [ -n "$old" ] && warn "boot-args with their earlier names: ${old}- they still work in this release; rename them (README-INSTALL.md, Upgrading)"
+    local pci loaded; pci=$(ioreg -r -c IOPCIDevice -l 2>/dev/null || true)
+    if [[ "$pci" == *'"device-id" = <0be20000>'* ]]; then ok "Arc B580 (8086:e20b) on the PCI bus"
+    else bad "no Arc B580 (8086:e20b) found"; fi
+    loaded=$(kmutil showloaded 2>/dev/null || true)
+    if [[ "$loaded" == *"io.github.yusufklncc.IntelXe ("* ]]; then
+        ok "IntelXe.kext is loaded (from OpenCore)"
+    elif [[ "$loaded" == *"org.hackintosh.B580 ("* ]]; then   # intelxe-rename: keep
+        warn "B580.kext (the earlier name) is loaded: replace it with EFI/OC/Kexts/IntelXe.kext in your OpenCore EFI before you reboot (README-INSTALL.md, Upgrading); the new /Library part does not work with it"
+    else warn "IntelXe.kext is not loaded: expected on a first install (it goes into the EFI in stage 4 of README-INSTALL.md, after --apply and before the reboot)"; fi
+    for k in "${OLD_KEXTS[@]}"; do
+        [ -e /Library/Extensions/$k.kext ] && warn "/Library/Extensions/$k.kext (earlier name of ${KEXTS[0]}.kext): --apply backs it up and removes it"
+    done
+    if ssv_stale; then
+        warn "the system-volume copy ($SSV) is from another release: --apply makes NMXAccel use the /Library copy ($USELIB) until you install this package's system-volume copy (README-INSTALL.md, step 3.4)"
+    fi
+    if xattr -r "$H" 2>/dev/null | grep -q com.apple.quarantine; then
+        if [ "$(id -u)" = 0 ]; then xattr -dr com.apple.quarantine "$H" && ok "removed the downloaded-file mark (com.apple.quarantine) from the package"
+        else warn "the package carries the downloaded-file mark (com.apple.quarantine): --apply removes it; or run: xattr -dr com.apple.quarantine \"$H\""; fi
+    fi
+    if (cd "$H" && shasum -a 256 -c SHA256SUMS >/dev/null 2>&1); then ok "package files match SHA256SUMS"
+    else bad "package files differ from SHA256SUMS (damaged or changed download)"; fi
+    local m n=0
+    while IFS= read -r m; do "$H/sigcheck" "$m" >/dev/null 2>&1 || { bad "not signed: ${m#$H/}"; n=$((n + 1)); }; done < <(
+        find "$H/Library" -type f -perm -u+x \( -path '*/MacOS/*' -o -name '*.dylib' \) )
+    [ $n = 0 ] && ok "code signatures present (ad-hoc; OpenCore's IntelXe.kext needs none)"
+    echo "== $FAILS problem(s)"
+    return $FAILS
+}
+
+rebuild_auxkc() {
+    local KC=/Library/KernelCollections/AuxiliaryKernelExtensions.kc K=/System/Library/Kernels/kernel KA=(--allow-missing-kdk) log
+    [ -f $K ] && KA+=(--kernel $K)
+    log=$(mktemp -t auxkc)
+    echo "== rebuilding the Auxiliary Kernel Collection (log: $log)"
+    if kmutil create -n aux --volume-root / "${KA[@]}" -B /System/Library/KernelCollections/BootKernelExtensions.kc \
+         -S /System/Library/KernelCollections/SystemKernelExtensions.kc --repository /Library/Extensions -A "$KC.new" -z >"$log" 2>&1 \
+       && [ -s "$KC.new" ]; then
+        mv -f "$KC.new" "$KC"; echo "  ok    $KC"
+    else
+        rm -f "$KC.new"; echo "  FAIL  kmutil failed; the previous collection is unchanged. See $log"; return 1
+    fi
+}
+
+put() { # put SRC DST: replace DST with a root-owned copy of SRC
+    rm -rf "$2.new"; ditto "$1" "$2.new"; xattr -dr com.apple.quarantine "$2.new" 2>/dev/null || true
+    chown -R root:wheel "$2.new"; chmod -R go-w "$2.new"
+    rm -rf "$2"; mv "$2.new" "$2"
+}
+
+apply() {
+    [ "$(id -u)" = 0 ] || { echo "--apply needs root: sudo $0 --apply"; exit 1; }
+    check || { echo "checks failed: nothing changed"; exit 1; }
+    local B; B="$BK/backup-$(date +%Y%m%d-%H%M%S)"
+    mkdir -p "$B/Extensions" "$B/GPUBundles"
+    for k in "${KEXTS[@]}" "${OLD_KEXTS[@]}"; do [ -e /Library/Extensions/$k.kext ] && ditto /Library/Extensions/$k.kext "$B/Extensions/$k.kext"; done
+    for g in NVMTLDriverLib.bundle NVMTLDriver.bundle nvmtl nvmtl-allow.txt; do [ -e $GB/$g ] && ditto $GB/$g "$B/GPUBundles/$g"; done
+    echo "$B" > "$BK/last-backup"
+    echo "== backup: $B"
+    for k in "${KEXTS[@]}"; do put "$H/Library/Extensions/$k.kext" /Library/Extensions/$k.kext; echo "  ok    /Library/Extensions/$k.kext"; done
+    # the earlier names of these kexts: two framebuffer kexts must never both be in the Auxiliary Kernel Collection
+    for k in "${OLD_KEXTS[@]}"; do
+        if [ -e /Library/Extensions/$k.kext ]; then rm -rf /Library/Extensions/$k.kext; echo "  ok    removed /Library/Extensions/$k.kext (backed up)"; fi
+    done
+    mkdir -p $GB
+    put "$H/Library/GPUBundles/NVMTLDriverLib.bundle" $GB/NVMTLDriverLib.bundle; echo "  ok    $GB/NVMTLDriverLib.bundle"
+    # a /Library/GPUBundles/NVMTLDriver.bundle would shadow the system-volume copy (Metal takes the first bundle of that name)
+    if [ -e $GB/NVMTLDriver.bundle ]; then rm -rf $GB/NVMTLDriver.bundle; echo "  ok    removed $GB/NVMTLDriver.bundle (backed up)"; fi
+    # nvmtl/ssv-component.plist is system-volume/ssv-install.sh's record of an installed system-volume copy: keep it
+    local mark=$GB/nvmtl/ssv-component.plist keep=""
+    [ -f "$mark" ] && { keep=$(mktemp -t ssvmark); cp -p "$mark" "$keep"; }
+    put "$H/Library/GPUBundles/nvmtl" $GB/nvmtl; echo "  ok    $GB/nvmtl"
+    [ -n "$keep" ] && { cp -p "$keep" "$mark"; rm -f "$keep"; echo "  keep  $mark (system-volume copy record)"; }
+    if [ -e $GB/nvmtl-allow.txt ] && ! cmp -s $GB/nvmtl-allow.txt "$H/Library/GPUBundles/nvmtl-allow.txt"; then
+        echo "  keep  $GB/nvmtl-allow.txt (yours differs from the package's; the package's is in $H/Library/GPUBundles)"
+    else install -o root -g wheel -m 644 "$H/Library/GPUBundles/nvmtl-allow.txt" $GB/nvmtl-allow.txt; echo "  ok    $GB/nvmtl-allow.txt"; fi
+    # a system-volume copy of another release cannot drive these kexts: NMXAccel takes the /Library copy until this
+    # package's system-volume copy is installed (system-volume/ssv-install.sh --apply, then remove $USELIB)
+    if ssv_stale && [ ! -e "$USELIB" ]; then
+        : > "$USELIB"; : > "$B/created-use-library"
+        echo "  ok    $USELIB: the system-volume copy is from another release, the /Library copy is used until it is updated"
+    fi
+    for k in "${OLD_KEXTS[@]}"; do [ -e /Library/Extensions/$k.kext ] && { echo "  FAIL  /Library/Extensions/$k.kext is still there"; exit 1; }; done
+    rebuild_auxkc
+    echo "== done. Reboot (if you are upgrading: with IntelXe.kext in your EFI in place of B580.kext). To go back: sudo $0 --undo"
+}
+
+undo() {
+    [ "$(id -u)" = 0 ] || { echo "--undo needs root: sudo $0 --undo"; exit 1; }
+    local B; B=$(cat "$BK/last-backup" 2>/dev/null || true)
+    [ -n "$B" ] && [ -d "$B" ] || { echo "no backup recorded in $BK/last-backup"; exit 1; }
+    echo "== restoring $B"
+    for k in "${KEXTS[@]}" "${OLD_KEXTS[@]}"; do
+        if [ -e "$B/Extensions/$k.kext" ]; then put "$B/Extensions/$k.kext" /Library/Extensions/$k.kext; echo "  ok    restored $k.kext"
+        elif [ -e /Library/Extensions/$k.kext ]; then rm -rf /Library/Extensions/$k.kext; echo "  ok    removed $k.kext (there was none before)"; fi
+    done
+    for g in NVMTLDriverLib.bundle NVMTLDriver.bundle nvmtl nvmtl-allow.txt; do
+        if [ -e "$B/GPUBundles/$g" ]; then rm -rf $GB/$g; ditto "$B/GPUBundles/$g" $GB/$g; chown -R root:wheel $GB/$g; echo "  ok    restored $GB/$g"
+        else rm -rf $GB/$g; echo "  ok    removed $GB/$g (there was none before)"; fi
+    done
+    if [ -e "$B/created-use-library" ]; then rm -f "$USELIB"; echo "  ok    removed $USELIB (--apply made it)"; fi
+    rebuild_auxkc
+    for k in "${OLD_KEXTS[@]}"; do
+        [ -e "$B/Extensions/$k.kext" ] && echo "== $k.kext is back: put B580.kext back into your EFI in place of IntelXe.kext before you reboot"
+    done
+    echo "== done. Reboot."
+}
+
+case "${1:-}" in
+    ""|--check) check ;;
+    --apply) apply ;;
+    --undo) undo ;;
+    *) sed -n '3,9p' "$0"; exit 2 ;;
+esac

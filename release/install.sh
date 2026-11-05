@@ -1,6 +1,6 @@
 #!/bin/bash
 # SPDX-License-Identifier: MIT
-# install.sh: the /Library part of intel-gpu-macos-driver 0.1.0 for macOS 26 Tahoe (Intel Arc B580, 8086:e20b).
+# install.sh: the /Library part of intel-gpu-macos-driver 0.1.1 for macOS 26 Tahoe (Intel Arc B580, 8086:e20b).
 #
 #   ./install.sh               check only (the default): macOS version, SIP, AMFI boot-arg, the card, IntelXe.kext,
 #                              the package's checksums and code signatures. Changes nothing.
@@ -12,12 +12,12 @@
 # EFI/OC/ACPI/SSDT-ARCOFF.aml with their config.plist entries, SIP and the AMFI boot-arg. The optional system-volume copy
 # (Safari WebGL) is system-volume/ssv-install.sh. Backups go to /Library/Application Support/intel-gpu-macos-driver/.
 #
-# Upgrading from a package with the earlier names (the stack was renamed from B580 to IntelXe in 0.1.0): --apply
+# Upgrading from a build with the earlier names (the stack was renamed from B580 to IntelXe in 0.1.0): --apply
 # backs up and removes /Library/Extensions/B580FB.kext (two framebuffer kexts must never both be in the Auxiliary
 # Kernel Collection), and --undo puts it back. Swap B580.kext for IntelXe.kext in your EFI before you reboot.
 set -euo pipefail
 H=$(cd "$(dirname "$0")" && pwd)
-VER=0.1.0
+VER=0.1.1
 MACOS_MAJOR=26   # the macOS this package is built for (NMXAccel differs: 26 Tahoe, 15 Sequoia)
 BK="/Library/Application Support/intel-gpu-macos-driver"
 KEXTS=(IntelXeFB NMXAccel NMXAGDC)
@@ -47,12 +47,12 @@ check() {
     esac
     [ "$(uname -m)" = x86_64 ] && ok "x86_64" || bad "not an x86_64 Mac"
     local sip; sip=$(csrutil status 2>/dev/null || true)
-    case "$sip" in *disabled*|*Custom\ Configuration*) ok "SIP relaxed ($(echo "$sip" | head -1))";; *) bad "SIP is enabled: csr-active-config 0x803 (AwgAAA==) in OpenCore, see README-INSTALL.md";; esac
+    case "$sip" in *disabled*|*Custom\ Configuration*) ok "SIP relaxed ($(echo "$sip" | head -1))";; *) bad "SIP is enabled: csr-active-config 0x803 (AwgAAA==) in OpenCore, see README-INSTALL.md, stage 2";; esac
     local ba; ba=$(nvram boot-args 2>/dev/null | cut -f2- || true)
     case "$ba" in *amfi_get_out_of_my_way=1*|*amfi_get_out_of_my_way=0x1*|*amfi=0x80*|*amfi=128*) ok "AMFI relaxed in boot-args";;
         *) bad "no AMFI boot-arg (amfi_get_out_of_my_way=0x1): WindowServer would refuse the unsigned Metal driver";; esac
     local old; old=$(printf '%s\n' $ba | grep -E '^-?b580' | tr '\n' ' ' || true)   # intelxe-rename: keep
-    [ -n "$old" ] && warn "boot-args with their earlier names: ${old}- they still work in this release; rename them (README-INSTALL.md, step 2.4)"
+    [ -n "$old" ] && warn "boot-args with their earlier names: ${old}- they still work in this release; rename them (README-INSTALL.md, Upgrading)"
     local pci loaded; pci=$(ioreg -r -c IOPCIDevice -l 2>/dev/null || true)
     if [[ "$pci" == *'"device-id" = <0be20000>'* ]]; then ok "Arc B580 (8086:e20b) on the PCI bus"
     else bad "no Arc B580 (8086:e20b) found"; fi
@@ -60,13 +60,17 @@ check() {
     if [[ "$loaded" == *"io.github.yusufklncc.IntelXe ("* ]]; then
         ok "IntelXe.kext is loaded (from OpenCore)"
     elif [[ "$loaded" == *"org.hackintosh.B580 ("* ]]; then   # intelxe-rename: keep
-        warn "B580.kext (the earlier name) is loaded: replace it with EFI/OC/Kexts/IntelXe.kext in your OpenCore EFI before you reboot (README-INSTALL.md, step 2.2); the new /Library part does not work with it"
-    else warn "IntelXe.kext is not loaded: add EFI/OC/Kexts/IntelXe.kext to OpenCore first (README-INSTALL.md), then run this again"; fi
+        warn "B580.kext (the earlier name) is loaded: replace it with EFI/OC/Kexts/IntelXe.kext in your OpenCore EFI before you reboot (README-INSTALL.md, Upgrading); the new /Library part does not work with it"
+    else warn "IntelXe.kext is not loaded: expected on a first install (it goes into the EFI in stage 4 of README-INSTALL.md, after --apply and before the reboot)"; fi
     for k in "${OLD_KEXTS[@]}"; do
         [ -e /Library/Extensions/$k.kext ] && warn "/Library/Extensions/$k.kext (earlier name of ${KEXTS[0]}.kext): --apply backs it up and removes it"
     done
     if ssv_stale; then
-        warn "the system-volume copy ($SSV) is from another release: --apply makes NMXAccel use the /Library copy ($USELIB) until you install this package's system-volume copy (README-INSTALL.md, step 4)"
+        warn "the system-volume copy ($SSV) is from another release: --apply makes NMXAccel use the /Library copy ($USELIB) until you install this package's system-volume copy (README-INSTALL.md, step 3.4)"
+    fi
+    if xattr -r "$H" 2>/dev/null | grep -q com.apple.quarantine; then
+        if [ "$(id -u)" = 0 ]; then xattr -dr com.apple.quarantine "$H" && ok "removed the downloaded-file mark (com.apple.quarantine) from the package"
+        else warn "the package carries the downloaded-file mark (com.apple.quarantine): --apply removes it; or run: xattr -dr com.apple.quarantine \"$H\""; fi
     fi
     if (cd "$H" && shasum -a 256 -c SHA256SUMS >/dev/null 2>&1); then ok "package files match SHA256SUMS"
     else bad "package files differ from SHA256SUMS (damaged or changed download)"; fi
@@ -93,7 +97,8 @@ rebuild_auxkc() {
 }
 
 put() { # put SRC DST: replace DST with a root-owned copy of SRC
-    rm -rf "$2.new"; ditto "$1" "$2.new"; chown -R root:wheel "$2.new"; chmod -R go-w "$2.new"
+    rm -rf "$2.new"; ditto "$1" "$2.new"; xattr -dr com.apple.quarantine "$2.new" 2>/dev/null || true
+    chown -R root:wheel "$2.new"; chmod -R go-w "$2.new"
     rm -rf "$2"; mv "$2.new" "$2"
 }
 

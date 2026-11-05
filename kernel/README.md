@@ -56,7 +56,7 @@ An IOFramebuffer for the B580's DisplayPort outputs (display IP 14.01, C20 PHYs)
 **Current version: v10c** (2026-10-29): boot1 + v9 + v10b (`intelxefbRunGated`: NMXAccel's pipe registration inside IOGraphics' gate order; detailed timings answered with their mode size) + the v10c boot-guard fix.
 
 Boot guard (`intelxe-guard` in NVRAM): a boot that ends inside its accelerated first minute turns acceleration off for the
-next boots (`intelxe-accel-off`, until `sudo nvram -d intelxe-accel-off`). Since v10c "healthy" needs WindowServer itself: its
+next boots (`intelxe-accel-off`, until `sudo nvram intelxe-accel-off=ok`; `nvram -d` leaves it in place on macOS 26). Since v10c "healthy" needs WindowServer itself: its
 IOFramebuffer server connection (opened by the process named WindowServer, the last time 45 s ago or more), steady VBL
 clients, and for the accelerated stage at least 120 NMXAccel frame calls. Before, VBL clients and one frame call were
 enough, and NMXAccel's display pipe provides both on its own: at a boot where WindowServer deadlocked before it started

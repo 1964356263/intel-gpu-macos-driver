@@ -42,11 +42,16 @@ OpenCore).
 
 ## Install
 
-1. Download the package for your macOS from [Releases](../../releases).
-2. Follow its `README-INSTALL.md`:
-   1. OpenCore changes: `IntelXe.kext`, an ACPI table that you adapt to your board, SIP and boot-args.
-   2. `sudo ./install.sh --apply`. It checks your setup first, backs up what it replaces and is undone with `--undo`.
-3. Reboot with the monitor on the B580.
+You prepare everything from Windows, Linux or macOS; no Mac is needed. The full guide is
+[`release/README-INSTALL.md`](release/README-INSTALL.md) (also in each package). In short:
+
+1. Install macOS with a plain OpenCore EFI ([Dortania's guide](https://dortania.github.io/OpenCore-Install-Guide/)).
+   The installer runs on the B580's firmware output, without acceleration; no integrated GPU is needed.
+2. In `config.plist`: SIP, the AMFI boot-arg and two quirks.
+3. On macOS: download the package for your version from [Releases](../../releases) and run `sudo ./install.sh --apply`.
+   It checks your setup first, backs up what it replaces and is undone with `--undo`.
+4. In the EFI: `IntelXe.kext` and an ACPI table with your board's path (from `-efi.zip`), then reboot with the monitor
+   on the B580.
 
 To build everything yourself, see [Building from source](#building-from-source).
 
@@ -139,7 +144,7 @@ its history: [docs/parity/HISTORY.md](docs/parity/HISTORY.md); next steps: [docs
 | `mesa/` | Mesa changes: `intelxe.diff` on upstream `f01e9b07a91` (`apply.sh`, `configure.sh`), and the same changes as a patch series |
 | `user/` | `xemac` (user side of the uAPI), tests and tools |
 | `videotoolbox/` | VideoToolbox decoder and encoders; `ffmpeg/` (patches and configure line of the shared FFmpeg libraries) |
-| `release/` | the installer and install guide of the release packages |
+| `release/` | the installer and install guide of the release packages (`templates/`, filled in by `package.sh`) |
 | `firmware/` | `fetch.sh` for the GuC/HuC firmware |
 | `efi/` | OpenCore notes and `SSDT-ARCOFF.dsl` |
 | `docs/` | measurements (`devices/b580.md`), platform table, roadmap, licensing, design notes |
@@ -153,7 +158,9 @@ it needs at its top.
 Releases follow [Semantic Versioning](https://semver.org) in its 0.x form until the driver is ready for daily use
 (1.0.0): a new feature, a new macOS version or a new GPU raises the minor number (0.2.0); fixes alone raise the patch
 number (0.1.1). A change that needs manual steps when updating (an EFI change, renamed boot-args) comes with upgrade
-steps in the release notes. Packages, the GitHub tag, the kexts' bundle versions and `install.sh` carry the same number.
+steps in the release notes. Packages, the GitHub tag and `install.sh` carry the release number; a kext or the Metal
+driver carries the number of the release that last rebuilt it (0.1.1 changed only the guide and the packaging, so its
+binaries still say 0.1.0).
 
 ## Philosophy
 

@@ -3102,7 +3102,8 @@ IOService *IntelXeFramebuffer::probe(IOService *provider, SInt32 *score)
 // ---- boot guard -----------------------------------------------------------------------------------------------------
 // The previous boot's intelxe-guard decides this one:
 //   "accel"  it ended inside its accelerated first minute: intelxe-accel-off is written (persistent), this boot and later
-//            ones stay unaccelerated (IntelXeFB only) until `sudo nvram -d intelxe-accel-off`.
+//            ones stay unaccelerated (IntelXeFB only) until `sudo nvram intelxe-accel-off=ok` ("ok" counts as
+//            absent; `nvram -d` does not remove it on macOS 26).
 //   "fb<n>"  n boots in a row ended before the unaccelerated desktop ran for a minute: logged and published only.
 //            IntelXeFB itself is never switched off by the guard (without it the monitor has no desktop at all); its kill
 //            switches are -intelxe_nofb and safe mode.

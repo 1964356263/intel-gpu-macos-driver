@@ -42,12 +42,16 @@ masaüstü (WindowServer), Metal uygulamaları ve oyunlar, VideoToolbox video i�
 
 ## Kurulum
 
-1. [Releases](../../releases) sayfasından macOS sürümünüze uygun paketi indirin.
-2. Paketteki `README-INSTALL.md`'yi izleyin:
-   1. OpenCore'da yapılacaklar: `IntelXe.kext`, anakartınıza göre uyarlayacağınız bir ACPI tablosu, SIP ve boot-arg'lar.
-   2. `sudo ./install.sh --apply`. Betik önce sisteminizi kontrol eder, değiştirdiği her şeyin yedeğini alır;
-      `--undo` ile geri alınır.
-3. Monitör B580'e bağlıyken yeniden başlatın.
+Hazırlığın tamamını Windows, Linux ya da macOS'tan yapabilirsiniz; elinizde bir Mac olması gerekmiyor. Ayrıntılı
+rehber [`release/README-INSTALL.md`](release/README-INSTALL.md)'de (İngilizce, her pakette de var). Kısaca:
+
+1. macOS'u sürücüsüz, düz bir OpenCore EFI'siyle kurun ([Dortania rehberi](https://dortania.github.io/OpenCore-Install-Guide/)).
+   Kurulum ekranı B580'in kendi UEFI çıktısıyla, hızlandırmasız gelir; dahili GPU gerekmez.
+2. `config.plist`'te SIP'i, AMFI boot-arg'ını ve iki quirk'ü ayarlayın.
+3. macOS'ta [Releases](../../releases) sayfasından sürümünüze uygun paketi indirip `sudo ./install.sh --apply`
+   çalıştırın. Betik önce sisteminizi kontrol eder, değiştirdiği her şeyin yedeğini alır; `--undo` ile geri alınır.
+4. EFI'ye `-efi.zip`'teki `IntelXe.kext`'i ve anakartınızın yoluna göre uyarlanmış ACPI tablosunu ekleyin, sonra
+   monitör B580'e bağlıyken yeniden başlatın.
 
 Her şeyi kendiniz derlemek isterseniz: [Kaynaktan derleme](#kaynaktan-derleme).
 
@@ -140,7 +144,7 @@ Linux `xe`'ye göre kod düzeyindeki ilerleme (tahmin değil, ölçüm): [docs/p
 | `mesa/` | Mesa değişiklikleri: upstream `f01e9b07a91`'e uygulanan `intelxe.diff` (`apply.sh`, `configure.sh`) ve aynı değişikliklerin yama serisi hâli |
 | `user/` | `xemac` (arayüzün kullanıcı tarafı), testler ve araçlar |
 | `videotoolbox/` | VideoToolbox çözücü ve kodlayıcıları; `ffmpeg/` (paylaşımlı FFmpeg kütüphanelerinin yamaları ve derleme ayarları) |
-| `release/` | sürüm paketlerinin kurulum betiği ve kurulum kılavuzu |
+| `release/` | sürüm paketlerinin kurulum betiği ve kurulum kılavuzu (şablonlar `templates/`'te, `package.sh` dolduruyor) |
 | `firmware/` | GuC/HuC yazılımlarını indiren `fetch.sh` |
 | `efi/` | OpenCore notları ve `SSDT-ARCOFF.dsl` |
 | `docs/` | ölçümler (`devices/b580.md`), platform tablosu, yol haritası, lisans, tasarım notları |
@@ -154,8 +158,9 @@ neye ihtiyaç duyduğu yazıyor.
 Sürücü günlük kullanıma hazır olana (1.0.0) kadar sürümler [Anlamsal Sürümleme](https://semver.org/lang/tr/)'nin 0.x
 biçimini izliyor. Yeni bir özellik, yeni bir macOS sürümü ya da yeni bir kart ikinci sayıyı artırıyor (0.2.0); yalnızca
 hata düzeltmeleri üçüncüyü (0.1.1). Güncellerken elle adım gerektiren değişiklikler (EFI'de bir değişiklik, adı değişen
-boot-arg'lar) sürüm notlarında yükseltme adımlarıyla birlikte geliyor. Paketler, GitHub etiketi, kext'lerin içindeki
-sürüm bilgisi ve `install.sh` aynı numarayı taşıyor.
+boot-arg'lar) sürüm notlarında yükseltme adımlarıyla birlikte geliyor. Paketler, GitHub etiketi ve `install.sh`
+sürüm numarasını taşıyor. Kext'ler ve Metal sürücüsü ise kendilerini en son yeniden derleyen sürümün numarasını taşıyor:
+0.1.1'de yalnızca rehber ve paketleme değiştiği için ikili dosyalarda hâlâ 0.1.0 yazıyor.
 
 ## Yaklaşımımız
 
