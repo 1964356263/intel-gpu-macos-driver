@@ -107,7 +107,7 @@ static const char *nvmtl_vk_icd_json(void) {
 }
 #define NVMTL_ICD    nvmtl_vk_icd_json()
 static inline const char *nvmtl_icd_lib_path(void) {
-    const char *e = getenv("NVMTL_ICD_LIB"); if (e && access(e, R_OK) == 0) return e;
+    const char *e = getenv("NVMTL_ICD_LIB"); if (e && access(e, R_OK) == 0 && nvmtl_code_path_allowed(e)) return e;
     switch (nvmtl_vk_vendor()) {
     case 0x1002: return nvmtl_companion("libvulkan_radeon.dylib");
     case 0x8086: return nvmtl_companion("libvulkan_intel.dylib");
@@ -165,6 +165,7 @@ static void nvmtl_vk_budget_charge(uint64_t bytes)
 static uint64_t g_vram_bytes, g_sys_bytes, g_spilled;
 static int g_budget_ext;
 static int g_rt;
+static int g_bary;  /* VK_KHR_fragment_shader_barycentric with fragmentShaderBarycentric: backs the barycentric claim */
 #define NVMTL_RT_BUFFER_USAGE (g_rt ? (VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR) : 0)
 static VkPhysicalDeviceAccelerationStructurePropertiesKHR g_asprops;
 static PFN_vkCreateAccelerationStructureKHR pvkCreateAccelerationStructureKHR;
@@ -209,7 +210,8 @@ void nvmtl_vk_counts(uint64_t *bm, uint64_t *bg, uint64_t *im, uint64_t *ig, siz
     X(vkQueueSubmit) X(vkQueueBindSparse) X(vkCreateFence) X(vkWaitForFences) X(vkResetFences) X(vkDestroyFence) X(vkCmdCopyImageToBuffer) X(vkCmdCopyBufferToImage) X(vkCmdCopyBuffer) \
     X(vkCmdPipelineBarrier) X(vkCmdClearColorImage) X(vkCmdClearDepthStencilImage) X(vkDeviceWaitIdle) X(vkFreeCommandBuffers) X(vkCmdSetViewport) X(vkCmdSetScissor) X(vkCmdSetPrimitiveTopology) X(vkCmdSetPrimitiveRestartEnable) X(vkCmdBindVertexBuffers) X(vkCreateDescriptorSetLayout) X(vkCreateDescriptorPool) X(vkDestroyDescriptorPool) X(vkDestroyDescriptorSetLayout) X(vkAllocateDescriptorSets) X(vkUpdateDescriptorSets) X(vkCmdBindDescriptorSets) X(vkCreateSampler) X(vkDestroySampler) X(vkFreeDescriptorSets) X(vkCmdSetBlendConstants) X(vkCmdSetStencilReference) X(vkCmdSetDepthBias) X(vkCmdFillBuffer) X(vkCmdBindIndexBuffer) X(vkCmdDrawIndexed) X(vkCmdCopyImage) X(vkCmdBlitImage) X(vkGetBufferDeviceAddress) X(vkCmdWriteTimestamp) X(vkCreateQueryPool) X(vkCmdResetQueryPool) X(vkCmdBeginQuery) X(vkCmdEndQuery) X(vkCmdCopyQueryPoolResults) X(vkGetQueryPoolResults) X(vkDestroyQueryPool) X(vkResetQueryPool) X(vkCmdDrawIndirect) X(vkCmdDrawIndexedIndirect) X(vkCmdDispatchIndirect) X(vkCmdSetCullMode) X(vkCmdSetFrontFace) X(vkCmdSetDepthTestEnable) X(vkCmdSetDepthWriteEnable) X(vkCmdSetDepthCompareOp) \
     X(vkDestroyBuffer) X(vkFreeMemory) X(vkDestroyImage) X(vkDestroyImageView) X(vkDestroyFramebuffer) X(vkDestroyCommandPool) \
-    X(vkCmdSetStencilTestEnable) X(vkCmdSetStencilOp) X(vkCmdSetStencilCompareMask) X(vkCmdSetStencilWriteMask) X(vkCmdSetDepthBiasEnable)
+    X(vkCmdSetStencilTestEnable) X(vkCmdSetStencilOp) X(vkCmdSetStencilCompareMask) X(vkCmdSetStencilWriteMask) X(vkCmdSetDepthBiasEnable) \
+    X(vkCmdSetDepthBoundsTestEnable) X(vkCmdSetDepthBounds)
 static int g_dyn3;
 static int g_provoking;   /* provoking vertex is per-draw dynamic state, and the last vertex can provoke */
 static int g_divisor;     /* per-instance step rates (VK_KHR_vertex_attribute_divisor), up to g_max_divisor */
@@ -218,6 +220,7 @@ static PFN_vkCmdSetProvokingVertexModeEXT pvkCmdSetProvokingVertexModeEXT;
 static int g_tess;
 static int g_indep;
 static int g_a2one;
+static int g_depth_bounds;   /* the depthBounds feature: Metal's setDepthTestMinBound:maxBound: */
 static int g_dual;
 static int g_wide;
 static PFN_vkCmdSetLineWidth pvkCmdSetLineWidth;
@@ -795,6 +798,11 @@ static int nvmtl_vk_initialize(void)
             }
         }
     }
+    /* GCN 3/4 (Tonga, Fiji, Polaris) have a 16-bit ALU, but RADV reports shaderFloat16 there only with this option (one of
+       its own driconf defaults). Without it every half-precision module is refused on those cards by nvmtl_spirv_ok,
+       though RADV compiles them. GCN 1/2 have no 16-bit ALU and keep shaderFloat16 off: their half modules stay refused,
+       which is what keeps ACO from compiling half arithmetic it cannot lower there. A value the user set wins. */
+    if (nvmtl_vk_vendor() == 0x1002) setenv("radv_enable_float16_gfx8", "true", 0);
     g_lib = dlopen(NVMTL_ICD_LIB, RTLD_NOW | RTLD_LOCAL);
     if (g_lib) {
         pvkGetInstanceProcAddr = (PFN_vkGetInstanceProcAddr)dlsym(g_lib, "vkGetInstanceProcAddr");
@@ -904,6 +912,25 @@ static int nvmtl_vk_initialize(void)
             g_sample_props.maxSampleLocationGridSize.width >= 1 && g_sample_props.maxSampleLocationGridSize.height >= 1 &&
             (g_sample_props.sampleLocationSampleCounts & (VK_SAMPLE_COUNT_2_BIT | VK_SAMPLE_COUNT_4_BIT | VK_SAMPLE_COUNT_8_BIT)) == (VK_SAMPLE_COUNT_2_BIT | VK_SAMPLE_COUNT_4_BIT | VK_SAMPLE_COUNT_8_BIT) && g_sample_props.sampleLocationSubPixelBits == 4 &&
             g_sample_props.sampleLocationCoordinateRange[0] <= 0 && g_sample_props.sampleLocationCoordinateRange[1] >= 0.9375f;
+    }
+    {
+        /* only asked, not enabled: the translator emits BaryCoordKHR and the claim must match what the device has */
+        int bext = 0; uint32_t nb = 0;
+        if (pvkEnumerateDeviceExtensionProperties && pvkEnumerateDeviceExtensionProperties(g_pdev, NULL, &nb, NULL) == VK_SUCCESS && nb) {
+            VkExtensionProperties *bp = calloc(nb, sizeof *bp);
+            if (bp && pvkEnumerateDeviceExtensionProperties(g_pdev, NULL, &nb, bp) == VK_SUCCESS)
+                for (uint32_t i = 0; i < nb; i++)
+                    if (!strcmp(bp[i].extensionName, "VK_KHR_fragment_shader_barycentric")) bext = 1;
+            free(bp);
+        }
+        if (bext) {
+            PFN_vkGetPhysicalDeviceFeatures2 gbf = (PFN_vkGetPhysicalDeviceFeatures2)pvkGetInstanceProcAddr(g_inst, "vkGetPhysicalDeviceFeatures2");
+            VkPhysicalDeviceFragmentShaderBarycentricFeaturesKHR bf = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_BARYCENTRIC_FEATURES_KHR };
+            VkPhysicalDeviceFeatures2 bf2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &bf };
+            if (gbf) gbf(g_pdev, &bf2);
+            g_bary = bf.fragmentShaderBarycentric == VK_TRUE;
+        }
+        nvlog("vk: fragment shader barycentrics %s", g_bary ? "present - supportsShaderBarycentricCoordinates YES" : "ABSENT - not claimed");
     }
     g_dyn3 = have[0]; g_clip = have[0] && have[1]; g_budget_ext = have[2]; g_rt = have[3] && have[4] && have[5];
     g_host_import = have[6];
@@ -1145,6 +1172,8 @@ static int nvmtl_vk_initialize(void)
     enabled.vertexPipelineStoresAndAtomics = supported.vertexPipelineStoresAndAtomics;
     enabled.independentBlend = supported.independentBlend; g_indep = supported.independentBlend == VK_TRUE;
     enabled.alphaToOne = supported.alphaToOne; g_a2one = supported.alphaToOne == VK_TRUE;
+    enabled.depthBounds = supported.depthBounds; g_depth_bounds = supported.depthBounds == VK_TRUE;
+    nvlog("vk: depthBounds %s", g_depth_bounds ? "AVAILABLE" : "ABSENT - setDepthTestMinBound:maxBound: is refused");
     enabled.dualSrcBlend = supported.dualSrcBlend; g_dual = supported.dualSrcBlend == VK_TRUE;
     enabled.wideLines = supported.wideLines; g_wide = supported.wideLines == VK_TRUE;
     nvlog("vk: sel1 wideLines %s (range %g..%g)", g_wide ? "AVAILABLE" : "ABSENT", (double)g_lim.lineWidthRange[0], (double)g_lim.lineWidthRange[1]);
@@ -3142,7 +3171,10 @@ static _Atomic unsigned long long g_desc_reclaims, g_desc_reclaim_fail;
 static unsigned              g_peak_sets, g_peak_fbs;
 static nvk_buffer            g_dummyBuf;
 static nvk_image             g_dummyImg;
-#define NVMTL_BINDLESS_SLOTS      131072
+/* 32768, not 131072: the heap's four bindings are SLOTS surface states each (64 bytes on Xe2), host-written, so the pool sits
+   in the CPU-visible VRAM window (1 GB on macOS). At 131072 each process took 32 MB of it; twenty-odd Metal processes left a
+   game's mapped buffers no room and they spilled to system memory (Minecraft + Sodium, 5 Nov: 137 MB over PCIe). */
+#define NVMTL_BINDLESS_SLOTS      32768
 #define NVMTL_BINDLESS_QUARANTINE 1024
 #define NVMTL_BINDLESS_SAMPLER_SLOTS 2048   /* the translator's reflect::BINDLESS_SAMPLER_SLOTS; slot 0 stays the dummy */
 static VkDescriptorSetLayout g_heapLayout; static VkDescriptorPool g_heapPool; static VkDescriptorSet g_heapSet;
@@ -3742,7 +3774,11 @@ int nvmtl_vk_defer_image_free(nvk_image *img, nvk_buffer *buf)
    difference drifts upward for the life of the process, and every later death would be held longer and longer. An entry
    whose bound was never reached because the GPU went idle goes after 2 s of idleness. Reaped where the watermark moves (nvmtl_sub_done -> nvmtl_bindless_drain), where svfix2's deferred
    images are already freed. */
-typedef struct { nvk_buffer b; nvk_image i; uint64_t seq, t; uint8_t image; } nvmtl_grace_ent;
+/* seq0: the last submission number when it died. Whatever was submitted by then is done once the watermark passes it;
+   only a command buffer begun before the death and committed later can still read it. After 2 s past seq0 that is not
+   waited for: g_cb_live can drift up (a command buffer begun and never retired), and then the bound below was never
+   reached while the GPU stayed busy - Minecraft on Apple GL held every freed buffer, 130 MB/s of system memory (5 Nov). */
+typedef struct { nvk_buffer b; nvk_image i; uint64_t seq, seq0, t; uint8_t image; } nvmtl_grace_ent;
 static nvmtl_grace_ent *g_gr; static uint32_t g_gr_n, g_gr_cap; static pthread_mutex_t g_gr_lock = PTHREAD_MUTEX_INITIALIZER;
 static uint64_t g_gr_total, g_gr_reaped;
 static __thread int t_grace_reaping;   /* the reap's own destroys go straight through */
@@ -3778,12 +3814,17 @@ static void nvmtl_grace_reap(void)
     pthread_mutex_lock(&g_gr_lock);
     uint32_t k = 0;
     for (uint32_t i = 0; i < g_gr_n; i++) {
-        if (nd < 32 && (g_gr[i].seq <= wm || (idle && now - g_gr[i].t > 2000000000ull))) done[nd++] = g_gr[i];
+        const int old = now - g_gr[i].t > 2000000000ull;
+        if (nd < 32 && (g_gr[i].seq <= wm || (old && (idle || g_gr[i].seq0 <= wm)))) done[nd++] = g_gr[i];
         else g_gr[k++] = g_gr[i];
     }
     g_gr_n = k; g_gr_reaped += nd;
     const uint64_t reaped = g_gr_reaped, held = g_gr_n;
     pthread_mutex_unlock(&g_gr_lock);
+    { static uint64_t next; if (now >= next) { next = now + 10000000000ull;
+        nvlog("vk: grace: %llu held, %llu reaped of %llu; bound %llu = submission %llu + %lld command buffers live; watermark %llu",
+              (unsigned long long)held, (unsigned long long)reaped, (unsigned long long)g_gr_total, (unsigned long long)nvmtl_grace_bound(),
+              (unsigned long long)__atomic_load_n(&g_sub_seq, __ATOMIC_ACQUIRE), (long long)atomic_load(&g_cb_live), (unsigned long long)wm); } }
     t_grace_reaping = 1;
     for (uint32_t i = 0; i < nd; i++) { if (done[i].image) nvmtl_vk_image_destroy_now(&done[i].i); else nvmtl_vk_buffer_destroy_body(&done[i].b); }
     t_grace_reaping = 0;
@@ -3804,7 +3845,7 @@ static int nvmtl_grace_defer(nvk_buffer *b, nvk_image *i)
     if (g_gr_n < g_gr_cap) {
         nvmtl_grace_ent *e = &g_gr[g_gr_n++]; memset(e, 0, sizeof *e);
         if (i) { e->i = *i; e->image = 1; } else e->b = *b;
-        e->seq = bound; e->t = clock_gettime_nsec_np(CLOCK_UPTIME_RAW); g_gr_total++; queued = 1;
+        e->seq = bound; e->seq0 = __atomic_load_n(&g_sub_seq, __ATOMIC_ACQUIRE); e->t = clock_gettime_nsec_np(CLOCK_UPTIME_RAW); g_gr_total++; queued = 1;
     }
     pthread_mutex_unlock(&g_gr_lock);
     if (!queued) return 0;
@@ -6217,14 +6258,19 @@ static int nvmtl_vk_pipeline_create_impl_lifetime_body(const void *vs, size_t vn
         td ? VK_PRIMITIVE_TOPOLOGY_PATCH_LIST : VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, VK_FALSE };
     VkPipelineTessellationStateCreateInfo tss = { VK_STRUCTURE_TYPE_PIPELINE_TESSELLATION_STATE_CREATE_INFO, NULL, 0, 1 };
     VkPipelineViewportStateCreateInfo vps = { VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO, NULL, 0, 1, NULL, 1, NULL };
-    // At most 23 states with stencil, dynamic vertex stride, line width, sample locations and dynamic-state3.
-    VkDynamicState dyn[24] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_CULL_MODE,
+    // At most 25 states with stencil, depth bounds, dynamic vertex stride, line width, sample locations and dynamic-state3.
+    VkDynamicState dyn[26] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_CULL_MODE,
         VK_DYNAMIC_STATE_BLEND_CONSTANTS, VK_DYNAMIC_STATE_STENCIL_REFERENCE, VK_DYNAMIC_STATE_DEPTH_BIAS,
         VK_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY, VK_DYNAMIC_STATE_PRIMITIVE_RESTART_ENABLE, VK_DYNAMIC_STATE_FRONT_FACE,
         VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE, VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE, VK_DYNAMIC_STATE_DEPTH_COMPARE_OP,
         VK_DYNAMIC_STATE_STENCIL_TEST_ENABLE, VK_DYNAMIC_STATE_STENCIL_OP, VK_DYNAMIC_STATE_STENCIL_COMPARE_MASK, VK_DYNAMIC_STATE_STENCIL_WRITE_MASK };
     uint32_t ndyn = hasDepth ? (out->has_stencil ? 16u : 12u) : 9u;
     dyn[ndyn++] = VK_DYNAMIC_STATE_DEPTH_BIAS_ENABLE; // core Vulkan 1.3, like primitive-restart enable
+    // Metal's depth bounds test (macOS 26) is set on the encoder, not the pipeline, and compares the depth already STORED
+    // in the attachment, which is Vulkan's depth bounds test exactly (measured on Apple silicon: stored 0.25 with a
+    // fragment at 0.9 and bounds [0.5, 1] is discarded). Both the switch and the range are dynamic.
+    out->db_dyn = hasDepth && g_depth_bounds;
+    if (out->db_dyn) { dyn[ndyn++] = VK_DYNAMIC_STATE_DEPTH_BOUNDS_TEST_ENABLE; dyn[ndyn++] = VK_DYNAMIC_STATE_DEPTH_BOUNDS; }
     if (g_dyn3) {
         dyn[ndyn++] = VK_DYNAMIC_STATE_POLYGON_MODE_EXT;
         if (g_provoking) dyn[ndyn++] = VK_DYNAMIC_STATE_PROVOKING_VERTEX_MODE_EXT;
@@ -6545,7 +6591,7 @@ int nvmtl_vk_cmd_dispatch_sass(nvk_cmdbuf *c,
     if (!looked) {
 
         const char *path = getenv("NVMTL_NVK_DYLIB");
-        void *h = dlopen(path && *path ? path : nvmtl_companion("libvulkan_nouveau.dylib"),
+        void *h = dlopen(path && *path && nvmtl_code_path_allowed(path) ? path : nvmtl_companion("libvulkan_nouveau.dylib"),
                          RTLD_NOW | RTLD_LOCAL);
         looked = 1;
         if (!h) nvlog("sass dispatch: cannot open NVK: %s", dlerror());
@@ -7678,6 +7724,10 @@ void nvmtl_vk_cmd_bind_pipeline(nvk_cmdbuf *c, nvk_pipeline *p) {
     if (p->pipe && c->graphics_pipeline == p->pipe) return;
     pvkCmdBindPipeline(c->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, (VkPipeline)p->pipe);
     c->graphics_pipeline = p->pipe;
+    if (p->db_dyn) {
+        pvkCmdSetDepthBoundsTestEnable(c->cb, c->db_on ? VK_TRUE : VK_FALSE);
+        pvkCmdSetDepthBounds(c->cb, c->db_on ? c->db_lo : 0.0f, c->db_on ? c->db_hi : 1.0f);
+    }
 }
 int nvmtl_vk_cmd_set_topology(nvk_cmdbuf *c, unsigned mtlType) {
     static const VkPrimitiveTopology map[5] = { VK_PRIMITIVE_TOPOLOGY_POINT_LIST, VK_PRIMITIVE_TOPOLOGY_LINE_LIST,
@@ -7809,6 +7859,19 @@ void nvmtl_vk_cmd_set_stencil(nvk_cmdbuf *c, int enable, const uint32_t *f, cons
         pvkCmdSetStencilWriteMask(c->cb, face[i], o[i][5]);
         c->st_wmask[i] = enable ? o[i][5] : 0;
     }
+}
+// Returns -1 when the device has no depthBounds feature and the test was asked for; the caller says so once.
+// Vulkan needs the range inside [0, 1] without VK_EXT_depth_range_unrestricted; a stored depth is in that range
+// anyway, so clamping keeps the test's answer.
+int nvmtl_vk_cmd_set_depth_bounds(nvk_cmdbuf *c, int on, float lo, float hi)
+{
+    if (!g_depth_bounds) return on ? -1 : 0;
+    lo = !(lo > 0.0f) ? 0.0f : lo > 1.0f ? 1.0f : lo;
+    hi = !(hi < 1.0f) ? 1.0f : hi < 0.0f ? 0.0f : hi;
+    c->db_on = on ? 1 : 0; c->db_lo = lo; c->db_hi = hi;
+    pvkCmdSetDepthBoundsTestEnable(c->cb, on ? VK_TRUE : VK_FALSE);
+    pvkCmdSetDepthBounds(c->cb, on ? lo : 0.0f, on ? hi : 1.0f);
+    return 0;
 }
 void nvmtl_vk_cmd_set_depth_bias(nvk_cmdbuf *c, float constant, float slope, float clamp)
 {
@@ -8260,6 +8323,7 @@ int nvmtl_vk_submit_begin_at(nvk_cmdbuf *c, nvmtl_inflight *f, const char *who)
     if (c->on_submit) { void (*cb)(void *) = c->on_submit; c->on_submit = NULL; cb(c->on_submit_ctx); }
     return 0;
 }
+void nvmtl_vk_asyncup_reap(void);
 int nvmtl_vk_submit_finish(nvmtl_inflight *f)
 {
     nvk_cmdbuf *const c = f->c; const VkFence fence = f->fence; uint64_t *const pt = f->pt;
@@ -8315,6 +8379,11 @@ int nvmtl_vk_submit_finish(nvmtl_inflight *f)
         return -2;
     }
     nvmtl_sub_done(c->subseq);
+    // Uploads left in flight (surface uploads through imported pages) were finished only by the next such upload or a
+    // later use of their image; one that nothing touched again held the submission watermark back for good, and with it
+    // every freed buffer waiting on it (Minecraft on Apple GL: 5 uploads at start, then 130 MB/s held, 5 Nov). Each
+    // finished wait now also finishes the ones whose fence has signalled.
+    { static __thread int t_aureap; if (!t_aureap) { t_aureap = 1; nvmtl_vk_asyncup_reap(); t_aureap = 0; } }
     if (g_hitch_ms > 0) nvmtl_hitch_tick();
     VkFence spent = fence;   // signalled: recycled below (nvmtl_fence_put)
     if (c->wseq && c->wseq != NVMTL_WSEQ_BLIND) {
@@ -9453,6 +9522,7 @@ void nvmtl_vk_cmd_barrier_c2c(nvk_cmdbuf *c)
 }
 
 int nvmtl_vk_rt_available(void) { return nvmtl_vk_init() ? 0 : g_rt; }
+int nvmtl_vk_barycentrics_available(void) { return nvmtl_vk_init() ? 0 : g_bary; }
 uint64_t nvmtl_vk_rt_limit(int which)
 {
     if (nvmtl_vk_init() || !g_rt) return 0;
