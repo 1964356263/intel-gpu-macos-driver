@@ -16,7 +16,12 @@ final class Manager: ObservableObject {
     @Published var log = ""
     @Published var lastResult: String?
     @Published var rebootNeeded = false
-    @Published var efiReminder = false
+    @Published var efiNotice: EFINotice?
+    @Published var efi = EFIStatus()
+    @Published var efiTarget = EFITarget.recorded
+    @Published var efiPlans: [EFIAction: EFIPlan] = [:]
+    @Published var efiChoice: String? = UserDefaults.standard.string(forKey: "efiPartition")
+    @Published var requestedSection: Section?
     private var logTimer: Timer?
 
     init() {
@@ -34,7 +39,42 @@ final class Manager: ObservableObject {
         probing = true
         facts = await Task.detached { SystemFacts.probe() }.value
         await refreshPackageStatus()
+        await refreshEFI()
         probing = false
+    }
+
+    /// efi.sh --status, and its plans when the EFI can be read. The EFI is the one OpenCore recorded; when it recorded
+    /// none, the partition chosen on the EFI page (by UUID).
+    func refreshEFI() async {
+        guard let package, let script = efiScript(for: package) else { efi = EFIStatus(); efiPlans = [:]; return }
+        let choice = efiChoice
+        let test = ProcessInfo.processInfo.environment["INTELXE_MANAGER_TEST_EFI"]
+        let (status, target, plans) = await Task.detached { () -> (EFIStatus, EFITarget, [EFIAction: EFIPlan]) in
+            var target = test.map { EFITarget.folder($0) } ?? .recorded
+            var status = efiStatus(script: script, package: package, target: target)
+            if !status.found, let choice, status.candidates.contains(where: { $0.uuid == choice }) {
+                target = .partition(choice)
+                status = efiStatus(script: script, package: package, target: target)
+            }
+            var plans: [EFIAction: EFIPlan] = [:]
+            if status.readable && status.isOpenCore {
+                for action in [EFIAction.apply, .settings, .undo] {
+                    if let argument = action.planArgument, let plan = efiPlan(script: script, package: package, target: target, argument) {
+                        plans[action] = plan
+                    }
+                }
+            }
+            return (status, target, plans)
+        }.value
+        efi = status
+        efiTarget = target
+        efiPlans = plans
+    }
+
+    func chooseEFIPartition(_ uuid: String) {
+        efiChoice = uuid
+        UserDefaults.standard.set(uuid, forKey: "efiPartition")
+        Task { await refreshEFI() }
     }
 
     func refreshPackageStatus() async {
@@ -64,7 +104,7 @@ final class Manager: ObservableObject {
         } else {
             self.package = package
             UserDefaults.standard.set(package.directory.path, forKey: "package")
-            Task { await refreshPackageStatus() }
+            Task { await refreshPackageStatus(); await refreshEFI() }
         }
     }
 
@@ -100,7 +140,8 @@ final class Manager: ObservableObject {
 
     private func appendLog(_ text: String) { log += text }
 
-    private func perform(title: String, command: String, needsRoot: Bool, then done: @escaping @MainActor (RunResult) -> Void) {
+    private func perform(title: String, command: String, needsRoot: Bool, then done: @escaping @MainActor (RunResult) -> Void,
+                         afterRefresh: (@MainActor () -> Void)? = nil) {
         let logs = dataDirectory.appendingPathComponent("logs")
         try? FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
         let formatter = DateFormatter()
@@ -126,7 +167,10 @@ final class Manager: ObservableObject {
                 self.busy = nil
                 if !result.cancelled && !result.succeeded && !result.message.isEmpty { self.log += result.message + "\n" }
                 done(result)
-                Task { await self.refresh() }
+                Task {
+                    await self.refresh()
+                    afterRefresh?()
+                }
             }
         }
     }
@@ -134,33 +178,61 @@ final class Manager: ObservableObject {
     func perform(_ action: DriverAction) {
         guard let package else { return }
         let command = "\(shellQuoted(package.script.path)) \(action.argument)"
-        perform(title: action.title, command: command, needsRoot: action.needsRoot) { result in
+        var succeeded = false
+        perform(title: action.title, command: command, needsRoot: action.needsRoot, then: { result in
             if result.cancelled {
                 self.lastResult = String(localized: "Cancelled. Nothing changed.")
             } else if result.succeeded {
                 self.lastResult = String(localized: "Finished.")
                 if action.needsReboot { self.rebootNeeded = true }
-                if action == .install || action == .uninstall { self.efiReminder = true }
+                succeeded = true
             } else {
                 self.lastResult = String(localized: "It did not finish. See the log.")
             }
+        }, afterRefresh: {
+            // the EFI as it is after the refresh: a notice only when its IntelXe.kext is not this package's or could not be read
+            if succeeded { self.efiNotice = EFINotice.after(action, status: self.efi) }
+        })
+    }
+
+    /// An EFI change through efi.sh, with the hash of the plan that was shown: efi.sh refuses if the EFI changed since.
+    func performEFI(_ action: EFIAction) {
+        guard let package, let script = efiScript(for: package) else { return }
+        var words = efiWords(script: script, package: package, target: efiTarget, action.argument)
+        if action.planArgument != nil {
+            guard let plan = efiPlans[action] else { return }
+            words += ["--expect", plan.hash]
         }
+        perform(title: action.title, command: words.map(shellQuoted).joined(separator: " "), needsRoot: true, then: { result in
+            if result.cancelled {
+                self.lastResult = String(localized: "Cancelled. Nothing changed.")
+            } else if result.succeeded {
+                self.lastResult = action == .mount ? String(localized: "Mounted.") : String(localized: "Finished. Restart to use the change.")
+                if action != .mount { self.rebootNeeded = true }
+            } else {
+                self.lastResult = String(localized: "It did not finish. See the log.")
+            }
+        }, afterRefresh: {
+            if action != .mount, let notice = self.efiNotice, notice != .removeKext {
+                self.efiNotice = EFINotice.after(.install, status: self.efi)
+            }
+        })
     }
 
     func performZink(_ action: ZinkAction) {
         guard let zinkPackage else { return }
         let script = shellQuoted(zinkPackage.directory.appendingPathComponent("install.sh").path)
-        perform(title: action.title, command: "\(script) \(action.arguments)", needsRoot: action.needsRoot) { result in
+        perform(title: action.title, command: "\(script) \(action.arguments)", needsRoot: action.needsRoot, then: { result in
             self.lastResult = result.cancelled ? String(localized: "Cancelled. Nothing changed.")
                 : result.succeeded ? String(localized: "Finished.") : String(localized: "It did not finish. See the log.")
-        }
+        })
     }
 
     func clearBootGuard() {
-        perform(title: String(localized: "Clear the boot guard"), command: "/usr/sbin/nvram intelxe-accel-off=ok", needsRoot: true) { result in
+        perform(title: String(localized: "Clear the boot guard"), command: "/usr/sbin/nvram intelxe-accel-off=ok", needsRoot: true, then: { result in
             self.lastResult = result.succeeded ? String(localized: "Cleared. It takes effect at the next boot.") : String(localized: "It did not finish. See the log.")
             if result.succeeded { self.rebootNeeded = true }
-        }
+        })
     }
 }
 
@@ -200,12 +272,13 @@ extension ZinkAction {
 }
 
 enum Section: String, CaseIterable, Identifiable {
-    case system, driver, zink, log
+    case system, driver, efi, zink, log
     var id: String { rawValue }
     var title: LocalizedStringKey {
         switch self {
         case .system: return "System"
         case .driver: return "Driver"
+        case .efi: return "EFI (OpenCore)"
         case .zink: return "OpenGL (Zink)"
         case .log: return "Log"
         }
@@ -214,6 +287,7 @@ enum Section: String, CaseIterable, Identifiable {
         switch self {
         case .system: return "cpu"
         case .driver: return "shippingbox"
+        case .efi: return "externaldrive"
         case .zink: return "cube.transparent"
         case .log: return "text.alignleft"
         }
@@ -242,6 +316,7 @@ struct RootView: View {
                 switch page.section ?? .system {
                 case .system: SystemView()
                 case .driver: DriverView()
+                case .efi: EFIView()
                 case .zink: ZinkView()
                 case .log: LogView()
                 }
@@ -250,6 +325,9 @@ struct RootView: View {
         }
         .disabled(manager.busy != nil)
         .overlay(alignment: .bottom) { BusyBar() }
+        .onChange(of: manager.requestedSection) { _, section in
+            if let section { page.section = section; manager.requestedSection = nil }
+        }
         .task {
             await manager.refresh()
             await manager.checkForUpdate()
@@ -276,15 +354,10 @@ struct Banners: View {
     @EnvironmentObject var manager: Manager
     var body: some View {
         VStack(spacing: 0) {
-            if manager.efiReminder {
-                Banner(symbol: "externaldrive.badge.exclamationmark", tint: .orange,
-                       text: "This app does not change your EFI. Update IntelXe.kext there yourself before you restart: it is in the package, in EFI/OC/Kexts.") {
-                    if let package = manager.package {
-                        Button("Show in Finder") {
-                            NSWorkspace.shared.activateFileViewerSelecting([package.directory.appendingPathComponent("EFI/OC/Kexts/IntelXe.kext")])
-                        }
-                    }
-                    Button("Done") { manager.efiReminder = false }
+            if let notice = manager.efiNotice {
+                Banner(symbol: "externaldrive.badge.exclamationmark", tint: .orange, text: notice.text) {
+                    Button("Open the EFI page") { manager.requestedSection = .efi }
+                    Button("Done") { manager.efiNotice = nil }
                 }
             }
             if manager.rebootNeeded {

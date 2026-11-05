@@ -11,5 +11,6 @@ done
 lipo -create "$O/obj/IntelXeManager-x86_64" "$O/obj/IntelXeManager-arm64" -output "$A/Contents/MacOS/IntelXeManager"
 sed "s/@VER@/$VER/g" "$D/Info.plist" > "$A/Contents/Info.plist"
 ditto "$D/Resources" "$A/Contents/Resources"
+install -m 755 "$D/../release/templates/efi.sh" "$A/Contents/Resources/efi.sh"   # for packages made before efi.sh
 codesign -f -s - --deep "$A" 2>/dev/null
 echo "$A"
