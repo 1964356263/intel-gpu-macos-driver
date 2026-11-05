@@ -87,6 +87,44 @@ pub(in crate::native) fn direct_global(
     }
 }
 
+/// The function constants of a module translated for later specialization (`with_function_constants_unknown`) that were
+/// given no value: the initial zero of their variable is a placeholder, and folding it makes every variant behave as
+/// if the constant were 0. Baked constants have their value as the initializer and stay foldable; a baked zero also
+/// lands here, which only loses a fold.
+fn unbaked_function_constants(module: &Module) -> HashSet<Word> {
+    if !crate::meta::function_constants_are_unknown() {
+        return HashSet::default();
+    }
+    let zero_initialized: HashSet<Word> = module
+        .types_global_values
+        .iter()
+        .filter(|inst| matches!(inst.class.opcode, Op::ConstantNull | Op::Undef))
+        .filter_map(|inst| inst.result_id)
+        .collect();
+    let initialized_by_zero: HashSet<Word> = module
+        .types_global_values
+        .iter()
+        .filter(|inst| inst.class.opcode == Op::Variable)
+        .filter(|inst| {
+            matches!(inst.operands.get(1), Some(Operand::IdRef(init)) if zero_initialized.contains(init))
+        })
+        .filter_map(|inst| inst.result_id)
+        .collect();
+    module
+        .debug_names
+        .iter()
+        .filter(|inst| inst.class.opcode == Op::Name)
+        .filter_map(|inst| match (inst.operands.first(), inst.operands.get(1)) {
+            (Some(Operand::IdRef(target)), Some(Operand::LiteralString(name)))
+                if name.contains(".MTL_FC_INIT_") && initialized_by_zero.contains(target) =>
+            {
+                Some(*target)
+            }
+            _ => None,
+        })
+        .collect()
+}
+
 pub(in crate::native) fn compute_global_consts(
     module: &Module,
     consts: &HashMap<Word, i128>,
@@ -132,9 +170,10 @@ pub(in crate::native) fn compute_global_consts(
         }
     }
 
+    let unbaked = unbaked_function_constants(module);
     let mut gc: HashMap<Word, i128> = HashMap::default();
     for g in &global_vars {
-        if store_count.get(g).copied().unwrap_or(0) == 0 {
+        if store_count.get(g).copied().unwrap_or(0) == 0 && !unbaked.contains(g) {
             if let Some(init) = initializer.get(g) {
                 if let Some(c) = consts.get(init) {
                     gc.insert(*g, *c);
@@ -287,9 +326,10 @@ pub(in crate::native) fn compute_vector_global_consts(
         }
     }
 
+    let unbaked = unbaked_function_constants(module);
     let mut gc: HashMap<Word, Vec<i128>> = HashMap::default();
     for g in &global_vars {
-        if store_count.get(g).copied().unwrap_or(0) == 0 {
+        if store_count.get(g).copied().unwrap_or(0) == 0 && !unbaked.contains(g) {
             if let Some(init) = initializer.get(g) {
                 if let Some(c) = composites.get(init) {
                     gc.insert(*g, c.clone());

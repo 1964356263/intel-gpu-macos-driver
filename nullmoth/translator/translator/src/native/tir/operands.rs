@@ -531,6 +531,12 @@ pub(in crate::native) fn first_type_after_op(rhs: &str) -> Option<LlType> {
 }
 
 pub(in crate::native) fn first_type_after(rhs: &str, start: usize) -> Option<LlType> {
+    // The first candidate below, without collecting the tokens: nearly always a one-word type.
+    if let Some(first) = rhs.split_whitespace().nth(start) {
+        if let Ok(ty) = parse_type(first.trim_end_matches(',')) {
+            return Some(ty);
+        }
+    }
     let toks: Vec<&str> = rhs.split_whitespace().collect();
     for begin in start..toks.len() {
         for end in (begin + 1)..=toks.len() {

@@ -98,7 +98,7 @@ pub(super) fn inline_pointer_select_consumers(
     san_ll: &str,
     entry_name: Option<&str>,
 ) -> PointerConsumerInlining {
-    let Some(items) = parse_items(san_ll) else {
+    let Some(mut items) = parse_items(san_ll) else {
         return PointerConsumerInlining {
             source: san_ll.to_string(),
             requires_relooper: false,
@@ -154,19 +154,22 @@ pub(super) fn inline_pointer_select_consumers(
             }
         }
     }
-    let mut source = san_ll.to_string();
-    let mut changed = false;
+    let mut any = false;
     for (selected, consumer) in selected_consumers {
         let targets = crate::fxhash::set_from([consumer]);
-        if let Some(inlined) = try_inline(&source, Some((&targets, selected.as_str(), entry_name)))
-        {
-            changed |= inlined != source;
-            source = inlined;
-        }
+        any |= try_inline_items(&mut items, Some((&targets, selected.as_str(), entry_name))).is_some();
     }
+    if !any {
+        return PointerConsumerInlining {
+            source: san_ll.to_string(),
+            requires_relooper: false,
+        };
+    }
+    let source = render(&items, san_ll.ends_with('\n'));
+    let requires_relooper = source != san_ll;
     PointerConsumerInlining {
         source,
-        requires_relooper: changed,
+        requires_relooper,
     }
 }
 
@@ -176,16 +179,17 @@ pub(super) fn inline_cursor_call_sites(
 ) -> Option<String> {
     let mut ordered = sites.iter().collect::<Vec<_>>();
     ordered.sort();
-    let mut source = san_ll.to_string();
-    let mut changed = false;
+    let mut items = parse_items(san_ll)?;
+    let mut any = false;
     for (callee, argument) in ordered {
         let targets = crate::fxhash::set_from([format!("@{}", callee.trim_start_matches('@'))]);
-        if let Some(inlined) = try_inline(&source, Some((&targets, argument.as_str(), None))) {
-            changed |= inlined != source;
-            source = inlined;
-        }
+        any |= try_inline_items(&mut items, Some((&targets, argument.as_str(), None))).is_some();
     }
-    changed.then_some(source)
+    if !any {
+        return None;
+    }
+    let source = render(&items, san_ll.ends_with('\n'));
+    (source != san_ll).then_some(source)
 }
 
 #[derive(Clone)]
@@ -352,6 +356,27 @@ struct CallSite {
     callee: String,
     ret_ty: String,
     args: Vec<String>,
+}
+
+/// The callee of a call line, exactly as parse_call would name it, without parsing the arguments or allocating: most
+/// lines of a body are not calls of an inlinable function, and they are asked about again after every inlining.
+fn call_callee(line: &str) -> Option<&str> {
+    if !contains_bytes(line.as_bytes(), b"call ") {
+        return None;
+    }
+    let trimmed = line.trim();
+    let rhs = match trimmed.find(" = ") {
+        Some(eq) if trimmed[..eq].trim().starts_with('%') => trimmed[eq + 3..].trim(),
+        _ => trimmed,
+    };
+    let rhs = strip_leading_word(rhs, &["tail", "musttail", "notail"]);
+    let after_call = rhs.trim_start().strip_prefix("call ")?;
+    let at = after_call.find('@')?;
+    if after_call[..at].contains('(') {
+        return None;
+    }
+    let paren = after_call[at..].find('(')? + at;
+    Some(after_call[at..paren].trim())
 }
 
 fn parse_call(line: &str) -> Option<CallSite> {
@@ -666,11 +691,20 @@ fn try_inline(
     san_ll: &str,
     targets: Option<(&HashSet<String>, &str, Option<&str>)>,
 ) -> Option<String> {
-    let items = parse_items(san_ll)?;
+    let mut items = parse_items(san_ll)?;
+    try_inline_items(&mut items, targets)?;
+    Some(render(&items, san_ll.ends_with('\n')))
+}
 
+/// try_inline on parsed items, so a caller with many targets parses and renders the module once. None leaves them as
+/// they were, as a None of try_inline leaves its source.
+fn try_inline_items(
+    items: &mut Vec<Item>,
+    targets: Option<(&HashSet<String>, &str, Option<&str>)>,
+) -> Option<()> {
     let mut internal: HashMap<String, (DefSig, Vec<String>)> = HashMap::default();
     let mut has_any_func = false;
-    for it in &items {
+    for it in items.iter() {
         if let Item::Func(f) = it {
             has_any_func = true;
             let sig = parse_def_header(&f.header)?;
@@ -692,55 +726,60 @@ fn try_inline(
         return None;
     }
 
-    let mut any_call = false;
-    for it in &items {
-        if let Item::Func(f) = it {
-            for line in &f.body {
-                if let Some(c) = parse_call(line) {
-                    if internal.contains_key(&c.callee) {
-                        any_call = true;
-                        break;
-                    }
-                }
-            }
-        }
-        if any_call {
-            break;
-        }
-    }
+    let any_call = items.iter().any(|it| match it {
+        Item::Func(f) => f.body.iter().any(|line| {
+            call_callee(line).is_some_and(|callee| internal.contains_key(callee))
+                && parse_call(line).is_some_and(|c| internal.contains_key(&c.callee))
+        }),
+        Item::Raw(_) => false,
+    });
     if !any_call {
         return None;
     }
 
-    let mut counter = next_inline_ordinal(san_ll);
-    let mut out_items: Vec<Item> = Vec::with_capacity(items.len());
+    let mut counter = next_inline_ordinal_items(items);
+    let mut new_bodies: Vec<(usize, Vec<String>)> = Vec::new();
+    for (index, it) in items.iter().enumerate() {
+        let Item::Func(f) = it else { continue };
+        let selected_pointer = targets.and_then(|(_, selected, entry_name)| {
+            let signature = parse_def_header(&f.header)?;
+            entry_name
+                .is_none_or(|entry_name| signature.name.trim_start_matches('@') == entry_name)
+                .then_some(selected)
+        });
+        if targets.is_some() && selected_pointer.is_none() {
+            continue;
+        }
+        if find_inlinable_call(&f.body, 0, &internal, selected_pointer).is_none() {
+            continue;
+        }
+        new_bodies.push((
+            index,
+            inline_body_to_fixpoint(f.body.clone(), &internal, &mut counter, selected_pointer)?,
+        ));
+    }
+    for (index, body) in new_bodies {
+        if let Item::Func(f) = &mut items[index] {
+            f.body = body;
+        }
+    }
+    *items = drop_dead_internal_functions(std::mem::take(items));
+    Some(())
+}
+
+/// next_inline_ordinal over the module's lines: an ordinal never spans a line.
+fn next_inline_ordinal_items(items: &[Item]) -> usize {
+    let mut next = 0usize;
     for it in items {
         match it {
-            Item::Raw(r) => out_items.push(Item::Raw(r)),
+            Item::Raw(lines) => lines.iter().for_each(|l| next = next.max(next_inline_ordinal(l))),
             Item::Func(f) => {
-                let selected_pointer = targets.and_then(|(_, selected, entry_name)| {
-                    let signature = parse_def_header(&f.header)?;
-                    entry_name
-                        .is_none_or(|entry_name| {
-                            signature.name.trim_start_matches('@') == entry_name
-                        })
-                        .then_some(selected)
-                });
-                let new_body = if targets.is_some() && selected_pointer.is_none() {
-                    f.body
-                } else {
-                    inline_body_to_fixpoint(f.body, &internal, &mut counter, selected_pointer)?
-                };
-                out_items.push(Item::Func(FuncBlock {
-                    header: f.header,
-                    body: new_body,
-                }));
+                next = next.max(next_inline_ordinal(&f.header));
+                f.body.iter().for_each(|l| next = next.max(next_inline_ordinal(l)));
             }
         }
     }
-
-    let out_items = drop_dead_internal_functions(out_items);
-    Some(render(&out_items, san_ll.ends_with('\n')))
+    next
 }
 
 fn next_inline_ordinal(source: &str) -> usize {
@@ -1010,10 +1049,13 @@ fn inline_body_to_fixpoint(
     selected_pointer: Option<&str>,
 ) -> Option<Vec<String>> {
     let mut budget = 100_000usize;
+    let mut from = 0usize;
     loop {
-        let Some(idx) = find_inlinable_call(&body, internal, selected_pointer) else {
+        let Some(idx) = find_inlinable_call(&body, from, internal, selected_pointer) else {
             return Some(body);
         };
+        // inline_one keeps the lines before the call in place (it only relabels phis there): nothing new to find above it
+        from = idx;
         body = inline_one(body, idx, internal, counter, selected_pointer.is_some())?;
         budget -= 1;
         if budget == 0 {
@@ -1024,10 +1066,14 @@ fn inline_body_to_fixpoint(
 
 fn find_inlinable_call(
     body: &[String],
+    from: usize,
     internal: &HashMap<String, (DefSig, Vec<String>)>,
     selected_pointer: Option<&str>,
 ) -> Option<usize> {
-    for (i, line) in body.iter().enumerate() {
+    for (i, line) in body.iter().enumerate().skip(from) {
+        if !call_callee(line).is_some_and(|callee| internal.contains_key(callee)) {
+            continue;
+        }
         if let Some(c) = parse_call(line) {
             if internal.contains_key(&c.callee)
                 && selected_pointer
@@ -1422,8 +1468,11 @@ fn relabel_phi_preds(line: &str, bcall: Option<&str>, cont: &str) -> String {
 }
 
 fn is_phi_line(line: &str) -> bool {
-    if let Some(eq) = line.trim().find(" = ") {
-        let rhs = line.trim()[eq + 3..].trim_start();
+    let line = line.trim();
+    let bytes = line.as_bytes();
+    // the first " = ", without building a substring searcher for each of many lines
+    if let Some(eq) = (1..bytes.len().saturating_sub(1)).find(|&i| bytes[i] == b'=' && bytes[i - 1] == b' ' && bytes[i + 1] == b' ') {
+        let rhs = line[eq + 2..].trim_start();
         return rhs.starts_with("phi ") || rhs == "phi";
     }
     false

@@ -188,46 +188,135 @@ impl Shape {
     }
 }
 
-pub(super) fn calculate(graph: &Graph) -> Option<Shape> {
-    let mut counter = 0usize;
-    let blocks = graph.reachable();
-    let entries = BTreeSet::from([graph.entry]);
-    let mut cut = Cut::new();
-    calculate_region(graph, blocks, entries, &mut cut, &mut counter)
+/// The graph in indices: label order is index order, so ascending bits are ascending labels and the regions below
+/// walk in the same order as sets of labels would. A function has one graph and many regions, each of them a set
+/// asked about every edge, so a region is a bit set rather than a tree.
+struct Dense {
+    labels: Vec<Label>,
+    succ: Vec<Vec<u32>>,
+    pred: Vec<Vec<u32>>,
+    words: usize,
 }
 
+impl Dense {
+    fn new(graph: &Graph) -> Self {
+        let labels = graph.predecessors.keys().copied().collect::<Vec<_>>();
+        let index = |label: &Label| labels.binary_search(label).map(|i| i as u32).ok();
+        let convert = |list: &[Label]| list.iter().filter_map(index).collect::<Vec<_>>();
+        let succ = labels.iter().map(|label| convert(graph.succ(*label))).collect();
+        let pred = labels.iter().map(|label| convert(graph.pred(*label))).collect();
+        let words = labels.len().div_ceil(64);
+        Self { labels, succ, pred, words }
+    }
+
+    fn label_set(&self, entries: &[u32]) -> BTreeSet<Label> {
+        entries.iter().map(|entry| self.labels[*entry as usize]).collect()
+    }
+}
+
+#[derive(Clone)]
+struct Bits(Vec<u64>);
+
+impl Bits {
+    fn empty(words: usize) -> Self {
+        Self(vec![0; words])
+    }
+
+    #[inline]
+    fn has(&self, index: u32) -> bool {
+        self.0[index as usize / 64] >> (index % 64) & 1 != 0
+    }
+
+    /// True when the bit was not set.
+    #[inline]
+    fn insert(&mut self, index: u32) -> bool {
+        let word = &mut self.0[index as usize / 64];
+        let bit = 1u64 << (index % 64);
+        let new = *word & bit == 0;
+        *word |= bit;
+        new
+    }
+
+    #[inline]
+    fn remove(&mut self, index: u32) {
+        self.0[index as usize / 64] &= !(1u64 << (index % 64));
+    }
+
+    fn remove_all(&mut self, other: &Bits) {
+        for (word, removed) in self.0.iter_mut().zip(&other.0) {
+            *word &= !removed;
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.0.iter().all(|word| *word == 0)
+    }
+
+    fn iter(&self) -> impl Iterator<Item = u32> + '_ {
+        self.0.iter().enumerate().flat_map(|(at, word)| {
+            let mut word = *word;
+            std::iter::from_fn(move || {
+                (word != 0).then(|| {
+                    let bit = word.trailing_zeros();
+                    word &= word - 1;
+                    at as u32 * 64 + bit
+                })
+            })
+        })
+    }
+}
+
+type DenseCut = crate::fxhash::HashSet<(u32, u32)>;
+
+fn sorted_unique(mut list: Vec<u32>) -> Vec<u32> {
+    list.sort_unstable();
+    list.dedup();
+    list
+}
+
+pub(super) fn calculate(graph: &Graph) -> Option<Shape> {
+    let mut counter = 0usize;
+    let dense = Dense::new(graph);
+    let mut blocks = Bits::empty(dense.words);
+    for label in graph.reachable() {
+        blocks.insert(dense.labels.binary_search(&label).ok()? as u32);
+    }
+    // An entry the graph does not know is in no region: the empty shape.
+    let entry = dense.labels.binary_search(&graph.entry).ok()? as u32;
+    let mut cut = DenseCut::default();
+    calculate_region(&dense, blocks, vec![entry], &mut cut, &mut counter)
+}
+
+/// `entries` is sorted and has no duplicates.
 fn calculate_region(
-    graph: &Graph,
-    mut blocks: BTreeSet<Label>,
-    entries: BTreeSet<Label>,
-    cut: &mut Cut,
+    graph: &Dense,
+    mut blocks: Bits,
+    mut entries: Vec<u32>,
+    cut: &mut DenseCut,
     counter: &mut usize,
 ) -> Option<Shape> {
-    let entries = entries
-        .into_iter()
-        .filter(|entry| blocks.contains(entry))
-        .collect::<BTreeSet<_>>();
-    if entries.is_empty() || blocks.is_empty() {
+    entries.retain(|entry| blocks.has(*entry));
+    if entries.is_empty() {
         return None;
     }
-    if entries.len() == 1 {
-        let label = *entries.iter().next()?;
-        let reentered = graph.pred(label).iter().any(|predecessor| {
-            blocks.contains(predecessor) && !cut.contains(&(*predecessor, label))
-        });
+    if let [label] = entries[..] {
+        let reentered = graph.pred[label as usize]
+            .iter()
+            .any(|predecessor| blocks.has(*predecessor) && !cut.contains(&(*predecessor, label)));
         if !reentered {
             let id = fresh(counter);
-            blocks.remove(&label);
-            let next_entries = graph
-                .succ(label)
-                .iter()
-                .copied()
-                .filter(|target| blocks.contains(target) && !cut.contains(&(label, *target)))
-                .collect::<BTreeSet<_>>();
+            blocks.remove(label);
+            let next_entries = sorted_unique(
+                graph.succ[label as usize]
+                    .iter()
+                    .copied()
+                    .filter(|target| blocks.has(*target) && !cut.contains(&(label, *target)))
+                    .collect(),
+            );
             let next = calculate_region(graph, blocks, next_entries, cut, counter);
             return Some(Shape::Simple {
                 id,
-                label,
+                label: graph.labels[label as usize],
                 next: next.map(Box::new),
             });
         }
@@ -240,59 +329,57 @@ fn calculate_region(
 }
 
 fn make_loop(
-    graph: &Graph,
-    mut blocks: BTreeSet<Label>,
-    entries: BTreeSet<Label>,
-    cut: &mut Cut,
+    graph: &Dense,
+    mut blocks: Bits,
+    entries: Vec<u32>,
+    cut: &mut DenseCut,
     counter: &mut usize,
 ) -> Shape {
     let id = fresh(counter);
-    let mut inner = BTreeSet::new();
-    let mut queue = entries.iter().copied().collect::<VecDeque<_>>();
-    while let Some(current) = queue.pop_front() {
-        if !blocks.contains(&current) || !inner.insert(current) {
+    let mut inner = Bits::empty(graph.words);
+    let mut queue = entries.clone();
+    while let Some(current) = queue.pop() {
+        if !blocks.has(current) || !inner.insert(current) {
             continue;
         }
-        for predecessor in graph.pred(current) {
-            if blocks.contains(predecessor)
+        for predecessor in &graph.pred[current as usize] {
+            if blocks.has(*predecessor)
                 && !cut.contains(&(*predecessor, current))
-                && !inner.contains(predecessor)
+                && !inner.has(*predecessor)
             {
-                queue.push_back(*predecessor);
+                queue.push(*predecessor);
             }
         }
     }
-    blocks.retain(|label| !inner.contains(label));
-    let next_entries = inner
-        .iter()
-        .flat_map(|label| {
-            graph
-                .succ(*label)
+    blocks.remove_all(&inner);
+    let mut next_entries = Vec::new();
+    let mut back_edges = Vec::new();
+    for label in inner.iter() {
+        let successors = &graph.succ[label as usize];
+        next_entries.extend(
+            successors
                 .iter()
-                .map(move |target| (*label, *target))
-        })
-        .filter(|edge| blocks.contains(&edge.1) && !cut.contains(edge))
-        .map(|edge| edge.1)
-        .collect::<BTreeSet<_>>();
-    let back_edges = inner
-        .iter()
-        .flat_map(|label| {
+                .copied()
+                .filter(|target| blocks.has(*target) && !cut.contains(&(label, *target))),
+        );
+        back_edges.extend(
             entries
                 .iter()
-                .filter(|entry| graph.succ(*label).contains(entry))
-                .map(move |entry| (*label, *entry))
-        })
-        .collect::<Vec<_>>();
+                .filter(|entry| successors.contains(entry))
+                .map(|entry| (label, *entry)),
+        );
+    }
+    let next_entries = sorted_unique(next_entries);
     let restore = back_edges
-        .iter()
-        .filter(|edge| cut.insert(**edge))
-        .copied()
+        .into_iter()
+        .filter(|edge| cut.insert(*edge))
         .collect::<Vec<_>>();
     let body = calculate_region(graph, inner, entries.clone(), cut, counter);
     for edge in restore {
         cut.remove(&edge);
     }
     let next = calculate_region(graph, blocks, next_entries, cut, counter);
+    let entries = graph.label_set(&entries);
     let inner = body.unwrap_or_else(|| Shape::Multiple {
         id: fresh(counter),
         entries: entries.clone(),
@@ -308,91 +395,87 @@ fn make_loop(
 }
 
 fn make_multiple(
-    graph: &Graph,
-    mut blocks: BTreeSet<Label>,
-    entries: BTreeSet<Label>,
-    groups: BTreeMap<Label, BTreeSet<Label>>,
-    cut: &mut Cut,
+    graph: &Dense,
+    mut blocks: Bits,
+    entries: Vec<u32>,
+    groups: Vec<(u32, Bits)>,
+    cut: &mut DenseCut,
     counter: &mut usize,
 ) -> Shape {
     let id = fresh(counter);
-    let owned = groups
-        .values()
-        .flat_map(|group| group.iter().copied())
-        .collect::<BTreeSet<_>>();
-    blocks.retain(|label| !owned.contains(label));
-    let mut handled = Vec::new();
+    for (_, group) in &groups {
+        blocks.remove_all(group);
+    }
+    let mut handled = Vec::with_capacity(groups.len());
     let mut next_entries = entries
         .iter()
         .copied()
-        .filter(|entry| !groups.contains_key(entry))
-        .collect::<BTreeSet<_>>();
-    for (entry, group) in &groups {
-        next_entries.extend(
-            group
-                .iter()
-                .flat_map(|label| {
-                    graph
-                        .succ(*label)
-                        .iter()
-                        .map(move |target| (*label, *target))
-                })
-                .filter(|edge| blocks.contains(&edge.1) && !cut.contains(edge))
-                .map(|edge| edge.1),
-        );
-        if let Some(shape) =
-            calculate_region(graph, group.clone(), BTreeSet::from([*entry]), cut, counter)
-        {
-            handled.push((*entry, shape));
+        .filter(|entry| groups.binary_search_by_key(entry, |(group, _)| *group).is_err())
+        .collect::<Vec<_>>();
+    for (entry, group) in groups {
+        for label in group.iter() {
+            next_entries.extend(
+                graph.succ[label as usize]
+                    .iter()
+                    .copied()
+                    .filter(|target| blocks.has(*target) && !cut.contains(&(label, *target))),
+            );
+        }
+        if let Some(shape) = calculate_region(graph, group, vec![entry], cut, counter) {
+            handled.push((graph.labels[entry as usize], shape));
         }
     }
-    let next = calculate_region(graph, blocks, next_entries, cut, counter);
+    let next = calculate_region(graph, blocks, sorted_unique(next_entries), cut, counter);
     Shape::Multiple {
         id,
-        entries,
+        entries: graph.label_set(&entries),
         handled,
         next: next.map(Box::new),
     }
 }
 
+/// For each entry in order, the blocks only it reaches and which are not another entry.
 fn independent_groups(
-    graph: &Graph,
-    blocks: &BTreeSet<Label>,
-    entries: &BTreeSet<Label>,
-    cut: &Cut,
-) -> Option<BTreeMap<Label, BTreeSet<Label>>> {
-    let reach = entries
-        .iter()
-        .map(|entry| (*entry, graph.reachable_within(*entry, blocks, cut)))
-        .collect::<BTreeMap<_, _>>();
-    // perf1: how many entries reach each label, counted once, instead of asking every other entry's set for every
-    // label of every entry (entries x labels x entries; the uber shaders' switch fan-outs made this a hot spot).
-    // A label is exclusive to an entry when that entry is the only one reaching it - the same answer.
-    let mut reached_by: std::collections::HashMap<Label, u32> = std::collections::HashMap::new();
-    for seen in reach.values() {
-        for label in seen {
-            *reached_by.entry(*label).or_insert(0) += 1;
-        }
-    }
-    let mut groups = BTreeMap::new();
+    graph: &Dense,
+    blocks: &Bits,
+    entries: &[u32],
+    cut: &DenseCut,
+) -> Option<Vec<(u32, Bits)>> {
+    let mut reached_once = Bits::empty(graph.words);
+    let mut reached_more = Bits::empty(graph.words);
+    let mut groups = Vec::with_capacity(entries.len());
+    let mut stack = Vec::new();
     for entry in entries {
-        let Some(own) = reach.get(entry) else {
-            continue;
-        };
-        let exclusive = own
-            .iter()
-            .copied()
-            .filter(|label| {
-                if entries.contains(label) && label != entry {
-                    return false;
-                }
-                reached_by.get(label).copied().unwrap_or(0) == 1
-            })
-            .collect::<BTreeSet<_>>();
-        if !exclusive.is_empty() {
-            groups.insert(*entry, exclusive);
+        let mut seen = Bits::empty(graph.words);
+        if blocks.has(*entry) {
+            seen.insert(*entry);
+            stack.push(*entry);
         }
+        while let Some(current) = stack.pop() {
+            for target in &graph.succ[current as usize] {
+                if blocks.has(*target)
+                    && !cut.contains(&(current, *target))
+                    && seen.insert(*target)
+                {
+                    stack.push(*target);
+                }
+            }
+        }
+        for ((once, more), word) in reached_once.0.iter_mut().zip(&mut reached_more.0).zip(&seen.0) {
+            *more |= *once & word;
+            *once |= word;
+        }
+        groups.push((*entry, seen));
     }
+    groups.retain_mut(|(entry, seen)| {
+        seen.remove_all(&reached_more);
+        for other in entries {
+            if other != entry {
+                seen.remove(*other);
+            }
+        }
+        !seen.is_empty()
+    });
     (!groups.is_empty()).then_some(groups)
 }
 

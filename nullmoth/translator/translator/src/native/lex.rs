@@ -1,35 +1,59 @@
+/// `str::trim`, without decoding characters when both ends are ASCII: the only whitespace outside ASCII is
+/// multi-byte, so it is left to `str::trim`.
+#[inline]
+pub(super) fn trim_fast(s: &str) -> &str {
+    let bytes = s.as_bytes();
+    let (mut start, mut end) = (0, bytes.len());
+    while start < end && bytes[start].is_ascii_whitespace() {
+        start += 1;
+    }
+    while end > start && bytes[end - 1].is_ascii_whitespace() {
+        end -= 1;
+    }
+    // is_ascii_whitespace does not include the vertical tab, which char::is_whitespace does.
+    let plain = |byte: u8| byte > b' ' && byte < 0x80;
+    if start == end || (plain(bytes[start]) && plain(bytes[end - 1])) {
+        return &s[start..end];
+    }
+    s.trim()
+}
+
 pub(super) fn split_top_level(s: &str, sep: char) -> Vec<&str> {
+    // Every separator here is ASCII, and no byte of a multi-byte character can equal an ASCII one.
+    debug_assert!(sep.is_ascii());
+    let sep = sep as u8;
+    let bytes = s.as_bytes();
     let mut depth = 0i32;
     let mut start = 0usize;
-    let mut out = Vec::new();
-    let mut in_string = false;
-    let mut escaped = false;
-    for (i, c) in s.char_indices() {
-        if in_string {
-            if escaped {
-                escaped = false;
-            } else if c == '\\' {
-                escaped = true;
-            } else if c == '"' {
-                in_string = false;
+    let mut out = Vec::with_capacity(4);
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if c == b'"' {
+            i += 1;
+            while i < bytes.len() {
+                match bytes[i] {
+                    b'\\' => i += 1,
+                    b'"' => break,
+                    _ => {}
+                }
+                i += 1;
             }
-            continue;
-        }
-        if c == '"' {
-            in_string = true;
+            i += 1;
             continue;
         }
         match c {
-            '<' | '[' | '{' | '(' => depth += 1,
-            '>' | ']' | '}' | ')' => depth -= 1,
+            b'<' | b'[' | b'{' | b'(' => depth += 1,
+            b'>' | b']' | b'}' | b')' => depth -= 1,
             _ if c == sep && depth == 0 => {
-                out.push(s[start..i].trim());
-                start = i + c.len_utf8();
+                out.push(trim_fast(&s[start..i]));
+                start = i + 1;
             }
             _ => {}
         }
+        i += 1;
     }
-    out.push(s[start..].trim());
+    out.push(trim_fast(&s[start..]));
     out
 }
 
@@ -41,6 +65,9 @@ pub(super) fn split_instruction_operands(s: &str) -> Vec<&str> {
 
 pub(super) fn instruction_without_attachments(s: &str) -> &str {
     let s = strip_comment(s);
+    if !s.as_bytes().contains(&b'!') {
+        return s;
+    }
     for part in split_top_level(s, ',') {
         let Some((kind, node)) = part.split_once(char::is_whitespace) else {
             continue;
@@ -61,10 +88,17 @@ pub(super) fn instruction_without_attachments(s: &str) -> &str {
 pub(super) fn split_top_level_whitespace(s: &str) -> Vec<&str> {
     let mut depth = 0i32;
     let mut start = None;
-    let mut out = Vec::new();
+    let mut out = Vec::with_capacity(4);
     let mut in_string = false;
     let mut escaped = false;
-    for (i, c) in s.char_indices() {
+    let ascii = s.is_ascii();
+    let mut chars = s.char_indices();
+    let mut bytes = s.bytes().enumerate();
+    while let Some((i, c)) = if ascii {
+        bytes.next().map(|(i, byte)| (i, byte as char))
+    } else {
+        chars.next()
+    } {
         if in_string {
             if escaped {
                 escaped = false;
@@ -109,6 +143,10 @@ pub(super) fn split_top_level_whitespace(s: &str) -> Vec<&str> {
 }
 
 pub(super) fn strip_comment(s: &str) -> &str {
+    // Most lines have no ';' at all; a ';' inside a string is the only reason to walk the characters.
+    if !s.as_bytes().contains(&b';') {
+        return s;
+    }
     let mut in_string = false;
     let mut escaped = false;
     for (i, c) in s.char_indices() {
@@ -146,7 +184,7 @@ pub(super) fn matching_delim(s: &str, open: usize, left: char, right: char) -> O
         return None;
     }
     let mut depth = 0i32;
-    for (i, c) in s.char_indices().skip_while(|(i, _)| *i < open) {
+    for (i, c) in s[open..].char_indices().map(|(i, c)| (i + open, c)) {
         if c == left {
             depth += 1;
         } else if c == right {

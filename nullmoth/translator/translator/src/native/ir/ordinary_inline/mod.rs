@@ -1,6 +1,6 @@
 use super::*;
 use crate::native::cfg::BodyBlock;
-use crate::native::tir::{RetEmit, TirOperand, TirTerminator};
+use crate::native::tir::{PendingSubstitutions, RetEmit, TirOperand, TirTerminator};
 
 #[cfg(test)]
 mod tests;
@@ -387,13 +387,14 @@ impl LlModule {
                 eligible_ordinary_helper(function, &bodied_functions).map(|blocks| {
                     (
                         function.name.clone(),
-                        OrdinaryLeaf {
+                        // shared: every call site looks at its helper, and most of those only to pass it over
+                        std::rc::Rc::new(OrdinaryLeaf {
                             ordinal,
                             name: function.name.clone(),
                             params: function.params.clone(),
                             ret: function.ret.clone(),
                             blocks,
-                        },
+                        }),
                     )
                 })
             })
@@ -428,10 +429,21 @@ impl LlModule {
             if !reachable.contains(&caller_name) {
                 continue;
             }
+            // the call results replaced so far in this caller: applied once, when the walk of the caller ends
+            let mut pending = PendingSubstitutions::default();
             let mut block_index = 0usize;
             while block_index < self.functions[function_index].blocks.len() {
                 let mut instruction_index = 0usize;
                 loop {
+                    if let Some(block) = self.functions[function_index].blocks[block_index].typed_mut() {
+                        if block
+                            .insts
+                            .get(instruction_index)
+                            .is_some_and(|instruction| is_call_opcode(&instruction.opcode))
+                        {
+                            pending.apply_inst(block, instruction_index);
+                        }
+                    }
                     let plan = self.functions[function_index].blocks[block_index]
                         .typed
                         .as_ref()
@@ -554,8 +566,8 @@ impl LlModule {
 
                     let mut block = helper
                         .blocks
-                        .into_iter()
-                        .next()
+                        .first()
+                        .cloned()
                         .expect("eligible ordinary helper has one block");
                     let typed = block
                         .typed_mut()
@@ -590,7 +602,7 @@ impl LlModule {
                     };
                     let result_substitution = match (call_result, returned) {
                         (None, None) => None,
-                        (Some(result), Some(returned)) => Some(crate::fxhash::map_from([(result, returned)])),
+                        (Some(result), Some(returned)) => Some((result, returned)),
                         _ => {
                             instruction_index += 1;
                             continue;
@@ -609,25 +621,26 @@ impl LlModule {
                     }
 
                     let inserted = typed.insts.len();
-                    let replacement = typed.insts.clone();
+                    let replacement = std::mem::take(&mut typed.insts);
                     self.functions[function_index].blocks[block_index]
                         .typed_mut()
                         .expect("call site came from a typed block")
                         .insts
                         .splice(instruction_index..=instruction_index, replacement);
-                    if let Some(result_substitution) = &result_substitution {
-                        for caller_block in &mut self.functions[function_index].blocks {
-                            if let Some(typed) = caller_block.typed_mut() {
-                                typed.substitute_values(result_substitution);
-                            }
-                        }
+                    if let Some((result, returned)) = result_substitution {
+                        pending.add(result, returned);
                     }
                     instruction_index += inserted;
                     site += 1;
                     stats.splices += 1;
-                    processed_helpers.insert(helper.name);
+                    processed_helpers.insert(helper.name.clone());
                 }
                 block_index += 1;
+            }
+            for caller_block in &mut self.functions[function_index].blocks {
+                if let Some(typed) = caller_block.typed_mut() {
+                    pending.apply_block(typed);
+                }
             }
         }
         for (key, pointee) in cloned_pointees {

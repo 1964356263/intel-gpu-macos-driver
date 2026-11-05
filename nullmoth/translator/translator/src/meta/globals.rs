@@ -16,7 +16,7 @@ pub fn with_function_constants_unknown<R>(f: impl FnOnce() -> R) -> R {
     r
 }
 
-fn fc_values_unknown() -> bool {
+pub(crate) fn fc_values_unknown() -> bool {
     FC_VALUES_UNKNOWN.with(|c| c.get())
 }
 
@@ -65,6 +65,15 @@ pub(super) fn static_init_int_global_values(ll: &str) -> HashMap<String, u32> {
         .collect()
 }
 
+/// Whether the trimmed line can start with `first`. A character outside ASCII (it could be whitespace) answers yes:
+/// the caller's full test decides. These loops see every line of the module several times, and most leave here.
+fn may_start_with(raw: &str, first: u8) -> bool {
+    match raw.bytes().find(|byte| !matches!(byte, b' ' | b'\t'..=b'\r')) {
+        Some(byte) => byte == first || byte >= 0x80,
+        None => false,
+    }
+}
+
 fn static_init_global_values(ll: &str) -> HashMap<String, StaticValue> {
     let mut globals = parse_static_global_initializers(ll);
     let mut unknown_stores = HashSet::default();
@@ -72,6 +81,9 @@ fn static_init_global_values(ll: &str) -> HashMap<String, StaticValue> {
     let mut in_static_init = false;
 
     for raw in ll.lines() {
+        if !in_static_init && !may_start_with(raw, b'd') {
+            continue;
+        }
         let line = raw.split(';').next().unwrap_or(raw).trim();
         if line.starts_with("define ") {
             in_static_init = crate::air_static_init::define_line_declares_static_initializer(line);
@@ -132,6 +144,7 @@ pub(crate) fn static_init_foldable_global_values(ll: &str) -> HashMap<String, St
     let mut values = static_init_global_values(ll);
     let mut derived_globals = ll
         .lines()
+        .filter(|raw| may_start_with(raw, b'@'))
         .filter_map(|raw| {
             let line = raw.split(';').next().unwrap_or(raw).trim();
             (line.starts_with('@') && line.contains("air.fc_initializer"))
@@ -143,6 +156,9 @@ pub(crate) fn static_init_foldable_global_values(ll: &str) -> HashMap<String, St
     let mut derived_locals = HashSet::<String>::default();
     let mut in_constructor = false;
     for raw in ll.lines() {
+        if !in_constructor && !may_start_with(raw, b'd') {
+            continue;
+        }
         let line = raw.split(';').next().unwrap_or(raw).trim();
         if line.starts_with("define ") {
             in_constructor = crate::air_static_init::define_line_declares_static_initializer(line);
@@ -176,10 +192,7 @@ pub(crate) fn static_init_foldable_global_values(ll: &str) -> HashMap<String, St
             rhs.starts_with("icmp ") && !rhs.contains('%') && !rhs.contains('@');
         if result.starts_with('%')
             && (literal_predicate
-                || derived_globals
-                    .iter()
-                    .chain(&derived_locals)
-                    .any(|symbol| references_symbol(rhs, symbol)))
+                || references_any(rhs, &derived_globals, &derived_locals))
         {
             derived_locals.insert(result.to_string());
         }
@@ -194,6 +207,13 @@ pub(crate) fn static_init_foldable_global_values(ll: &str) -> HashMap<String, St
     let mut in_static_init = false;
     let mut in_function = false;
     for raw in ll.lines() {
+        // A line with no '@' only matters as the start or the end of a function.
+        if !raw.as_bytes().contains(&b'@')
+            && !may_start_with(raw, b'd')
+            && !may_start_with(raw, b'}')
+        {
+            continue;
+        }
         let line = raw.split(';').next().unwrap_or(raw).trim();
         if line.starts_with("define ") {
             in_function = true;
@@ -253,6 +273,36 @@ fn symbol_byte(byte: u8) -> bool {
     matches!(byte, b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'_' | b'.' | b'$')
 }
 
+/// Does `text` reference a symbol of `first` or `second`? The same answer as `references_symbol` over both sets, without a
+/// substring search per symbol: every `@name` / `%name` token of the text is looked up once. A token that continues past
+/// the plain name bytes (`-`, a quoted name) may belong to a symbol the lookup cannot see, so such a text takes the search.
+fn references_any(text: &str, first: &HashSet<String>, second: &HashSet<String>) -> bool {
+    let bytes = text.as_bytes();
+    let plain = |b: u8| matches!(b, b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'_' | b'.' | b'$');
+    let mut i = 0;
+    while i < bytes.len() {
+        if !matches!(bytes[i], b'@' | b'%') {
+            i += 1;
+            continue;
+        }
+        let mut end = i + 1;
+        while end < bytes.len() && plain(bytes[end]) {
+            end += 1;
+        }
+        if end == i + 1 || (end < bytes.len() && matches!(bytes[end], b'-' | b'"' | b'\\')) {
+            return first.iter().chain(second).any(|symbol| references_symbol(text, symbol));
+        }
+        if i == 0 || !plain(bytes[i - 1]) {
+            let token = &text[i..end];
+            if first.contains(token) || second.contains(token) {
+                return true;
+            }
+        }
+        i = end;
+    }
+    false
+}
+
 fn references_symbol(text: &str, symbol: &str) -> bool {
     text.match_indices(symbol).any(|(start, _)| {
         let end = start + symbol.len();
@@ -265,6 +315,9 @@ fn references_symbol(text: &str, symbol: &str) -> bool {
 fn parse_static_global_initializers(ll: &str) -> HashMap<String, StaticValue> {
     let mut globals = HashMap::default();
     for raw in ll.lines() {
+        if !may_start_with(raw, b'@') {
+            continue;
+        }
         let line = raw.split(';').next().unwrap_or(raw).trim();
         if !line.starts_with('@') || !(line.contains(" global ") || line.contains(" constant ")) {
             continue;
@@ -603,10 +656,7 @@ mod tests {
                 continue;
             };
             if result.starts_with('%')
-                && derived_globals
-                    .iter()
-                    .chain(&derived_locals)
-                    .any(|symbol| references_symbol(rhs, symbol))
+                && references_any(rhs, &derived_globals, &derived_locals)
             {
                 derived_locals.insert(result.to_string());
             }
@@ -629,6 +679,10 @@ mod tests {
                 continue;
             }
             if !in_function || in_static_init || line.is_empty() {
+                continue;
+            }
+            // every global's name starts with '@': a line without one cannot change the set
+            if !line.as_bytes().contains(&b'@') {
                 continue;
             }
             values.retain(|global, _| {

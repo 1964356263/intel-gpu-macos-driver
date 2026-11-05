@@ -198,6 +198,21 @@ impl OwnedCfg {
                     .to_string(),
             );
         }
+        // constructs by header, and the blocks by where they enter the dominator tree: a construct's members all lie inside
+        // its header's interval, so neither loop below has to walk every block or every construct for every construct
+        let mut nested_by_header: HashMap<usize, Vec<usize>> = HashMap::default();
+        for (index, nested) in self.constructs.iter().enumerate() {
+            nested_by_header.entry(nested.header).or_default().push(index);
+        }
+        let mut by_entry: Vec<(usize, usize)> = self
+            .dominance
+            .iter()
+            .enumerate()
+            .filter_map(|(block, interval)| interval.map(|(enter, _)| (enter, block)))
+            .collect();
+        by_entry.sort_unstable();
+        let mut member = vec![false; self.successors.len()];
+        let mut members: Vec<usize> = Vec::new();
         for construct in &self.constructs {
             if !self.reachable[construct.header] {
                 continue;
@@ -221,13 +236,28 @@ impl OwnedCfg {
                     );
                 }
             }
-            let members = (0..self.successors.len())
-                .filter(|block| self.contains(*construct, *block))
-                .collect::<HashSet<_>>();
+            // idx1: membership as a bit vector (was a HashSet per construct, ~3% of the uber shader in all)
+            for &block in &members {
+                member[block] = false;
+            }
+            members.clear();
+            if let Some((enter, exit)) = self.dominance[construct.header] {
+                let first = by_entry.partition_point(|&(entry, _)| entry < enter);
+                for &(entry, block) in &by_entry[first..] {
+                    if entry > exit {
+                        break;
+                    }
+                    if self.contains(*construct, block) {
+                        member[block] = true;
+                        members.push(block);
+                    }
+                }
+                members.sort_unstable();
+            }
             for &block in &members {
                 if block != construct.header
                     && self.predecessors[block].iter().any(|predecessor| {
-                        self.reachable[*predecessor] && !members.contains(predecessor)
+                        self.reachable[*predecessor] && !member[*predecessor]
                     })
                 {
                     return Err(
@@ -236,7 +266,7 @@ impl OwnedCfg {
                     );
                 }
                 for successor in &self.successors[block] {
-                    if members.contains(successor)
+                    if member[*successor]
                         || self.is_structured_exit(*construct, *successor)
                     {
                         continue;
@@ -246,11 +276,16 @@ impl OwnedCfg {
                             .to_string(),
                     );
                 }
-                for nested in &self.constructs {
+                for nested in nested_by_header
+                    .get(&block)
+                    .into_iter()
+                    .flatten()
+                    .map(|&index| &self.constructs[index])
+                {
                     if nested.header != block || nested.header == construct.header {
                         continue;
                     }
-                    if self.reachable[nested.merge] && !members.contains(&nested.merge) {
+                    if self.reachable[nested.merge] && !member[nested.merge] {
                         return Err(
                             "native emitter: owned nested construct merge escapes its parent"
                                 .to_string(),
@@ -3254,9 +3289,10 @@ fn owned_access_chain_error(
         }
         (result_pointee != selected).then(|| {
             format!(
-                "the index path selects {}, but the result pointer points to {}",
+                "the index path selects {}, but the result pointer points to {} (base %{base} points at {})",
                 describe_owned_id(selected, definitions),
-                describe_owned_id(result_pointee, definitions)
+                describe_owned_id(result_pointee, definitions),
+                describe_owned_id(base_pointee, definitions)
             )
         })
     })();
@@ -8264,7 +8300,7 @@ mod tests {
             (
                 chain(Op::AccessChain, 41, 37, &[13]),
                 "the index path selects %12 (TypeInt 32 0), but the result pointer points to \
-                 %15 (TypeFloat 32)",
+                 %15 (TypeFloat 32) (base %37 points at %20 (TypeArray %12 %19))",
             ),
             (
                 chain(Op::AccessChain, 14, 37, &[23]),
@@ -8294,12 +8330,12 @@ mod tests {
             (
                 ptr_chain(Op::PtrAccessChain, 41, 37, 46, &[46]),
                 "the index path selects %12 (TypeInt 32 0), but the result pointer points to \
-                 %15 (TypeFloat 32)",
+                 %15 (TypeFloat 32) (base %37 points at %20 (TypeArray %12 %19))",
             ),
             (
                 ptr_chain(Op::InBoundsPtrAccessChain, 41, 37, 46, &[46]),
                 "the index path selects %12 (TypeInt 32 0), but the result pointer points to \
-                 %15 (TypeFloat 32)",
+                 %15 (TypeFloat 32) (base %37 points at %20 (TypeArray %12 %19))",
             ),
         ] {
             let opcode = instruction.class.opcode;
@@ -8327,7 +8363,8 @@ mod tests {
         assert_owned_type_construction(
             &invalid,
             "native emitter: owned AccessChain violates its access-chain contract: the index path \
-             selects %12 (TypeInt 32 0), but the result pointer points to %15 (TypeFloat 32)",
+             selects %12 (TypeInt 32 0), but the result pointer points to %15 (TypeFloat 32) \
+             (base %37 points at %20 (TypeArray %12 %19))",
         );
         let tmp = std::env::temp_dir().join(format!(
             "metal2vulkan_owned_access_chain_contract_{}",

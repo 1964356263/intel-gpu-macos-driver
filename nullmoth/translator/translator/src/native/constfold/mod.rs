@@ -581,6 +581,64 @@ mod tests {
         );
     }
 
+    // RenderBox's shape switch: a function constant given no value (it becomes a specialization constant) must not read
+    // as its placeholder zero, or every variant takes the switch's default. A value that was baked still folds.
+    #[test]
+    fn an_unbaked_function_constant_is_not_folded_from_its_placeholder() {
+        let module = |name: &str| {
+            let mut m = Module::new();
+            m.header = Some(ModuleHeader::new(40));
+            m.types_global_values = vec![
+                inst(
+                    Op::TypeInt,
+                    None,
+                    Some(1),
+                    vec![Operand::LiteralBit32(32), Operand::LiteralBit32(0)],
+                ),
+                inst(
+                    Op::TypePointer,
+                    None,
+                    Some(4),
+                    vec![
+                        Operand::StorageClass(StorageClass::Private),
+                        Operand::IdRef(1),
+                    ],
+                ),
+                inst(Op::ConstantNull, Some(1), Some(10), vec![]),
+                inst(
+                    Op::Variable,
+                    Some(4),
+                    Some(20),
+                    vec![
+                        Operand::StorageClass(StorageClass::Private),
+                        Operand::IdRef(10),
+                    ],
+                ),
+            ];
+            m.debug_names = vec![inst(
+                Op::Name,
+                None,
+                None,
+                vec![
+                    Operand::IdRef(20),
+                    Operand::LiteralString(name.to_string()),
+                ],
+            )];
+            m
+        };
+        let consts: HashMap<Word, i128> = [(10, 0)].into_iter().collect();
+        let widths: HashMap<Word, u32> = HashMap::default();
+        let vectors: HashMap<Word, Vec<i128>> = HashMap::default();
+        let fc = module("state.MTL_FC_INIT_0_Dv4_j");
+        let folded = |m: &Module| compute_global_consts(m, &consts, &widths, &vectors).contains_key(&20);
+
+        assert!(folded(&fc), "with its value known, the constant folds");
+        crate::meta::with_function_constants_unknown(|| {
+            assert!(!folded(&fc), "the placeholder of an unbaked constant must not fold");
+            assert!(folded(&module("plain")), "other private variables still fold");
+        });
+    }
+
     #[test]
     fn prunes_dead_arm_gated_by_vector_fc_element() {
         let mut m = Module::new();

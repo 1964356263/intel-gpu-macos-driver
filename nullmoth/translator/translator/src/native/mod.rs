@@ -14,6 +14,7 @@ mod inline;
 mod inline_sampler;
 pub(crate) mod ir;
 mod lex;
+mod module_reuse;
 mod opaque_image_select;
 mod owned_cfg;
 mod parse;
@@ -31,6 +32,7 @@ mod vec_scalar_merge;
 mod atomic_image_format;
 mod copy_memory_logical;
 mod stencil_export;
+mod punned_access_chain;
 mod short_access_chain;
 mod wg_atomic;
 
@@ -58,6 +60,10 @@ fn air_native_math_as_fast(text: &str) -> std::borrow::Cow<'_, str> {
     std::borrow::Cow::Owned(out)
 }
 pub(crate) fn lower_air_text(san_ll: &str) -> std::borrow::Cow<'_, str> {
+    module_reuse::lowered(san_ll, lower_air_text_uncached)
+}
+
+fn lower_air_text_uncached(san_ll: &str) -> std::borrow::Cow<'_, str> {
     // rtopt4: curves, user IDs and primitive data through the acceleration structure header (rt_runtime)
     if let Some(rt) = crate::rt_runtime::rewrite_text(san_ll) {
         return std::borrow::Cow::Owned(lower_air_text_owned(rt));
@@ -105,12 +111,16 @@ fn lower_air_text_rest(san_ll: &str) -> std::borrow::Cow<'_, str> {
     };
     // a Function-storage pointer phi has no legal form under Logical addressing, so the input is rewritten
     // instead: the phi's single load is hoisted into each predecessor and the phi carries the VALUES
-    let lowered = match lowered {
+    // NVMTL_NO_PTR_PHI_LOAD=1 skips this rewrite (diagnostic: it changes 46 Cyberpunk material shaders against the
+    // translator that renders the game correctly).
+    let lowered = if std::env::var_os("NVMTL_NO_PTR_PHI_LOAD").is_some() {
+        lowered
+    } else { match lowered {
         std::borrow::Cow::Borrowed(borrowed) => ptr_phi_load::sink_pointer_phi_loads(borrowed),
         std::borrow::Cow::Owned(owned) => {
             std::borrow::Cow::Owned(ptr_phi_load::sink_pointer_phi_loads_owned(owned))
         }
-    };
+    } };
     match lowered {
         std::borrow::Cow::Borrowed(borrowed) => inline::forward_builder_pointer_fields(borrowed),
         std::borrow::Cow::Owned(owned) => match inline::forward_builder_pointer_fields(&owned) {
@@ -241,6 +251,9 @@ fn require_capability(module: &mut Module, capability: Capability) {
     ));
 }
 
+pub use module_reuse::with_module_reuse;
+pub(crate) use module_reuse::stage_meta as reuse_stage_meta;
+
 #[cfg(test)]
 mod tests;
 
@@ -249,11 +262,15 @@ pub(crate) fn requires_device_address_model_for_source(
     kern: Option<&crate::meta::KernMeta>,
     entry: Option<&str>,
 ) -> bool {
-    let san_ll = lower_air_text(san_ll);
-    let san_ll = vec_scalar_merge::lower_vector_scalar_pointer_merge(&san_ll);
-    let san_ll = inline::inline_pointer_select_consumers(&san_ll, entry).source;
-    ir::LlModule::parse_with_stage_meta(&san_ll, kern, entry)
-        .is_ok_and(|parsed| emit_tiers::requires_device_address_model(&parsed))
+    let lowered = lower_air_text(san_ll);
+    let merged = vec_scalar_merge::lower_vector_scalar_pointer_merge(&lowered);
+    let consumers = inline::inline_pointer_select_consumers(&merged, entry);
+    let parsed = ir::LlModule::parse_with_stage_meta(&consumers.source, kern, entry).ok();
+    let requires = parsed
+        .as_ref()
+        .is_some_and(emit_tiers::requires_device_address_model);
+    module_reuse::store(san_ll, entry, consumers.source, consumers.requires_relooper, parsed, kern);
+    requires
 }
 
 /// See inline::inline_and_forward_object_fields: the retry form of a module that failed as written.
@@ -282,4 +299,9 @@ mod air_native_math_tests {
 /// See short_access_chain: an access chain that stops short of its result pointee by first-member descent only.
 pub(crate) fn decay_short_access_chains_module(module: &mut crate::spirv_module::Module) -> usize {
     short_access_chain::decay_short_access_chains(module)
+}
+
+/// See punned_access_chain: a chain landing on a member whose scalar type differs from its result pointee.
+pub(crate) fn retype_punned_access_chains_module(module: &mut crate::spirv_module::Module) -> usize {
+    punned_access_chain::retype_punned_access_chains(module)
 }

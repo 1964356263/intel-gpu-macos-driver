@@ -367,16 +367,26 @@ pub(in crate::native) fn push_inst_line(
         }
         None => (result_name(line), None),
     };
-    let mut operands = resolve_operands(line);
-    let cmp_predicate = resolve_cmp_predicate(line);
-    let mem_align = resolve_mem_align(line);
-    let gep = resolve_gep(line).map(Box::new);
-    let call = resolve_call(line).map(Box::new);
     let opcode = rhs_of(line)
         .split_whitespace()
         .next()
         .unwrap_or("")
         .to_string();
+    let (phi_incoming, phi_parse_error) = if opcode == "phi" {
+        phi_incoming_parse(line)
+    } else {
+        (None, None)
+    };
+    // A phi with parsed incoming values has no operand list of its own.
+    let operands = if phi_incoming.is_some() {
+        Vec::new()
+    } else {
+        resolve_operands(line)
+    };
+    let cmp_predicate = resolve_cmp_predicate(line);
+    let mem_align = resolve_mem_align(line);
+    let gep = resolve_gep(line).map(Box::new);
+    let call = resolve_call(line).map(Box::new);
     let fast_math = rhs_of(line).split_whitespace().nth(1) == Some("fast");
     let float_math_mode = granted_float_relaxations(rhs_of(line));
     let alloca_ty = if opcode == "alloca" {
@@ -384,14 +394,6 @@ pub(in crate::native) fn push_inst_line(
     } else {
         None
     };
-    let (phi_incoming, phi_parse_error) = if opcode == "phi" {
-        phi_incoming_parse(line)
-    } else {
-        (None, None)
-    };
-    if phi_incoming.is_some() {
-        operands.clear();
-    }
     let uses = (phi_incoming.is_none()
         && operands
             .iter()
@@ -413,7 +415,14 @@ pub(in crate::native) fn push_inst_line(
     };
     let bitcast = resolve_bitcast(line, &opcode).map(Box::new);
     let icmp_rest = resolve_icmp_rest(line, &opcode);
-    let identity_ptr_bitcast = resolve_identity_ptr_bitcast(line);
+    // These find " = bitcast " and a call after " = " or at the start. When the text after the first '=' has no other
+    // '=', both can only be the instruction itself, so its opcode decides.
+    let rhs_has_equals = rhs_of(line).as_bytes().contains(&b'=');
+    let identity_ptr_bitcast = if rhs_has_equals || opcode == "bitcast" {
+        resolve_identity_ptr_bitcast(line)
+    } else {
+        None
+    };
     let phi_incoming_values = if opcode == "phi" && phi_incoming.is_none() {
         resolve_phi_incoming_values(line, &opcode)
     } else {
@@ -422,8 +431,11 @@ pub(in crate::native) fn push_inst_line(
     let select_arms = resolve_select_arms(line, &opcode).map(Box::new);
     let load = resolve_load_inst(line, &opcode).map(Box::new);
     let store = resolve_store(line, &opcode).map(Box::new);
-    let alias_call = resolve_alias_call(line).map(Box::new);
-    let emit_scan_call = resolve_emit_scan_call(line);
+    let may_call = rhs_has_equals
+        || matches!(opcode.as_str(), "call" | "tail")
+        || crate::native::parse::strip_call_prefix(line.trim_start()).is_some();
+    let alias_call = may_call.then(|| resolve_alias_call(line).map(Box::new)).flatten();
+    let emit_scan_call = may_call.then(|| resolve_emit_scan_call(line)).flatten();
     let void_call_line = if matches!(opcode.as_str(), "call" | "tail") && result.is_none() {
         Some(crate::native::lex::strip_comment(full_line).trim().to_string())
     } else {
