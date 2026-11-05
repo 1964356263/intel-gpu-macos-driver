@@ -188,6 +188,20 @@ static void vk_release(void) {
 	pthread_mutex_unlock(&g_vk_lock);
 }
 
+#if FF_API_VULKAN_SYNC_QUEUES
+// One lock for the queues of the shared device. Every codec open wraps the device in its own libavutil context, and
+// each context's own queue mutexes serialise only that context's submits: two sessions in one process (parallel
+// encodes) called vkQueueSubmit2 on the same VkQueue at once, which Vulkan forbids (crashed in ANV's queue submit).
+// A submit holds it only around vkQueueSubmit2, so one lock for every queue costs nothing measurable.
+static pthread_mutex_t g_vk_queue_lock = PTHREAD_MUTEX_INITIALIZER;
+static void vk_lock_queue(AVHWDeviceContext *ctx, uint32_t family, uint32_t index) {
+	(void)ctx; (void)family; (void)index; pthread_mutex_lock(&g_vk_queue_lock);
+}
+static void vk_unlock_queue(AVHWDeviceContext *ctx, uint32_t family, uint32_t index) {
+	(void)ctx; (void)family; (void)index; pthread_mutex_unlock(&g_vk_queue_lock);
+}
+#endif
+
 // a libavutil device context around the shared device (each codec open gets its own context; the caller holds a
 // device reference, vk_acquire)
 static AVBufferRef *vk_device_ref(void) {
@@ -208,6 +222,10 @@ static AVBufferRef *vk_device_ref(void) {
 	memcpy(h->qf, g_vk.qf, sizeof(g_vk.qf[0]) * g_vk.n_qf);
 	h->nb_qf = g_vk.n_qf;
 	dc->free = NULL;   // the instance and device outlive every context
+#if FF_API_VULKAN_SYNC_QUEUES
+	h->lock_queue = vk_lock_queue;      // libavutil keeps callbacks the caller set (vulkan_device_init)
+	h->unlock_queue = vk_unlock_queue;
+#endif
 	if (av_hwdevice_ctx_init(ref) < 0) { av_buffer_unref(&ref); return NULL; }
 	return ref;
 }

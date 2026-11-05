@@ -165,12 +165,18 @@ static int create_device(void) {
 	if ((r && r != VK_INCOMPLETE) || !n) { os_log_error(lg(), "intelxeav1: no physical device (%d)", r); return -1; }
 
 	// extensions: what libavutil can use (av_vk_get_optional_device_extensions) and the B580 has, without host image
-	// copy (libavutil would then give its frames host-transfer usage and download them on the CPU)
+	// copy (libavutil would then give its frames host-transfer usage and download them on the CPU) and without
+	// internally synchronized queues: with that extension enabled libavutil drops its queue mutexes (lock_queue becomes
+	// a no-op), but the queues below are created without VK_DEVICE_QUEUE_CREATE_INTERNALLY_SYNCHRONIZED_BIT_KHR, so
+	// nothing serialised the sessions of one process on their shared queue (two vkQueueSubmit2 at once crashed in ANV)
 	uint32_t ne = 0; vkEnumerateDeviceExtensionProperties(G.pd, NULL, &ne, NULL);
 	VkExtensionProperties *ep = calloc(ne, sizeof *ep); vkEnumerateDeviceExtensionProperties(G.pd, NULL, &ne, ep);
 	int nopt = 0; const char **opt = av_vk_get_optional_device_extensions(&nopt);
 	for (int i = 0; i < nopt && G.nexts < 64; i++) {
 		if (!strcmp(opt[i], VK_EXT_HOST_IMAGE_COPY_EXTENSION_NAME)) continue;
+#ifdef VK_KHR_INTERNALLY_SYNCHRONIZED_QUEUES_EXTENSION_NAME
+		if (!strcmp(opt[i], VK_KHR_INTERNALLY_SYNCHRONIZED_QUEUES_EXTENSION_NAME)) continue;
+#endif
 		for (uint32_t j = 0; j < ne; j++) if (!strcmp(opt[i], ep[j].extensionName)) { G.exts[G.nexts++] = opt[i]; break; }
 	}
 	av_free(opt);
