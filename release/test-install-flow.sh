@@ -26,6 +26,9 @@ step --apply
 expect "after --apply" installed_state same
 expect "after --apply" installed_version "$(state package_version)"
 [ -f "$ROOT/Library/GPUBundles/nvmtl-allow.txt" ] && echo "ok    allow-list installed" || { echo "FAIL  no allow-list"; fails=$((fails + 1)); }
+expect "after --apply" guard_daemon yes
+plutil -lint "$ROOT/Library/LaunchDaemons/io.github.yusufklncc.intelxe.guard.plist" >/dev/null && echo "ok    guard daemon plist is valid" || { echo "FAIL  guard daemon plist"; fails=$((fails + 1)); }
+sh -n "$ROOT/Library/Application Support/intel-gpu-macos-driver/guard-clear.sh" && echo "ok    guard script parses" || { echo "FAIL  guard script"; fails=$((fails + 1)); }
 
 K="$ROOT/Library/Extensions/IntelXeFB.kext/Contents/MacOS/IntelXeFB"
 echo damaged >> "$K"
@@ -55,9 +58,11 @@ step --repair
 step --undo
 expect "after --undo (there was nothing before)" installed_state absent
 expect "after --undo" installed_version none
+expect "after --undo (there was no guard daemon before)" guard_daemon no
 step --apply
 step --uninstall
 expect "after --uninstall" installed_state absent
+expect "after --uninstall" guard_daemon no
 expect "after --uninstall" installed_version none
 [ -d "$backup" ] && echo "ok    uninstall keeps backups" || { echo "FAIL  backups are gone"; fails=$((fails + 1)); }
 grep -q "remove IntelXe.kext" "$ROOT/last.log" && echo "ok    uninstall says to remove the kext from the EFI" || { echo "FAIL  no EFI note"; fails=$((fails + 1)); }

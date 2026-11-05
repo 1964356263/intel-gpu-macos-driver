@@ -29,6 +29,9 @@ OLD_KEXTS=(B580FB)   # the same kexts under their earlier names: removed by --ap
 GB=/Library/GPUBundles
 SSV=/System/Library/Extensions/NVMTLDriver.bundle   # system-volume/ssv-install.sh's copy
 USELIB=$GB/NVMTLDriver.use-library                  # NMXAccel: use the /Library copy even when $SSV exists
+GUARD_LABEL=io.github.yusufklncc.intelxe.guard
+GUARD_PLIST=/Library/LaunchDaemons/$GUARD_LABEL.plist
+GUARD_SH="$BK/guard-clear.sh"
 FAILS=0
 ok()  { printf '  ok    %s\n' "$*"; }
 bad() { printf '  FAIL  %s\n' "$*"; FAILS=$((FAILS + 1)); }
@@ -106,6 +109,52 @@ put() { # put SRC DST: replace DST with a root-owned copy of SRC
     rm -rf "$2"; mv "$2.new" "$2"
 }
 
+# The boot guard's "healthy" mark reaches flash from here. IntelXeFB clears intelxe-guard about a minute into each boot,
+# but on x86 macOS (AppleEFINVRAM) a value the kernel writes after boot stays in memory until a clean shutdown: after a
+# power cut the next boot read the guard as set and held acceleration (5 Nov, 0.1.3 tests). A write through nvram(8)
+# from userspace does go to flash. Once per boot, this waits for IntelXeFB to say its guard cleared, then writes it.
+guard_install() {
+    mkdir -p "$BK" /Library/LaunchDaemons
+    cat > "$GUARD_SH" <<'GUARD'
+#!/bin/sh
+# intel-gpu-macos-driver: writes the boot guard's "cleared" to NVRAM from userspace (see install.sh, guard_install)
+i=0
+while [ $i -lt 40 ]; do
+    g=$(/usr/sbin/ioreg -rd1 -c IntelXeFramebuffer | /usr/bin/sed -n 's/.*"IntelXeFBGuard" = "\(.*\)"/\1/p' | /usr/bin/head -1)
+    case "$g" in
+        cleared*)
+            /usr/sbin/nvram intelxe-guard=ok
+            /usr/sbin/nvram intelxe-guard-cleared="$(/bin/date +%Y%m%d-%H%M%S)"   # a new value each boot, so a write happens
+            /usr/bin/logger -t intelxe-guard "boot guard cleared in NVRAM ($g)"
+            exit 0;;
+    esac
+    /bin/sleep 15
+    i=$((i + 1))
+done
+/usr/bin/logger -t intelxe-guard "the boot guard did not clear within 10 minutes (IntelXeFBGuard: ${g:-none})"
+GUARD
+    chmod 755 "$GUARD_SH"
+    cat > "$GUARD_PLIST" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key><string>$GUARD_LABEL</string>
+    <key>ProgramArguments</key><array><string>/bin/sh</string><string>$GUARD_SH</string></array>
+    <key>RunAtLoad</key><true/>
+</dict>
+</plist>
+PLIST
+    chown root:wheel "$GUARD_PLIST" "$GUARD_SH"; chmod 644 "$GUARD_PLIST"
+    echo "  ok    $GUARD_PLIST (writes the boot guard's result to NVRAM once per boot)"
+}
+guard_remove() {
+    [ -e "$GUARD_PLIST" ] || [ -e "$GUARD_SH" ] || return 0
+    launchctl bootout system/$GUARD_LABEL 2>/dev/null || true
+    rm -f "$GUARD_PLIST" "$GUARD_SH"
+    echo "  ok    removed $GUARD_PLIST"
+}
+
 apply() {
     [ "$(id -u)" = 0 ] || { echo "--apply needs root: sudo $0 --apply"; exit 1; }
     check || { echo "checks failed: nothing changed"; exit 1; }
@@ -138,6 +187,8 @@ apply() {
         : > "$USELIB"; : > "$B/created-use-library"
         echo "  ok    $USELIB: the system-volume copy is from another release, the /Library copy is used until it is updated"
     fi
+    [ -e "$GUARD_PLIST" ] && : > "$B/had-guard-daemon"
+    guard_install
     for k in "${OLD_KEXTS[@]}"; do [ -e /Library/Extensions/$k.kext ] && { echo "  FAIL  /Library/Extensions/$k.kext is still there"; exit 1; }; done
     rebuild_auxkc
     echo "$VER" > "$BK/installed-version"
@@ -158,6 +209,7 @@ undo() {
         else rm -rf $GB/$g; echo "  ok    removed $GB/$g (there was none before)"; fi
     done
     if [ -e "$B/created-use-library" ]; then rm -f "$USELIB"; echo "  ok    removed $USELIB (--apply made it)"; fi
+    [ -e "$B/had-guard-daemon" ] || guard_remove
     rm -f "$BK/installed-version"
     rebuild_auxkc
     for k in "${OLD_KEXTS[@]}"; do
@@ -198,6 +250,7 @@ status() {
     [ -s "$BK/last-backup" ] && [ -d "$(cat "$BK/last-backup")" ] && echo "backup=$(cat "$BK/last-backup")" || echo "backup=none"
     [ -e "$USELIB" ] && echo "use_library=yes" || echo "use_library=no"
     [ -f "$SSV/Contents/MacOS/NVMTLDriver" ] && echo "system_volume_copy=yes" || echo "system_volume_copy=no"
+    [ -e "$GUARD_PLIST" ] && echo "guard_daemon=yes" || echo "guard_daemon=no"
 }
 
 repair() {
@@ -215,6 +268,7 @@ repair() {
         case "$d" in /Library/Extensions/*) kexts=$((kexts + 1));; esac
     done < <(package_items)
     [ -e $GB/nvmtl-allow.txt ] || { install -o root -g wheel -m 644 "$H/Library/GPUBundles/nvmtl-allow.txt" $GB/nvmtl-allow.txt; echo "  ok    $GB/nvmtl-allow.txt"; n=$((n + 1)); }
+    [ -e "$GUARD_PLIST" ] && [ -x "$GUARD_SH" ] || { guard_install; n=$((n + 1)); }
     [ "$kexts" = 0 ] || rebuild_auxkc
     mkdir -p "$BK"; echo "$VER" > "$BK/installed-version"
     if [ "$n" = 0 ]; then echo "== nothing to repair"; else echo "== done: $n item(s) put back. Reboot."; fi
@@ -229,6 +283,7 @@ uninstall() {
     for g in NVMTLDriverLib.bundle NVMTLDriver.bundle nvmtl nvmtl-allow.txt NVMTLDriver.use-library; do
         if [ -e $GB/$g ]; then rm -rf $GB/$g; echo "  ok    removed $GB/$g"; fi
     done
+    guard_remove
     rm -f "$BK/installed-version"
     rebuild_auxkc
     echo "== done. Backups stay in $BK."
