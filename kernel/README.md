@@ -58,8 +58,9 @@ An IOFramebuffer for the B580's DisplayPort outputs (display IP 14.01, C20 PHYs)
 
 **Version in this repository: v10m**, the framebuffer of the 0.1.x releases: boot1 + v9 + v10b (`intelxefbRunGated`: NMXAccel's pipe registration inside IOGraphics' gate order; detailed timings answered with their mode size) + v10c (boot-guard fix) + the later steps up to v10m (modes from the EDID).
 
-Boot guard (`intelxe-guard` in NVRAM): two accelerated boots in a row that end inside their first minute turn acceleration off for the
-next boots (`intelxe-accel-off`, until `sudo nvram intelxe-accel-off=ok`; `nvram -d` leaves it in place on macOS 26). One such boot only makes
+Boot guard (`intelxe-guard` in NVRAM): after two accelerated boots in a row that end inside their first minute the next boots arm with
+NMXAccel's safest settings (`IntelXeFBAccelSafe`); four in a row turn acceleration off for the next boots (on macOS 26 that leaves the Apple
+logo on screen: WindowServer uses no display without the accelerator's pipe) (`intelxe-accel-off`, until `sudo nvram intelxe-accel-off=ok`; `nvram -d` leaves it in place on macOS 26). One such boot only makes
 the next one try again: it may have been a power cut. On x86 macOS the kernel's NVRAM writes after boot stay in memory until a clean
 shutdown (AppleEFINVRAM ignores the SYNCNOW keys, and calling `IODTNVRAM::sync()` from IntelXeFB's start hung the boot), so `install.sh`
 adds a LaunchDaemon that writes the cleared guard with `nvram` once per boot; tested on the B580 with a power cut (5 Nov). Since v10c "healthy" needs WindowServer itself: its

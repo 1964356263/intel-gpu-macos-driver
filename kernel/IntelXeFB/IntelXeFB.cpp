@@ -71,13 +71,9 @@ static void nvramWrite(const char *key, const char *val)
 		opt->setProperty(key, v);
 		v->release();
 	}
-	// To flash now: without it the value lives in memory until a clean shutdown, and after a power cut the next boot reads
-	// a stale "accel" from long ago. XNU acts on this key only with an OSString value (a boolean is refused without a
-	// word), and throttles the plain SyncNow key to once in 15 minutes; these writes are a few per boot.
-	if (OSString *v = OSString::withCString("IONVRAM-FORCESYNCNOW-PROPERTY")) {
-		if (!opt->setProperty("IONVRAM-FORCESYNCNOW-PROPERTY", v)) IOLog("IntelXeFB: guard: NVRAM sync refused after %s\n", key);
-		v->release();
-	}
+	// No sync request: x86's AppleEFINVRAM ignores the SYNCNOW keys (it stored them as variables), and calling
+	// IODTNVRAM::sync() here hung the boot. A kernel write reaches flash at a clean shutdown; the boot guard's "cleared"
+	// is also written from userspace by install.sh's LaunchDaemon, which survives a power cut.
 	opt->release();
 }
 static bool bootArg(const char *name) { char d[8]; return intelxeBootArg("IntelXeFB", name, d, sizeof d); }
@@ -438,6 +434,7 @@ class IntelXeFramebuffer : public IOFramebuffer {
 	// earlier (panic, hang, power cut) leaves it behind for the next start (guardBegin).
 	IOLock *fGuardLock = nullptr;
 	int fGuardStage = 0;                         // 1 framebuffer, 2 accelerated, 0 nothing open
+	bool fAccelSafe = false;                     // IntelXeFBAccelSafe: arm with NMXAccel's conservative settings
 	unsigned fGuardAccelFails = 0;               // accelerated boots in a row before this one that ended inside their first minute
 	uint64_t fGuardT0 = 0, fAccelT0 = 0;         // when each stage began (mach absolute time)
 	uint64_t fVblEvtAt = 0, fVblStableMax = 0;   // last VBL client change; longest stretch with clients and no change
@@ -3109,16 +3106,20 @@ IOService *IntelXeFramebuffer::probe(IOService *provider, SInt32 *score)
 // ---- boot guard -----------------------------------------------------------------------------------------------------
 // The previous boot's intelxe-guard decides this one:
 //   "accel<n>" (plain "accel" = 1) n accelerated boots in a row ended inside their first minute. One may be a power cut,
-//            so the next boot tries again. From kGuardAccelTries on intelxe-accel-off is written (persistent): this boot and
-//            later ones stay unaccelerated (IntelXeFB only) until `sudo nvram intelxe-accel-off=ok` ("ok" counts as absent;
-//            `nvram -d` does not remove it on macOS 26).
+//            so the next boot tries again; from kGuardAccelSafe it arms with conservative settings; from kGuardAccelHold
+//            intelxe-accel-off is written (persistent): this boot and later ones stay unaccelerated (IntelXeFB only) until
+//            `sudo nvram intelxe-accel-off=ok` ("ok" counts as absent; `nvram -d` does not remove it on macOS 26).
 //   "fb<n>"  n boots in a row ended before the unaccelerated desktop ran for a minute: logged and published only.
 //            IntelXeFB itself is never switched off by the guard (without it the monitor has no desktop at all); its kill
 //            switches are -intelxe_nofb and safe mode.
 // Acceleration is also held by -intelxe_noaccel and safe mode. NMXAGDC and NMXAccel arm only when IntelXeFBAccelAllowed is
 // true, which is published before the framebuffer is.
 static const char kGuardKey[] = "intelxe-guard", kAccelOffKey[] = "intelxe-accel-off";
-static constexpr unsigned kGuardAccelTries = 2;
+// accelerated boots in a row that ended inside their first minute: from kGuardAccelSafe the next boot arms with NMXAccel's
+// most conservative settings (no async swaps, no flips, one frame at a time: IntelXeFBAccelSafe), from kGuardAccelHold
+// acceleration is held. On macOS 26 a held boot has no desktop at all (WindowServer does not use the framebuffer without
+// the accelerator's display pipe), so holding is the last step, not the first.
+static constexpr unsigned kGuardAccelSafe = 2, kGuardAccelHold = 4;
 static uint64_t absNs(uint64_t ns) { uint64_t a; nanoseconds_to_absolutetime(ns, &a); return a; }
 
 void IntelXeFramebuffer::guardBegin()
@@ -3138,12 +3139,16 @@ void IntelXeFramebuffer::guardBegin()
 		unsigned n = 0;
 		for (const char *c = prev + 5; *c >= '0' && *c <= '9' && n < 1000; c++) n = n * 10 + (unsigned)(*c - '0');
 		fGuardAccelFails = n ? n : 1;
-		if (fGuardAccelFails >= kGuardAccelTries) {
+		if (fGuardAccelFails >= kGuardAccelHold) {
 			snprintf(off, sizeof off, "%u accelerated boots in a row ended inside their first minute", fGuardAccelFails);
 			nvramWrite(kAccelOffKey, off);
 			accelOff = true;
 			FBLOG("guard: %s: acceleration OFF until `sudo nvram %s=ok`", off, kAccelOffKey);
-		} else FBLOG("guard: the last accelerated boot ended inside its first minute (%u of %u): trying again", fGuardAccelFails, kGuardAccelTries);
+		} else if (fGuardAccelFails >= kGuardAccelSafe) {
+			fAccelSafe = true;
+			FBLOG("guard: %u accelerated boots in a row ended inside their first minute: this boot arms with the safe settings "
+			      "(held from %u)", fGuardAccelFails, kGuardAccelHold);
+		} else FBLOG("guard: the last accelerated boot ended inside its first minute (1 of %u before the safe settings): trying again", kGuardAccelSafe);
 	}
 	unsigned fails = 0;
 	if (had && prev[0] == 'f' && prev[1] == 'b') {
@@ -3154,6 +3159,7 @@ void IntelXeFramebuffer::guardBegin()
 	const char *held = bootArg("-intelxe_noaccel") ? "boot-arg -intelxe_noaccel" : bootArg("-x") ? "safe mode" : accelOff ? off : nullptr;
 	fAccelAllowed = !held;
 	setProperty("IntelXeFBAccelAllowed", fAccelAllowed);
+	setProperty("IntelXeFBAccelSafe", fAccelAllowed && fAccelSafe);
 	if (held) { setProperty("IntelXeFBAccelHeld", held); FBLOG("guard: acceleration held: %s", held); }
 	char v[16];
 	snprintf(v, sizeof v, "fb%u", fails + 1);

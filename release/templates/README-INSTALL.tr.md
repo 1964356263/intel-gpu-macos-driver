@@ -180,12 +180,14 @@ Dosyaları `intel-gpu-macos-driver-@VER@-efi.zip`'ten alın (macOS paketinde de 
 - **Siyah ekran ya da sürekli yeniden başlama:** Çalışan EFI'nin olduğu USB bellekten açın ya da OpenCore'da macOS seçiliyken Shift'e
   basarak güvenli modda açın (Yardımcı Kernel Koleksiyonu'nu atlar). Sonra `sudo ./install.sh --undo` çalıştırın ve `IntelXe.kext` ile
   `SSDT-ARCOFF.aml`'yi EFI'den çıkarın.
-- **Çökmelerden sonra Apple logosunda kalmak (açılış koruması):** Üst üste iki açılış, hızlandırmalı ilk dakikası içinde biterse
-  (panik ya da güç düğmesine basılı tutmak) açılış koruması sonraki açılışlarda hızlandırmayı kapalı tutar. Tek bir böyle açılış yalnızca
-  bir sonrakinin yeniden denemesine yol açar. **macOS 26'da monitör bu durumda Apple logosunda kalır** (macOS çalışıyordur; B580'de
-  denendi: WindowServer hızlandırma olmadan ekran bulamıyor). `sysctl debug.nmxaccelfb` `0` yazar, `ioreg -rc IntelXeFramebuffer -d1 |
-  grep AccelHeld` sebebini söyler. Başka bir bilgisayardan SSH ile (Sistem Ayarları > Genel > Paylaşma > Uzaktan Giriş, önceden açılmış
-  olmalı) hızlandırmayı açıp yeniden başlatın:
+- **İlk dakikada çökmeler (açılış koruması):** Hızlandırmalı ilk dakikası içinde biten tek bir açılış (panik ya da güç düğmesine
+  basılı tutmak) yalnızca bir sonrakinin yeniden denemesine yol açar. Üst üste iki taneden sonra sonraki açılışlar en güvenli ayarlarla
+  hızlandırır (async ve flip kapalı; `ioreg -rc IntelXeFramebuffer -d1 | grep AccelSafe` `Yes` der); bir dakika sorunsuz çalışan bir
+  açılıştan sonra koruma normale döner. Üst üste dört taneden sonra hızlandırma kapatılır ve **macOS 26'da monitör Apple logosunda
+  kalır** (macOS çalışıyordur: WindowServer hızlandırma olmadan ekran kullanmıyor; B580'de denendi). Çıkmak için: yeniden başlatın ve
+  OpenCore seçim ekranında **Reset NVRAM**'i seçin (gizliyse Boşluk tuşu). Bu korumayı temizler; OpenCore kendi boot-args ve SIP
+  ayarını her açılışta yeniden yazar (B580'de denendi). Ya da başka bir bilgisayardan SSH ile (Uzaktan Giriş önceden açılmış olmalı)
+  hızlandırmayı açıp yeniden başlatın:
 
   ```sh
   sudo nvram intelxe-accel-off=ok

@@ -118,7 +118,7 @@ static void nmxAutoArm(NVAccel *a);
 // registered accelerator that is never armed made WindowServer open its display pipe and mark the display offline: the
 // Apple logo stayed on screen (5 Nov). Unregistered, WindowServer runs on IntelXeFB alone, as the macOS installer does on
 // the firmware's framebuffer. The rule is IntelXeFB's (guardBegin): intelxe-accel-off set and not "ok", or the previous
-// boot left intelxe-guard "accel<n>" with n >= 2. Read before or after IntelXeFB's start, one of the two says so.
+// boot left intelxe-guard "accel<n>" with n >= 4. Read before or after IntelXeFB's start, one of the two says so.
 static bool nmxNvramRead(const char *key, char *out, size_t len) {
     out[0] = 0;
     IORegistryEntry *opt = IORegistryEntry::fromPath("/options", gIODTPlane);
@@ -140,7 +140,7 @@ static bool nmxGuardHolds(char *why, size_t len) {
     if (nmxNvramRead("intelxe-guard", v, sizeof v) && !strncmp(v, "accel", 5)) {
         unsigned n = 0;
         for (const char *c = v + 5; *c >= '0' && *c <= '9' && n < 1000; c++) n = n * 10 + (unsigned)(*c - '0');
-        if (n >= 2) { snprintf(why, len, "intelxe-guard %s: %u accelerated boots in a row ended inside their first minute", v, n); return true; }
+        if (n >= 4) { snprintf(why, len, "intelxe-guard %s: %u accelerated boots in a row ended inside their first minute", v, n); return true; }   // IntelXeFB's kGuardAccelHold
     }
     return false;
 }
@@ -4418,7 +4418,10 @@ static void nmxAutoArm(NVAccel *a)
     NVAccel::triggerFromSysctl(3);
     NVAccel::triggerFromSysctl(4);
     (void)nvaccelSetIop(1);
-    gSurfGpuOn = nmxSetting("nmxasync", "nmx-async", 1) ? 1 : 0;
+    // IntelXeFB's boot guard after repeated failed boots (IntelXeFBAccelSafe): the most conservative settings, no async
+    // swaps, no flips, one frame at a time - the stage-1 arm of intelxe-accel.sh
+    const bool safe = gfb && gfb->getProperty("IntelXeFBAccelSafe") == kOSBooleanTrue;
+    gSurfGpuOn = !safe && nmxSetting("nmxasync", "nmx-async", 1) ? 1 : 0;
     gNmxFlip = gSurfGpuOn && nmxSetting("nmxflip", "nmx-flip", 1) ? 1 : 0;
     // nmx-tahoe2: two frames per head by default (measured 4 Nov: window drag at 180 Hz 122 -> 165 fps, no drops,
     // no late flips, no visible artefacts); boot-arg nmxdepth=0 or NVRAM nmx-depth=0 goes back to one at a time
@@ -4436,8 +4439,8 @@ static void nmxAutoArm(NVAccel *a)
     }
     gNmxAutoState = 3;
     char m[160];
-    snprintf(m, sizeof m, "armed: pipe, transactions, async %d, flip %d, guard %s", gSurfGpuOn, gNmxFlip,
-             gr == kIOReturnSuccess ? "accel" : "not told");
+    snprintf(m, sizeof m, "armed: pipe, transactions, async %d, flip %d, guard %s%s", gSurfGpuOn, gNmxFlip,
+             gr == kIOReturnSuccess ? "accel" : "not told", safe ? ", SAFE settings (boot guard)" : "");
     a->autoNote(m);
     a->registerOnce("armed");
 }

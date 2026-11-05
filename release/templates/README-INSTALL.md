@@ -174,12 +174,14 @@ Mount the EFI partition as in stage 2; on the PC itself, `sudo diskutil mount di
 - **Black screen or a reboot loop:** boot from your USB stick with the working EFI, or press Shift with the OpenCore
   entry selected to boot safe mode (it skips the Auxiliary Kernel Collection). Then run `sudo ./install.sh --undo` and
   remove `IntelXe.kext` and `SSDT-ARCOFF.aml` from the EFI.
-- **Stuck at the Apple logo after crashes (boot guard):** when two boots in a row end inside their first accelerated
-  minute (a panic, or the power button held), the boot guard keeps acceleration off on the next boots. One such boot only
-  makes the next one try again. **On macOS 26 the monitor then stays on the Apple logo** (macOS itself is running; tested
-  on the B580: WindowServer finds no display without acceleration). `sysctl debug.nmxaccelfb` prints `0`, and
-  `ioreg -rc IntelXeFramebuffer -d1 | grep AccelHeld` says why. Turn acceleration back on from another computer over SSH
-  (System Settings > General > Sharing > Remote Login, set up beforehand), then reboot:
+- **Crashes during the first minute (boot guard):** one boot that ends inside its first accelerated minute (a panic, or
+  the power button held) only makes the next one try again. After two in a row the next boots arm with the safest
+  settings (no async swaps, no flips; `ioreg -rc IntelXeFramebuffer -d1 | grep AccelSafe` says `Yes`), and the guard
+  returns to normal after a boot that runs for a minute. After four in a row acceleration is held, and **on macOS 26 the
+  monitor then stays on the Apple logo** (macOS itself runs: WindowServer has no display without acceleration; tested on
+  the B580). To get out: restart, and in the OpenCore picker choose **Reset NVRAM** (press Space if it is hidden). That
+  clears the guard; OpenCore writes its own boot-args and SIP setting again at every boot (tested on the B580). Or, from
+  another computer over SSH (Remote Login turned on beforehand), turn acceleration back on and reboot:
 
   ```sh
   sudo nvram intelxe-accel-off=ok
