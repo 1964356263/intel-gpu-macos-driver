@@ -3171,7 +3171,10 @@ static _Atomic unsigned long long g_desc_reclaims, g_desc_reclaim_fail;
 static unsigned              g_peak_sets, g_peak_fbs;
 static nvk_buffer            g_dummyBuf;
 static nvk_image             g_dummyImg;
-#define NVMTL_BINDLESS_SLOTS      131072
+/* 32768, not 131072: the heap's four bindings are SLOTS surface states each (64 bytes on Xe2), host-written, so the pool sits
+   in the CPU-visible VRAM window (1 GB on macOS). At 131072 each process took 32 MB of it; twenty-odd Metal processes left a
+   game's mapped buffers no room and they spilled to system memory (Minecraft + Sodium, 5 Nov: 137 MB over PCIe). */
+#define NVMTL_BINDLESS_SLOTS      32768
 #define NVMTL_BINDLESS_QUARANTINE 1024
 #define NVMTL_BINDLESS_SAMPLER_SLOTS 2048   /* the translator's reflect::BINDLESS_SAMPLER_SLOTS; slot 0 stays the dummy */
 static VkDescriptorSetLayout g_heapLayout; static VkDescriptorPool g_heapPool; static VkDescriptorSet g_heapSet;
@@ -3771,7 +3774,11 @@ int nvmtl_vk_defer_image_free(nvk_image *img, nvk_buffer *buf)
    difference drifts upward for the life of the process, and every later death would be held longer and longer. An entry
    whose bound was never reached because the GPU went idle goes after 2 s of idleness. Reaped where the watermark moves (nvmtl_sub_done -> nvmtl_bindless_drain), where svfix2's deferred
    images are already freed. */
-typedef struct { nvk_buffer b; nvk_image i; uint64_t seq, t; uint8_t image; } nvmtl_grace_ent;
+/* seq0: the last submission number when it died. Whatever was submitted by then is done once the watermark passes it;
+   only a command buffer begun before the death and committed later can still read it. After 2 s past seq0 that is not
+   waited for: g_cb_live can drift up (a command buffer begun and never retired), and then the bound below was never
+   reached while the GPU stayed busy - Minecraft on Apple GL held every freed buffer, 130 MB/s of system memory (5 Nov). */
+typedef struct { nvk_buffer b; nvk_image i; uint64_t seq, seq0, t; uint8_t image; } nvmtl_grace_ent;
 static nvmtl_grace_ent *g_gr; static uint32_t g_gr_n, g_gr_cap; static pthread_mutex_t g_gr_lock = PTHREAD_MUTEX_INITIALIZER;
 static uint64_t g_gr_total, g_gr_reaped;
 static __thread int t_grace_reaping;   /* the reap's own destroys go straight through */
@@ -3807,12 +3814,17 @@ static void nvmtl_grace_reap(void)
     pthread_mutex_lock(&g_gr_lock);
     uint32_t k = 0;
     for (uint32_t i = 0; i < g_gr_n; i++) {
-        if (nd < 32 && (g_gr[i].seq <= wm || (idle && now - g_gr[i].t > 2000000000ull))) done[nd++] = g_gr[i];
+        const int old = now - g_gr[i].t > 2000000000ull;
+        if (nd < 32 && (g_gr[i].seq <= wm || (old && (idle || g_gr[i].seq0 <= wm)))) done[nd++] = g_gr[i];
         else g_gr[k++] = g_gr[i];
     }
     g_gr_n = k; g_gr_reaped += nd;
     const uint64_t reaped = g_gr_reaped, held = g_gr_n;
     pthread_mutex_unlock(&g_gr_lock);
+    { static uint64_t next; if (now >= next) { next = now + 10000000000ull;
+        nvlog("vk: grace: %llu held, %llu reaped of %llu; bound %llu = submission %llu + %lld command buffers live; watermark %llu",
+              (unsigned long long)held, (unsigned long long)reaped, (unsigned long long)g_gr_total, (unsigned long long)nvmtl_grace_bound(),
+              (unsigned long long)__atomic_load_n(&g_sub_seq, __ATOMIC_ACQUIRE), (long long)atomic_load(&g_cb_live), (unsigned long long)wm); } }
     t_grace_reaping = 1;
     for (uint32_t i = 0; i < nd; i++) { if (done[i].image) nvmtl_vk_image_destroy_now(&done[i].i); else nvmtl_vk_buffer_destroy_body(&done[i].b); }
     t_grace_reaping = 0;
@@ -3833,7 +3845,7 @@ static int nvmtl_grace_defer(nvk_buffer *b, nvk_image *i)
     if (g_gr_n < g_gr_cap) {
         nvmtl_grace_ent *e = &g_gr[g_gr_n++]; memset(e, 0, sizeof *e);
         if (i) { e->i = *i; e->image = 1; } else e->b = *b;
-        e->seq = bound; e->t = clock_gettime_nsec_np(CLOCK_UPTIME_RAW); g_gr_total++; queued = 1;
+        e->seq = bound; e->seq0 = __atomic_load_n(&g_sub_seq, __ATOMIC_ACQUIRE); e->t = clock_gettime_nsec_np(CLOCK_UPTIME_RAW); g_gr_total++; queued = 1;
     }
     pthread_mutex_unlock(&g_gr_lock);
     if (!queued) return 0;
@@ -8311,6 +8323,7 @@ int nvmtl_vk_submit_begin_at(nvk_cmdbuf *c, nvmtl_inflight *f, const char *who)
     if (c->on_submit) { void (*cb)(void *) = c->on_submit; c->on_submit = NULL; cb(c->on_submit_ctx); }
     return 0;
 }
+void nvmtl_vk_asyncup_reap(void);
 int nvmtl_vk_submit_finish(nvmtl_inflight *f)
 {
     nvk_cmdbuf *const c = f->c; const VkFence fence = f->fence; uint64_t *const pt = f->pt;
@@ -8366,6 +8379,11 @@ int nvmtl_vk_submit_finish(nvmtl_inflight *f)
         return -2;
     }
     nvmtl_sub_done(c->subseq);
+    // Uploads left in flight (surface uploads through imported pages) were finished only by the next such upload or a
+    // later use of their image; one that nothing touched again held the submission watermark back for good, and with it
+    // every freed buffer waiting on it (Minecraft on Apple GL: 5 uploads at start, then 130 MB/s held, 5 Nov). Each
+    // finished wait now also finishes the ones whose fence has signalled.
+    { static __thread int t_aureap; if (!t_aureap) { t_aureap = 1; nvmtl_vk_asyncup_reap(); t_aureap = 0; } }
     if (g_hitch_ms > 0) nvmtl_hitch_tick();
     VkFence spent = fence;   // signalled: recycled below (nvmtl_fence_put)
     if (c->wseq && c->wseq != NVMTL_WSEQ_BLIND) {
