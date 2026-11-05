@@ -114,6 +114,7 @@ apply() {
     for k in "${KEXTS[@]}" "${OLD_KEXTS[@]}"; do [ -e /Library/Extensions/$k.kext ] && ditto /Library/Extensions/$k.kext "$B/Extensions/$k.kext"; done
     for g in NVMTLDriverLib.bundle NVMTLDriver.bundle nvmtl nvmtl-allow.txt; do [ -e $GB/$g ] && ditto $GB/$g "$B/GPUBundles/$g"; done
     echo "$B" > "$BK/last-backup"
+    [ -f "$BK/installed-version" ] && cp "$BK/installed-version" "$B/installed-version"   # --undo puts it back
     echo "== backup: $B"
     for k in "${KEXTS[@]}"; do put "$H/Library/Extensions/$k.kext" /Library/Extensions/$k.kext; echo "  ok    /Library/Extensions/$k.kext"; done
     # the earlier names of these kexts: two framebuffer kexts must never both be in the Auxiliary Kernel Collection
@@ -158,7 +159,7 @@ undo() {
         else rm -rf $GB/$g; echo "  ok    removed $GB/$g (there was none before)"; fi
     done
     if [ -e "$B/created-use-library" ]; then rm -f "$USELIB"; echo "  ok    removed $USELIB (--apply made it)"; fi
-    rm -f "$BK/installed-version"
+    if [ -f "$B/installed-version" ]; then cp "$B/installed-version" "$BK/installed-version"; else rm -f "$BK/installed-version"; fi
     rebuild_auxkc
     for k in "${OLD_KEXTS[@]}"; do
         [ -e "$B/Extensions/$k.kext" ] && echo "== $k.kext is back: put B580.kext back into your EFI in place of IntelXe.kext before you reboot"

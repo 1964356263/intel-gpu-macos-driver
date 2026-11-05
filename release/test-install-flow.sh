@@ -1,7 +1,7 @@
 #!/bin/bash
 # SPDX-License-Identifier: MIT
 # test-install-flow.sh PACKAGE_DIR: runs install.sh's whole flow against a throwaway root, without root and without kmutil:
-# install, the same again, a damaged file, repair, an edited allow-list, undo, uninstall. Each step's --status is checked.
+# install, the same again, a damaged file, repair, an edited allow-list, undo (with the version it puts back), uninstall. Each step's --status is checked.
 set -uo pipefail
 PKG=$(cd "$1" && pwd)
 ROOT=$(mktemp -d -t ixeflow)
@@ -55,6 +55,14 @@ step --repair
 step --undo
 expect "after --undo (there was nothing before)" installed_state absent
 expect "after --undo" installed_version none
+step --apply
+# undo puts back the version recorded with its backup (here an earlier version, written by hand)
+echo 0.0.9-test > "$ROOT/Library/Application Support/intel-gpu-macos-driver/installed-version"
+step --apply
+expect "after --apply over 0.0.9-test" installed_version "$(state package_version)"
+step --undo
+expect "after --undo of that install" installed_version 0.0.9-test
+expect "after --undo of that install" installed_state same
 step --apply
 step --uninstall
 expect "after --uninstall" installed_state absent
