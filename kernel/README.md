@@ -22,8 +22,10 @@ A plain IOKit kext, without Lilu, for the Arc B580 (Battlemage BMG-G21, `8086:e2
   - `uapi/intelxe_drm.h` adds IOSurface implicit fences (the dma-resv model) and scan-out pinning for the display side.
 - **Robustness:** job watchdog / TDR, GT reset, shutdown quiesce, sleep/wake (`intelxePowerEvent`).
 
-**Snapshot in this repository: `sv7`** (2026-10-29 16:05, the kernel booted on the test machine; kext UUID
-C4AABC9A-942B-3B43-88CC-DDA4E30E901D). The steps since the `ph` snapshot, each a separate patch in the development tree:
+**Version in this repository: `rb7u`**, the kernel of the 0.1.x releases (renamed to IntelXe; tested on macOS 26.7.1).
+It is `rb7t` (VRAM-shared IOSurfaces fixed at boot, purgeable BOs, shared BOs, external fds behind `debug.intelxe.fds`)
+plus `rb7u` (macOS 26 starts drivers while the card is still leaving its reset: wait for config space, read the VRAM
+size again). The earlier steps, each a separate patch in the development tree:
 
 | Step | What |
 |---|---|
@@ -31,7 +33,7 @@ C4AABC9A-942B-3B43-88CC-DDA4E30E901D). The steps since the `ph` snapshot, each a
 | `pv` | **BAR window under pressure.** 32 MB of the 1 GB CPU-visible window is kept for page tables (a full window had made every VM_BIND fail with ENOMEM); one memory descriptor per CPU map (GEM_MMAP_OFFSET returns a cookie), so `IOConnectUnmapMemory64` finds and removes VRAM mappings (it never did); cheap eviction scans; `debug.intelxe.vram` (window, VRAM and system BOs per process) and window counters in `debug.intelxe.stats` |
 | `pv2` | EXEC waits behind the VM's kernel fences (BO clears), as `xe_exec` waits on the VM resv KERNEL slot |
 | `pv3` | a CPU map of a BO beyond a full window moves it to system memory (`boMoveSys`, xe's fault migrate to TT) instead of failing with ENOSPC |
-| `sv1`-`sv7` | VRAM-shared IOSurfaces (`uapi/intelxe_surfvram_kabi.h`, the registry NMXAccel and the plugin use; off until `debug.intelxe.surfvram` is set) |
+| `sv1`-`sv7` | VRAM-shared IOSurfaces (`uapi/intelxe_surfvram_kabi.h`, the registry NMXAccel and the plugin use; on at boot with `intelxe_surfvram=2`, as the install guide sets it, otherwise off until `debug.intelxe.surfvram` is set) |
 
 What is not done yet for the window: a BO the CPU has mapped never leaves it (an IOKit user mapping of a physical range
 cannot be pointed elsewhere), so the window is first come, first served, with spills to system memory.
@@ -44,7 +46,8 @@ An IOFramebuffer for the B580's DisplayPort outputs (display IP 14.01, C20 PHYs)
   - takes over the mode the GOP lit;
   - reads EDID over DP AUX;
   - scaled modes through the pipe scaler;
-  - refresh rates by VTOTAL (180/144/120/100/60 Hz);
+  - the modes and refresh rates the monitor's EDID offers (all blocks, Linux's drm_edid parsing; 120 modes on the test
+    monitor, the same rates as Windows);
   - Adaptive-Sync (VRR) with an LFC pacer.
 - **Link:** retraining and a full modeset with C20 PLL programming (`IntelXeLink.cpp`).
 - **Cursor:** hardware cursor.
@@ -53,7 +56,7 @@ An IOFramebuffer for the B580's DisplayPort outputs (display IP 14.01, C20 PHYs)
 - **Power:** sleep save/restore.
 - **Boot-time arming:** at boot it matches from the AuxKC and arms acceleration in the kernel together with NMXAccel ("boot1"), with an NVRAM panic-loop guard (`intelxe-guard`).
 
-**Current version: v10c** (2026-10-29): boot1 + v9 + v10b (`intelxefbRunGated`: NMXAccel's pipe registration inside IOGraphics' gate order; detailed timings answered with their mode size) + the v10c boot-guard fix.
+**Version in this repository: v10m**, the framebuffer of the 0.1.x releases: boot1 + v9 + v10b (`intelxefbRunGated`: NMXAccel's pipe registration inside IOGraphics' gate order; detailed timings answered with their mode size) + v10c (boot-guard fix) + the later steps up to v10m (modes from the EDID).
 
 Boot guard (`intelxe-guard` in NVRAM): a boot that ends inside its accelerated first minute turns acceleration off for the
 next boots (`intelxe-accel-off`, until `sudo nvram intelxe-accel-off=ok`; `nvram -d` leaves it in place on macOS 26). Since v10c "healthy" needs WindowServer itself: its

@@ -1,5 +1,8 @@
 # Vulkan fd sharing on macOS without real dma-buf/sync_file fds (design, 2026-10-30)
 
+> Design note with its date: it records the plan and the state of that day, not the current status. The current
+> state is in the README and `docs/devices/b580.md`.
+
 Goal: `VK_KHR_external_memory_fd` (+ `VK_EXT_external_memory_dma_buf`), `VK_KHR_external_semaphore_fd` and
 `VK_KHR_external_fence_fd` on ANV over IntelXe.kext, **across processes**: Wine's shared resources (D3D11/12 shared
 handles, the DXGI swapchain between the game and the compositor process) map `*_win32` handles onto the host's fd

@@ -69,6 +69,8 @@ Before offering anything, and again as root before applying:
 
 ## The dialogs (Turkish, as the user sees them)
 
+The dialogs are in Turkish for now (English: "Reinstall", "Later", "Don't ask again", "installed", "Restart").
+
 1. Offer: "Yeniden kur" (default) / "Daha sonra" / "Bir daha sorma". Unanswered for 30 min = "Daha sonra".
    "Bir daha sorma" is remembered for this state, this build and this plugin; a later update asks again.
    `ssv-watch-agent.sh --reset` forgets every such answer.
@@ -79,7 +81,7 @@ Before offering anything, and again as root before applying:
 ## Install / remove
 
 ```
-sudo ./install-service.sh install --package ~/b580/ssv8      # the package installed now
+sudo ./install-service.sh install --package <package-dir>   # the package installed now
 sudo ./install-service.sh update-package --package DIR       # after installing a newer package by hand
 sudo ./install-service.sh uninstall [--keep-package]
 ./install-service.sh status

@@ -10,8 +10,8 @@ These are our changes to Mesa's Intel Vulkan driver (ANV), in patch form. They l
 carry); `configure.sh` then sets the build up with the released options (ray tracing on, Vulkan Video codecs,
 `-Dxemac=user/xemac`), and `ninja -C <build> src/intel/vulkan/libvulkan_intel.dylib` builds it (export
 `MESA_GIT_SHA1_OVERRIDE=a3ad934832` for the ninja step as well, as `configure.sh` does for meson). The tables below
-split the same changes into reviewable steps; `0070`, `0088` and `0092` are experiments that are not in the released
-build.
+split the same changes into reviewable steps. Gaps in the numbering are experiments that are neither in the released
+build nor in this repository.
 
 The kernel's uAPI extensions (`intelxe_drm.h`) are taken from `<xemac>/../uapi`, here `user/uapi`, a link to
 `kernel/IntelXe/uapi`.
@@ -62,15 +62,46 @@ Both chains were checked to reproduce those trees byte for byte.
 | `patches/0047` | AV1 HuC BRC runs two PAK passes, as media-driver (the second only when the BRC asks for a re-encode) |
 | `patches/0050` | ANV/nvmtl: GPU reset recovery, `nvmtl_anv_device_recover_v1()` replaces a banned exec queue on the same VM (used by the Metal plugin) |
 | `patches/0051` | blorp: a compute clear's bounds rectangle after the RGB widening and tile offsets |
+| `patches/0071` | util u_queue destroy the finish barrier after every thread left it |
+| `patches/0072` | egl zink a macOS EGL platform zink through kopper with VK_EXT_metal_surface (the Zink OpenGL package, not part of `libvulkan_intel.dylib`) |
+| `patches/0073` | wsi metal OPAQUE composite alpha marks the IOSurface contents opaque |
+| `patches/0074` | anv video Xe2 decode AV1 and HEVC up to 16K |
+| `patches/0075` | anv HEVC and AV1 HuC BRC model a dyadic B pyramid per level |
+| `patches/0076` | vulkan video H.264 encode slice headers carry ref list modifications and MMCOs |
+| `patches/0077` | anv HEVC encode turns P slices into generalized P B before the BRC batch writes the slice header |
+| `patches/0078` | anv macOS resolve the optional entrypoints to NULL at link time instead of dynamic lookup |
+| `patches/0079` | anv VP9 decode alternates two motion vector buffers instead of copying |
+| `patches/0080` | anv Xe2 decodes VP9 up to 16K |
+| `patches/0081` | anv Xe2 encodes AV1 up to 8K multi tile frames and multi tile HuC BRC |
+| `patches/0082` | anv nvmtl one handle per IOSurface backing shares one anv_bo as PRIME imports do |
+| `patches/0083` | anv nvmtl a creator may ask for a Tile4 IOSurface backing when the window server reads layouts |
+| `patches/0084` | anv Xe2 H.264 encode quality levels are VDEnc target usage 7 4 1 as media driver |
+| `patches/0085` | anv RT set up the BTD FIFO and 3DSTATE_BTD only for devices that enabled ray tracing |
+| `patches/0086` | anv RT allocate the ray query BO and the BTD FIFO and emit 3DSTATE_BTD on first use |
+| `patches/0087` | anv Xe2 HEVC encode VDENC_PIPE_MODE_SELECT reference prefetch and DW5 as media driver |
+| `patches/0089` | anv report fd and host memory handle types only with their extensions |
+| `patches/0090` | wsi native images without dma buf export on devices that have none |
+| `patches/0091` | anv clear the whole sampler state before packing it |
+| `patches/0095` | anv Xe2 HEVC encode TU1 takes TU4 VDENC_CMD2 DW54 |
+| `patches/0096` | meson dead strip on darwin as the ld64 form of gc sections |
+| `patches/0097` | anv intel mi a batch out of memory is not written through |
+| `patches/0098` | anv xemac fd handle types from what the kernel offers at runtime |
+| `patches/0099` | anv OPAQUE_FD is not DMA_BUF compatible on a device without dma buf |
+| `patches/0100` | anv AV1 video sessions hand out their internal buffers in a few memory bindings |
 | `patches/0101` | the rename to IntelXe on top of the released prod9 tree: `intelxe_drm.h`, `DRM_IOCTL_INTELXE_*`, `INTELXE_*`, `struct drm_intelxe_*`, comments; the uAPI header found through the xemac dependency (`<xemac>/../uapi`) instead of a path relative to the Mesa checkout |
 | `xe2-venc/` | the 18 commits from `62a38137177` to `2663375102e` (see Bases) |
 | `working-tree/macos-anv-62a38137177-worktree.diff` | the uncommitted state of the `macos-anv` tree on 2026-10-29, as a diff against `62a38137177`: `0007`, the descriptor free list in host memory, the query pool in system memory, host-visible video session memory, the memory budget floor and `anon_file` with `geteuid` |
-| `working-tree/xe2-venc-2663375102e-worktree.diff` | the uncommitted state of the video tree against `2663375102e`. This is the tree the deployed system-wide `libvulkan_intel.dylib` is built from (decode + HEVC encode, `0007`/`0008` included). |
+| `working-tree/xe2-venc-2663375102e-worktree.diff` | the uncommitted state of the video tree against `2663375102e`. This was the tree the system-wide `libvulkan_intel.dylib` of 2026-10-29 was built from (decode + HEVC encode, `0007`/`0008` included). |
 | `configure.sh`, `darwin-x86_64.ini` | meson setup for an x86_64 macOS ANV-only build |
 
 The `working-tree` diffs overlap with `0007`/`0008` and with each other. They are snapshots, not a series: use one of them, not both, and do not combine them with `0007`/`0008`.
 
-## The installed library (2026-10-30)
+## History: earlier installed libraries
+
+The sections below describe builds that were installed before the released prod9 build (`intelxe.diff`); they are
+kept to reproduce older measurements.
+
+### The library of 2026-10-30
 
 `5b2fba33` (installed 04:35): the 2026-10-29 library below, then `0019`, `0020`, `0022`, `0023`, `0024`, `0025`,
 `0026`, `0021`, `0040`–`0043`, `0050`, `0044` (that much was `d8860b17`), then `0045`, `0051`, `0046`, `0047`.
@@ -89,13 +120,13 @@ for n in 0009 0010 0011 0013 0014 0012 0015 0016 0017 0018 0019 0020 0022 0023 0
 
 Then configure with the options of the next section.
 
-## The installed library (2026-10-29)
+### The library of 2026-10-29
 
 `venc2` + sv: the video tree (`xe2-venc` + `working-tree/xe2-venc-2663375102e-worktree.diff`) with `0009`, `0010`, `0011`
 applied (that is `venc2`, the base of the installed `libvulkan_intel.dylib`), then `0013` and `0014`, then `0012`,
 `0015`, `0016`, `0017` (installed as `mesa-rel-pkg-av1lf`, c5110e4283ba). Same meson options as below.
 
-## Reproducing the earlier video library
+### Reproducing the earlier video library
 
 ```sh
 git clone https://gitlab.freedesktop.org/mesa/mesa.git && cd mesa
@@ -103,20 +134,22 @@ git checkout -b intelxe f01e9b07a91f7e7ab730edfbb383b083f146067b
 git am <repo>/mesa/patches/000[1-6]-*.patch
 git am <repo>/mesa/xe2-venc/*.patch
 git apply <repo>/mesa/working-tree/xe2-venc-2663375102e-worktree.diff
-MESA_SRC=$PWD BUILD=build-rel-video VIDEO=1 <repo>/mesa/configure.sh
+# configure.sh now sets the released options; for this tree override them (later -D options win). Not re-checked since
+# configure.sh moved to the released options.
+MESA_SRC=$PWD BUILD=build-rel-video <repo>/mesa/configure.sh -Dplatforms= -Dintel-rt=disabled -Dmesa-clc=auto -Dintel-internal-shaders=stub
 ninja -C build-rel-video src/intel/vulkan/libvulkan_intel.dylib
 ```
 
-## Meson options of the installed build
+## Meson options of the released build
 
-These are the options of the installed build (`5b2fba33`; the same for `d8860b17`), from its `meson-private/cmd_line.txt`:
+`configure.sh` sets them (the released prod9 build, `a7021b7e`, and its rename):
 
 ```
 buildtype=release  b_ndebug=true
 c_args=cpp_args=-Xclang -fno-split-cold-code
 platforms=macos  vulkan-drivers=intel  gallium-drivers=  vulkan-layers=  tools=
 opengl=false  gles1=disabled  gles2=disabled  glx=disabled  egl=disabled  gbm=disabled
-llvm=disabled  intel-rt=disabled  intel-elk=false
+llvm=disabled  intel-rt=enabled  intel-elk=false
 video-codecs=h264dec,h265dec,av1dec,vp9dec,h264enc,h265enc,av1enc
 zstd=disabled  valgrind=disabled  libunwind=disabled  lmsensors=disabled  perfetto=false  build-tests=false
 xmlconfig=disabled  expat=disabled  spirv-tools=disabled
@@ -125,10 +158,10 @@ xemac=<repo>/user/xemac
 --cross-file=darwin-x86_64.ini   (clang -arch x86_64 -mmacosx-version-min=14.4)
 ```
 
-Against the earlier video library: `platforms=macos` (the Metal WSI of `0019`) and, since `0025`, `mesa-clc=system`
-instead of `intel-internal-shaders=stub`. ANV's internal shaders are then built by a host `mesa_clc` and
-`vtn_bindgen2` (LLVM/clang 23.1.2 with SPIRV-LLVM-Translator 23.1.2), which must be on `PATH`; `configure.sh` with
-`VIDEO=1` still sets the earlier options.
+The libraries of 2026-10-29/30 had the same options with `intel-rt=disabled`. The earlier video library had no
+`platforms=macos` (the Metal WSI came with `0019`) and used `intel-internal-shaders=stub` instead of
+`mesa-clc=system` (since `0025`). With `mesa-clc=system`, ANV's internal shaders are built by a host `mesa_clc` and
+`vtn_bindgen2` (LLVM/clang 23.1.2 with SPIRV-LLVM-Translator 23.1.2), which must be on `PATH`.
 
 `-Xclang -fno-split-cold-code` keeps clang from splitting cold code into separate functions. With splitting, the release build's per-submit round trip was about twice as long (221 µs, against 112 µs without it).
 

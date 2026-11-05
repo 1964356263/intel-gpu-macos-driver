@@ -46,7 +46,8 @@ FFmpeg (LGPL-2.1-or-later)
                                --enable-version3 or --enable-nonfree)
 
 Intel firmware (LICENSE.xe)
-  firmware/LICENSE.xe          linux-firmware LICENSES/LICENSE.xe; the GuC/HuC blobs are fetched, not included
+  firmware/LICENSE.xe          linux-firmware LICENSES/LICENSE.xe; the GuC/HuC blobs are fetched, not in the
+                               repository; release packages carry them inside IntelXe.kext
 
 See docs/LICENSING.md for the per-directory table and the obligations of the built products.
 

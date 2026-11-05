@@ -1,9 +1,14 @@
 # Changes to nullmoth for the Arc B580
 
 This directory is a copy of the parts of [nullmoth/nvidia-macos-driver](https://github.com/nullmoth/nvidia-macos-driver)
-that the B580 stack uses, with our modifications applied.
+that the IntelXe stack uses, with our modifications applied.
 
 - **Upstream base:** `6e375469bd02f5421a2a3d7c408507d5099e2c38` ("Changelog 2.6.2", 2026-10-26), branch `main`.
+- **Merged from upstream 2.6.6 (2026-11-03, in the released plugin):** of the 91 upstream commits between 2.6.2
+  (`29432bb` on today's `main`; upstream rewrote its history, so `6e37546` is not an ancestor of `main`) and 2.6.6 that
+  touch the plugin and the translator, the 41 general fixes and 4 that can be switched off were taken as 45 patches;
+  NVIDIA-specific changes were left out. The released plugin is that merge plus our ray-tracing and uniform-buffer work.
+  2.7.1 is reviewed but not merged yet.
 - **Our work:** one commit on a local branch `b580` (`428ca50`, "NMXAccel for the Arc B580: class-name header, no NVIDIA headers, B580-only personality"), plus working-tree changes made 2026-10-28/30. Both are included here; the repository history records each installed state.
 - **Recorded diff:** `b580-changes-vs-6e37546.diff` is the diff of these directories against the base commit as it
   stood on 2026-10-30, with the names of that time (the stack was renamed from B580 to IntelXe on 2026-11-05). It is a
@@ -13,7 +18,7 @@ that the B580 stack uses, with our modifications applied.
 
 The upstream repository is the whole NVIDIA product: the NVRM kernel module built against NVIDIA's open GPU kernel modules, NVRMFB, NMDRM, NMHDA, the NVK patches, GSP firmware handling, the installer and tools. Only the Metal plugin, the shader translator and two kexts are used for the B580.
 
-A `git subtree` would bring the full upstream history and all of those components into this repository. Our own history on top of it would still be only one commit, because most of our changes are uncommitted.
+A `git subtree` would bring the full upstream history and all of those components into this repository. Our own history on top of it would still be short: most of our changes were made in a working tree, not as upstream-style commits.
 
 A copy of the four components gives us:
 - a self-contained build;

@@ -60,7 +60,7 @@ Kaynak ağaçlar / source trees: linux: torvalds/linux abf8c33470f7 (7.3.0, 2026
 
 | Platform | Bizim durum / our status | Kanıt / evidence | Intel | Intel kaynak / source |
 |---|---|---|---|---|
-| Arc B580 | 🟩 works | Mesa ANV over xemac; Vulkan CTS ~22.3k pass, the hang cases fixed; Vulkan Video decode and encode; 2026-10-30/31, data/cts/runs.json | ANV; Vulkan Video encode off upstream on Xe2 | mesa include/pci_ids/iris_pci_ids.h:278; anv_physical_device.c:362 hw_video_encode_supported = verx10 <= 125 |
+| Arc B580 | 🟩 works | Mesa ANV over xemac; Vulkan CTS full run: 3.15 M cases, 1.77 M pass, 84 fail, no hangs; Vulkan Video decode and encode; 2026-11-04, data/cts/runs.json | ANV; Vulkan Video encode off upstream on Xe2 | mesa include/pci_ids/iris_pci_ids.h:278; anv_physical_device.c:362 hw_video_encode_supported = verx10 <= 125 |
 | B570, other BMG | ⬜ not yet | — | ANV; Vulkan Video encode off upstream on Xe2 | mesa iris_pci_ids.h:279 (B570); anv_physical_device.c:362 |
 | Lunar Lake | ⬜ not yet | — | ANV; Vulkan Video encode off upstream on Xe2 | mesa iris_pci_ids.h:261; anv_physical_device.c:362 |
 | Panther Lake | ⬜ not yet | — | ANV; Vulkan Video encode off upstream on Xe3 | mesa iris_pci_ids.h:291; anv_physical_device.c:362 |
@@ -72,7 +72,7 @@ Kaynak ağaçlar / source trees: linux: torvalds/linux abf8c33470f7 (7.3.0, 2026
 
 | Platform | Bizim durum / our status | Kanıt / evidence | Intel | Intel kaynak / source |
 |---|---|---|---|---|
-| Arc B580 | 🟩 works | Metal plugin over ANV: WindowServer composites on it; mtl_tests 7/7; Geekbench 7 Metal 85548; 2026-10-28/29, docs/devices/b580.md | - | Metal is Apple's API; Intel's stack is Linux/Windows |
+| Arc B580 | 🟩 works | Metal plugin over ANV: WindowServer composites on it; mtl_tests 7/7; Geekbench 7 Metal 92898 (macOS 26.7.1); 2026-11-05, docs/devices/b580.md | - | Metal is Apple's API; Intel's stack is Linux/Windows |
 | B570, other BMG | ⬜ not yet | — | - | — |
 | Lunar Lake | ⬜ not yet | — | - | — |
 | Panther Lake | ⬜ not yet | — | - | — |
@@ -192,7 +192,7 @@ Kaynak ağaçlar / source trees: linux: torvalds/linux abf8c33470f7 (7.3.0, 2026
 
 | Platform | Bizim durum / our status | Kanıt / evidence | Intel | Intel kaynak / source |
 |---|---|---|---|---|
-| Arc B580 | 🟩 works | OpenCL 1.2 through Apple's OpenCL over Metal on the B580 (Geekbench 7 OpenCL 84235); not Intel's compute-runtime; 2026-10-29, docs/devices/b580.md | compute-runtime | neo shared/source/xe2_hpg_core/bmg |
+| Arc B580 | 🟩 works | OpenCL 1.2 through Apple's OpenCL over Metal on the B580 (Geekbench 7 OpenCL 86920, macOS 26.7.1); not Intel's compute-runtime; 2026-10-29, docs/devices/b580.md | compute-runtime | neo shared/source/xe2_hpg_core/bmg |
 | B570, other BMG | ⬜ not yet | — | compute-runtime | neo shared/source/xe2_hpg_core/bmg |
 | Lunar Lake | ⬜ not yet | — | compute-runtime | neo shared/source/xe2_hpg_core/lnl |
 | Panther Lake | ⬜ not yet | — | compute-runtime | neo shared/source/xe3_core/ptl |
@@ -216,7 +216,7 @@ Kaynak ağaçlar / source trees: linux: torvalds/linux abf8c33470f7 (7.3.0, 2026
 
 | Platform | Bizim durum / our status | Kanıt / evidence | Intel | Intel kaynak / source |
 |---|---|---|---|---|
-| Arc B580 | 🟩 works | RTC sleep test and two long sleeps clean on rb7d + IntelXeFB v10k; not re-tested on the current kernel; 2026-10-30, docs/devices/b580.md (Uyku / Sleep) | xe S3 / s2idle | linux xe_pm.c:175 xe_pm_suspend |
+| Arc B580 | 🟩 works | Sleep and wake clean on the released kernel (rb7u + IntelXeFB v10m, macOS 26.7.1); earlier: RTC sleep test and two long sleeps on rb7d + v10k; 2026-11-05, docs/devices/b580.md (Uyku / Sleep) | xe S3 / s2idle | linux xe_pm.c:175 xe_pm_suspend |
 | B570, other BMG | ⬜ not yet | — | xe S3 / s2idle | linux xe_pm.c:175 |
 | Lunar Lake | ⬜ not yet | — | xe S3 / s2idle | linux xe_pm.c:175 |
 | Panther Lake | ⬜ not yet | — | xe S3 / s2idle | linux xe_pm.c:175 |

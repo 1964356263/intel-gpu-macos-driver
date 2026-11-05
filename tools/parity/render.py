@@ -481,8 +481,8 @@ def main():
         LANG = 'en'
         md = ['# İlerleme geçmişi / Progress history', '',
               '`tools/parity/build.sh` her çalıştığında `data/history.json`\'a bir satır ekler (aynı commit ve aynı sayılar tekrar yazılmaz).',
-              'Geçmiş satırlar `tools/parity/history_backfill.py` ile depodaki çekirdek commit\'lerinden yeniden ölçüldü.', '',
-              'Each run of `tools/parity/build.sh` appends one row; earlier rows were re-measured from the repository\'s kernel commits.', '',
+              'Geçmiş satırlar `tools/parity/history_backfill.py` ile geliştirme deposundaki çekirdek commit\'lerinden yeniden ölçüldü (commit kimlikleri o deponun, bu depoda yoklar).', '',
+              'Each run of `tools/parity/build.sh` appends one row; earlier rows were re-measured from the development repository\'s kernel commits (the commit ids are from that repository, not this one).', '',
               '![history](svg/history.svg)', '',
               '| Tarih / date | Commit | Etiket / label | xe uAPI | Linux fonksiyonları / functions | CTS (koşu / run) | Video çözme / decode |',
               '|---|---|---|---|---|---|---|']

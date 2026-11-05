@@ -20,6 +20,8 @@
 | `tools/report/`, `tools/quality/` | MIT | diagnostics collectors; encoder rate-distortion and VMAF scripts (they call FFmpeg and libvmaf, which are not included) |
 | `docs/design/` | MIT | design notes |
 | `firmware/` | `fetch.sh` MIT; `LICENSE.xe` is Intel's firmware licence text | the blobs are not in the repository |
+| `release/` | MIT | `install.sh`, the install guide and its templates, `package.sh` |
+| `tools/parity/`, `data/` | MIT | the parity generators and their data (measurements, CTS results) |
 | `efi/`, `docs/`, root files | MIT | |
 
 The `SPDX-License-Identifier` header at the top of each file names its licence. Files without one are third-party files, carrying their own notices.
@@ -50,7 +52,6 @@ The `SPDX-License-Identifier` header at the top of each file names its licence. 
 
 ## Not part of this repository
 
-- Remote-access tooling of the test setup (SSH configuration, the Tailscale network used to reach the test machine) is
-  not part of the repository and is not referenced by the build.
-- No machine secrets: no ACPI tables with serials (e.g. `MSMDM.aml`), no keys, no NVRAM dumps. `efi/` holds notes only.
+- Remote-access tooling of the test setup is not part of the repository and is not referenced by the build.
+- No machine secrets: no ACPI tables with serials (e.g. `MSDM.aml`), no keys, no NVRAM dumps. `efi/` holds notes and the source of `SSDT-ARCOFF` only.
 - The GuC/HuC firmware, MacKernelSDK, Mesa, FFmpeg and the Vulkan loader are fetched or built separately (see above).

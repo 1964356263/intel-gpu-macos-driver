@@ -1,5 +1,8 @@
 # B580 accelerated desktop: frame path and a plan for 180 Hz
 
+> Design note with its date: it records the plan and the state of that day, not the current status. The current
+> state is in the README and `docs/devices/b580.md`.
+
 [V] = verified in code (file:line), [I] = inferred (not proven by code or measurement). Paths: `nm/` = src/nullmoth, `b5/` = src/b580. One full frame at 2560x1440 BGRA is **14.75 MB**.
 
 ## 0. Summary

@@ -9,7 +9,7 @@
 Aranan ağaçlar / trees searched:
 
 - Mesa ANV / intel common (as run on macOS) @ a3ad934832bb (193 files)
-- Metal plugin / VideoToolbox (this repository) @ 030bfaed7ca8 (44 files)
+- Metal plugin / VideoToolbox (development repository @ 030bfaed7ca8, the same files as in this repository's `nullmoth/plugin` and `videotoolbox/`) (44 files)
 - iris (Mesa) @ a3ad934832bb (57 files)
 - Mesa intel/perf @ a3ad934832bb (18 files)
 - Intel compute-runtime (NEO) @ 248eb54f8441 (137 files)

@@ -1,21 +1,31 @@
 # OpenCore notes
 
-This directory holds notes only: no `config.plist`, no SMBIOS data and no ACPI tables. These are the settings the B580 stack depends on, as used on the development machine: an Intel Z790 desktop with an i7/UHD 770 iGPU and an Arc B580 in the x16 slot, running macOS 26 (x86_64) through OpenCore.
+This directory holds notes and the source of one ACPI table (`SSDT-ARCOFF.dsl`): no `config.plist` and no SMBIOS data. These are the settings the IntelXe stack depends on, as used on the test machine: an Intel Z790 desktop with an i7-14700K and an Arc B580 in the x16 slot (the CPU's integrated GPU is not used), running macOS 26 (x86_64) through OpenCore 1.0.8. The step-by-step install is `release/README-INSTALL.md`.
 
 ## Firmware (BIOS)
 
 - **Above 4G decoding and Resizable BAR on.** The firmware then gives the B580 a 16 GB BAR2.
-- **iGPU Multi-Monitor (iGPU kept on while a dGPU drives the display) enabled.** Optional. With it, the UHD 770 stays available headless for Quick Sync / VideoToolbox.
 
 ## Booter quirks
 
 - **`ResizeAppleGpuBars = 10`** (2^10 MB = 1 GB). macOS cannot map a 16 GB BAR, so without this quirk BAR2 stays unassigned. With `0` (256 MB) the driver also works, but the CPU-visible VRAM window is smaller. IntelXe.kext reads the window size from BAR2's length. VRAM beyond the window is used for buffers the CPU does not map, and allocations that do not fit spill to system memory.
 
+## UEFI output
+
+- **`ReconnectGraphicsOnConnect = false`.** With `true`, OpenCore re-binds the graphics drivers while it connects
+  drivers, and its RELEASE build then sets up the console before the B580's GOP is back ("OCC: Missing compatible GOP"
+  in the OpenCore log). macOS boots without a console framebuffer, the kernel never enables the boot screen, Lilu waits
+  for that to complete its start and never does, VirtualSMC's SMC device is not hooked into AppleSMC, there is no
+  `SMCWatchDogTimer`, and `watchdogd` panics the boot after about 20 seconds (`watchdogd ... exited`). OpenCore's DEBUG
+  build is about a second slower before the kernel and hides it. With `false`, OpenCore, Lilu and VirtualSMC RELEASE
+  boot cleanly (6 of 6 boots on the test machine, 4 of them warm restarts).
+- `ProvideConsoleGop = true`, `Resolution = Max` as in Dortania's guide.
+
 ## Kernel quirks
 
 - **`DisableIoMapper = true`.** Keep it.
   - IntelXe.kext's DMA goes through `IODMACommand` and is ready for VT-d.
-  - Other kexts on such systems are not: AppleIGC uses raw physical DMA, and WhateverXe has physical GGTT paths.
+  - Other kexts on such systems are not (AppleIGC, for example, uses raw physical DMA).
 
 ## ACPI
 
@@ -30,24 +40,26 @@ This directory holds notes only: no `config.plist`, no SMBIOS data and no ACPI t
 | `IntelXe.kext` | OpenCore `Kernel > Add` (EFI), `OSBundleRequired = Root` | plain IOKit, no Lilu; matches `8086:e20b`, brings the GPU up at start |
 | `IntelXeFB.kext` | `/Library/Extensions` + Auxiliary KC | links IOGraphicsFamily, which is not available to OpenCore-injected kexts at that stage; matches at boot from the AuxKC |
 | `NMXAccel.kext`, `NMXAGDC.kext` | `/Library/Extensions` + Auxiliary KC | IOAccelerator and AppleGraphicsDeviceControl services for WindowServer |
-| `NVMTLDriver.bundle` | `/Library/GPUBundles/` | Metal driver plugin; `/Library/GPUBundles/nvmtl/` holds `intel_icd.json` + `libvulkan_intel.dylib`, and `/Library/GPUBundles/nvmtl-allow.txt` the allow-list |
+| `NVMTLDriverLib.bundle` | `/Library/GPUBundles/` | Metal driver plugin; `/Library/GPUBundles/nvmtl/` holds Mesa's `libvulkan_intel.dylib` and the codecs, `/Library/GPUBundles/nvmtl-allow.txt` the allow-list. The optional system-volume copy (Safari WebGL) is `/System/Library/Extensions/NVMTLDriver.bundle` |
 
-Rebuild the AuxKC after changing any of the AuxKC kexts (`kmutil create` with all `/Library/Extensions` kexts, as nullmoth's installer does), then reboot.
+Rebuild the AuxKC after changing any of the AuxKC kexts (`kmutil create` with all `/Library/Extensions` kexts, as `install.sh --apply` does), then reboot.
 
 **Recovery:** Shift+Enter in the OpenCore picker boots safe mode, which skips the AuxKC. Keep a known-good EFI on a USB stick.
 
 ## Security settings
 
 - **SIP must allow unsigned kexts:** `csr-active-config` `0x803` (custom), so no approval dialog appears.
-- **Boot-args `amfi_get_out_of_my_way=0x1 amfi=0x80`:**
-  - used during development, so WindowServer accepts the ad-hoc-signed Metal plugin;
-  - also for the virtual HID test tools (entitlements);
-  - meant to be removed once the plugin is signed properly.
+- **Boot-arg `amfi_get_out_of_my_way=0x1`:** WindowServer accepts the ad-hoc-signed Metal plugin only with it. Meant
+  to go once the plugin is signed properly. (The development machine also had `amfi=0x80` for the virtual HID test
+  tools' entitlements; the driver does not need it.)
 
 ## Driver boot-args (all optional)
 
 | Boot-arg | Effect |
 |---|---|
+| `intelxe_surfvram=N` | VRAM-shared IOSurfaces: 0 off, 1 applications, 2 applications and WindowServer (the install guide sets 2); 3 is accepted, the kernel treats it as 2 and reports the level to the Metal plugin |
+| `intelxe_svwsfull=N` | 1 (default): WindowServer only imports, never makes, a VRAM backing of at least one scan-out frame; 0: it may make them |
+| `intelxe_fds=1` | object file descriptors (syncobj fds, sync files, PRIME) through `/dev/intelxeobj`; off by default |
 | `-intelxe_off` | IntelXe.kext does nothing |
 | `-intelxe_nometal` | no `nmxgpu-claimed` / NMXAccel |
 | `-intelxe_novideo` | no media GT |

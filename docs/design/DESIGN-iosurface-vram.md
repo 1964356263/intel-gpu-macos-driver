@@ -1,5 +1,8 @@
 # VRAM-shared IOSurfaces on the B580 (design, 2026-10-29)
 
+> Design note with its date: it records the plan and the state of that day, not the current status. The current
+> state is in the README and `docs/devices/b580.md`.
+
 ## 1. Why
 
 Measured live (GPUTIME, fix29b, Minecraft 26.3 at 2560x1440, 121-122 fps, Windows 1580-1600 fps at the same spot):

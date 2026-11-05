@@ -89,7 +89,7 @@ The device IDs come from Linux `include/drm/intel/pciids.h`.
 | BMG | `bmg` (built-in B580 image) | `GMD_ID` (20.01/20.02) | 8 MB |
 | PTL, WCL | `ptl` | `GMD_ID` (30.xx) | 8 MB |
 
-`build.py` builds in every `dl/fw/<stem>_guc_70.bin` it finds. If an image is missing, stage 3 says so and nothing else is affected.
+`build.py` builds in every `<stem>_guc_70.bin` it finds in `firmware/` (or `--firmware DIR`; `firmware/fetch.sh` downloads them). If an image is missing, stage 3 says so and nothing else is affected.
 
 ## Safety
 
@@ -102,7 +102,7 @@ The device IDs come from Linux `include/drm/intel/pciids.h`.
 
   It saves the entries and puts them back at release.
 
-**It does not take a GPU from another driver.** Stages 2–5 refuse while a driver that is not on a short harmless list is attached to the device. That list is `IONDRVFramebuffer` and `AppleGraphicsDevicePolicy`. B580, AppleIntel\* and anything unknown all block.
+**It does not take a GPU from another driver.** Stages 2–5 refuse while a driver that is not on a short harmless list is attached to the device. That list is `IONDRVFramebuffer` and `AppleGraphicsDevicePolicy`. IntelXe, AppleIntel\* and anything unknown all block.
 
 **It does not turn on memory decoding.** If the device's memory decoding is off, stage 1 stops. Stage 3 turns on bus mastering if it is off, because the GuC DMA needs it, and records that in the log.
 
@@ -187,6 +187,5 @@ nvram xeprobe-crumb              # the last step of the previous boot (when the 
 
 | What | Where |
 |---|---|
-| Source copy | `src/b580-probe` in the development tree: the kernel line `b580-tile4b` (identical to `b580-rb3` today) plus `xe_probe.cpp`, `xe_probe_lrc.inc` (context layouts from `xe_lrc.c`), `xe_probe_ids.inc` (device IDs from `pciids.h`), the `build.py` changes (personality, GuC images) and the accessor `intelxeGucImage()` in `IntelXe.cpp` |
-| Patch | `patches/b580/b580-xeprobe-v1.patch` (applies to `b580-tile4b` and `b580-rb3`) |
+| Probe | `kernel/IntelXe/xe_probe.cpp`, `xe_probe_lrc.inc` (context layouts from `xe_lrc.c`), `xe_probe_ids.inc` (device IDs from `pciids.h`); built by `kernel/IntelXe/build.py` |
 | Collector side | `collect-macos.sh --probe` |

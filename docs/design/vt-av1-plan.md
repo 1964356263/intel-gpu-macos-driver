@@ -1,12 +1,15 @@
 # B580 → VideoToolbox AV1 decode: research and plan
 
+> Design note with its date: it records the plan and the state of that day, not the current status. The current
+> state is in the README and `docs/devices/b580.md`.
+
 **[V]** = I read it in source, a binary or disassembly. **[I]** = inference.
 
 Sources:
 - nullmoth `plugin/NVMTLDevice.m`, and `libnvdec_hevc.dylib` from the nullmoth release v2.6.3 (`scratchpad/nmrel/`).
 - VideoToolbox and MediaToolbox from the hackintosh's dyld cache (`dscout/`, otool + `dscvm.py`; full listing in `scratchpad/vt.s`).
 - WebKit main (`scratchpad/wk/`).
-- The bundles and sandbox profiles of this Mac (macOS 27). Section 2 says where these may differ on macOS 15.
+- The bundles and sandbox profiles of the build Mac (macOS 27). Section 2 says where these may differ on macOS 15.
 - IntelXe kext and Mesa sources.
 
 ## TL;DR

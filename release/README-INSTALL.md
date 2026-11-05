@@ -1,4 +1,4 @@
-# intel-gpu-macos-driver 0.1.1 for macOS 26 Tahoe (Intel Arc B580)
+# intel-gpu-macos-driver 0.1.2 for macOS 26 Tahoe (Intel Arc B580)
 
 Experimental. Tested on one machine only: an Arc B580 in a Z790 desktop, macOS 26.7.1, OpenCore. Unsigned, unsupported, and it changes how your PC boots macOS. **Keep a USB stick with a working OpenCore EFI
 before you start**, and know how to boot from it (your firmware's boot menu key). Noncommercial use only (see `LICENSES/`).
@@ -7,7 +7,9 @@ What you get when it works: the desktop composited on the B580 with Metal (windo
 rate, up to 180 Hz tested), Metal apps and games, VideoToolbox decode (H.264, HEVC, AV1, VP9) and encode (H.264, HEVC,
 AV1) on the GPU, one DisplayPort monitor with VRR, sleep and wake.
 Known issues: Safari's GPU process and the Dock's helper stay on macOS's software path (listed in
-`Library/GPUBundles/nvmtl-allow.txt`); the first seconds after the first login stutter while shaders are translated.
+`Library/GPUBundles/nvmtl-allow.txt`); the first seconds after the first login stutter while shaders are translated;
+a light grey band on the login screen after a restart; ffmpeg-style tools that bring Metal up through a VideoToolbox
+encode miss our encoders in their first session.
 
 Already running an earlier build of this driver? Go to [Upgrading](#upgrading-from-an-earlier-build).
 
@@ -20,8 +22,8 @@ Already running an earlier build of this driver? Go to [Upgrading](#upgrading-fr
 
   | File | What | Unpack it on |
   |---|---|---|
-  | `intel-gpu-macos-driver-0.1.1-efi.zip` | the OpenCore pieces: `IntelXe.kext`, `SSDT-ARCOFF.aml` and its source | any system |
-  | `intel-gpu-macos-driver-0.1.1-tahoe.zip` | everything else, with `install.sh` | **macOS on the PC** (stage 3) |
+  | `intel-gpu-macos-driver-0.1.2-efi.zip` | the OpenCore pieces: `IntelXe.kext`, `SSDT-ARCOFF.aml` and its source | any system |
+  | `intel-gpu-macos-driver-0.1.2-tahoe.zip` | everything else, with `install.sh` | **macOS on the PC** (stage 3) |
 
   Unpack the second one on macOS only: Windows and most Linux unzip tools drop the executable bits and the code
   signatures that the installer checks.
@@ -35,7 +37,7 @@ Already running an earlier build of this driver? Go to [Upgrading](#upgrading-fr
 | Stage | Done on | What | The screen afterwards |
 |---|---|---|---|
 | 1 | Windows, Linux or macOS, then the PC | macOS installed with a plain OpenCore EFI | the B580's firmware output: no acceleration, slow |
-| 2 | config.plist, from any system | SIP, AMFI, two quirks | the same |
+| 2 | config.plist, from any system | SIP, AMFI, two quirks, one output setting | the same |
 | 3 | macOS on the PC | `sudo ./install.sh --apply`, **no reboot yet** | the same |
 | 4 | the EFI, from any system | `IntelXe.kext` and `SSDT-ARCOFF.aml`, then reboot | accelerated |
 
@@ -55,12 +57,13 @@ fresh install.
      connection that works in recovery (Ethernet with the right kext, or a Wi-Fi kext);
    - [on macOS](https://dortania.github.io/OpenCore-Install-Guide/installer-guide/mac-install.html): the full installer.
 3. **EFI:** build it as Dortania describes for your CPU and board. Nothing GPU-specific for the B580 yet: no
-   `DeviceProperties` and no WhateverGreen settings for it.
+   `DeviceProperties` and no WhateverGreen settings for it. Keep `UEFI > Output > ReconnectGraphicsOnConnect = false`
+   (Dortania's sample has it so); see stage 2.
 4. Install macOS and finish the setup assistant. The screen runs on the B580's firmware output (UEFI GOP) through
    macOS's generic display driver: one resolution, no acceleration, everything slow, and sleep does not work yet.
    That is expected.
 
-## 2. SIP, AMFI and two quirks (config.plist)
+## 2. SIP, AMFI, quirks and the console setting (config.plist)
 
 The EFI partition is a small FAT32 partition, which every system can mount:
 
@@ -81,7 +84,11 @@ In `config.plist`:
      `intelxe_surfvram=2` (IOSurfaces shared in VRAM between processes).
 4. `NVRAM > Delete > 7C436110-AB2A-4BBB-A880-FE41995C9F82` must list `csr-active-config` and `boot-args` (Dortania's
    sample config does), so that the new values replace the old ones.
-5. For the optional Safari WebGL copy only (step 3.4): `Misc > Security > SecureBootModel = Disabled`.
+5. `UEFI > Output > ReconnectGraphicsOnConnect = false`. With `true`, OpenCore's RELEASE build sets up the console
+   before the B580's firmware display (GOP) is back from the reconnect; macOS then boots without a console framebuffer,
+   Lilu never completes its start, VirtualSMC's SMC device is not hooked up, and `watchdogd` panics the boot about
+   20 seconds in. OpenCore's DEBUG build is slow enough to hide this.
+6. For the optional Safari WebGL copy only (step 3.4): `Misc > Security > SecureBootModel = Disabled`.
 
 Reboot into macOS. The screen still runs on the firmware output.
 
@@ -92,9 +99,9 @@ Reboot into macOS. The screen still runs on the firmware output.
 
    ```sh
    cd ~/Downloads
-   curl -LO https://github.com/yusufklncc/intel-gpu-macos-driver/releases/download/v0.1.1/intel-gpu-macos-driver-0.1.1-tahoe.zip
-   ditto -x -k intel-gpu-macos-driver-0.1.1-tahoe.zip .
-   cd intel-gpu-macos-driver-0.1.1-tahoe
+   curl -LO https://github.com/yusufklncc/intel-gpu-macos-driver/releases/download/v0.1.2/intel-gpu-macos-driver-0.1.2-tahoe.zip
+   ditto -x -k intel-gpu-macos-driver-0.1.2-tahoe.zip .
+   cd intel-gpu-macos-driver-0.1.2-tahoe
    ```
 
    Downloaded with a browser instead? Unpack it with a double click, open Terminal in the folder and run
@@ -122,7 +129,7 @@ Reboot into macOS. The screen still runs on the firmware output.
 
 ## 4. IntelXe.kext and SSDT-ARCOFF (the EFI)
 
-Take the files from `intel-gpu-macos-driver-0.1.1-efi.zip` (the macOS package has the same files under `EFI/OC/`).
+Take the files from `intel-gpu-macos-driver-0.1.2-efi.zip` (the macOS package has the same files under `EFI/OC/`).
 Mount the EFI partition as in stage 2; on the PC itself, `sudo diskutil mount disk0s1` with your partition.
 
 1. Copy `IntelXe.kext` to `EFI/OC/Kexts/` and add it under `Kernel > Add`: `BundlePath IntelXe.kext`,
@@ -166,14 +173,18 @@ Mount the EFI partition as in stage 2; on the PC itself, `sudo diskutil mount di
   ```
 
   (`sudo nvram -d intelxe-accel-off` reports no error on macOS 26 but leaves the variable in place; `=ok` works on every
-  version.)
+  version. The kernel's log message still names `nvram -d`; that changes with the next kernel build.)
+- **Panic about 20 seconds into the boot, `watchdogd ... exited`** (the report in
+  `/Library/Logs/DiagnosticReports/Kernel-*.panic` names `watchdogd`): `UEFI > Output > ReconnectGraphicsOnConnect`
+  is `true`; set it to `false` (stage 2, item 5).
 - **Undo everything:** `sudo ./install.sh --undo`, then reboot with `IntelXe.kext` and `SSDT-ARCOFF.aml` removed from
   the EFI.
 
 ## Upgrading from an earlier build
 
-**From 0.1.0:** 0.1.1 ships the same binaries, so nothing needs to change. To reinstall anyway, run
-`sudo ./install.sh --apply` from the new package and reboot.
+**From 0.1.0 or 0.1.1:** the driver binaries are the same in 0.1.0, 0.1.1 and 0.1.2; nothing needs to be reinstalled.
+Check `UEFI > Output > ReconnectGraphicsOnConnect = false` in your `config.plist` (stage 2, item 5), above all before
+you move OpenCore to a RELEASE build.
 
 **From the private builds named B580 (before 0.1.0):** `B580.kext` is now `IntelXe.kext`, `B580FB.kext` is
 `IntelXeFB.kext`, and the boot-args start with `intelxe_`. Do both halves before you reboot:

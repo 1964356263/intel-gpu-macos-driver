@@ -47,7 +47,8 @@ rehber [`release/README-INSTALL.md`](release/README-INSTALL.md)'de (İngilizce, 
 
 1. macOS'u sürücüsüz, düz bir OpenCore EFI'siyle kurun ([Dortania rehberi](https://dortania.github.io/OpenCore-Install-Guide/)).
    Kurulum ekranı B580'in kendi UEFI çıktısıyla, hızlandırmasız gelir; dahili GPU gerekmez.
-2. `config.plist`'te SIP'i, AMFI boot-arg'ını ve iki quirk'ü ayarlayın.
+2. `config.plist`'te SIP'i, AMFI boot-arg'ını, iki quirk'ü ve `ReconnectGraphicsOnConnect = false` ayarını yapın
+   (bu ayar açık kalırsa OpenCore'un RELEASE sürümü açılışta panik veriyor).
 3. macOS'ta [Releases](../../releases) sayfasından sürümünüze uygun paketi indirip `sudo ./install.sh --apply`
    çalıştırın. Betik önce sisteminizi kontrol eder, değiştirdiği her şeyin yedeğini alır; `--undo` ile geri alınır.
 4. EFI'ye `-efi.zip`'teki `IntelXe.kext`'i ve anakartınızın yoluna göre uyarlanmış ACPI tablosunu ekleyin, sonra
@@ -63,7 +64,9 @@ Her şeyi kendiniz derlemek isterseniz: [Kaynaktan derleme](#kaynaktan-derleme).
 - **Metal:** Uygulamalar, Chrome ve oyunlar. Mesa'nın `intel-rt` desteğiyle ışın izleme dahil Metal 3 özellikleri
   (hızlandırma yapıları, ışın sorguları, eğriler). Çevrilen shader'lar diske kaydediliyor; yeniden başlatmada ve sürücü
   güncellemesinde kaybolmuyor.
-- **OpenGL ve OpenCL:** Apple'ın Metal üzerinde çalışan GL ve OpenCL'i ile; OpenGL ayrıca Zink ile de çalışıyor.
+- **OpenGL ve OpenCL:** varsayılan olarak Apple'ın Metal üzerinde çalışan GL ve OpenCL'i ile. OpenGL, bağlamını
+  GLFW/EGL ile açan uygulamalarda (Minecraft gibi LWJGL 3 oyunları) Mesa'nın Zink'iyle de çalışıyor; bu isteğe bağlı
+  bir bileşen ve sürüm paketleri henüz kurmuyor.
 - **Video:** VideoToolbox üzerinden H.264, HEVC, AV1 ve VP9 çözücüler; H.264, HEVC ve AV1 kodlayıcılar. Hepsi GPU'da;
   QuickTime, OBS, HandBrake ve ffmpeg'in `videotoolbox` kodlayıcıları bunları kullanıyor.
 - **Hatadan toparlanma:** Takılan bir iş yalnızca kendi motorunu sıfırlatıyor; masaüstü çalışmaya devam ediyor.
@@ -160,7 +163,7 @@ biçimini izliyor. Yeni bir özellik, yeni bir macOS sürümü ya da yeni bir ka
 hata düzeltmeleri üçüncüyü (0.1.1). Güncellerken elle adım gerektiren değişiklikler (EFI'de bir değişiklik, adı değişen
 boot-arg'lar) sürüm notlarında yükseltme adımlarıyla birlikte geliyor. Paketler, GitHub etiketi ve `install.sh`
 sürüm numarasını taşıyor. Kext'ler ve Metal sürücüsü ise kendilerini en son yeniden derleyen sürümün numarasını taşıyor:
-0.1.1'de yalnızca rehber ve paketleme değiştiği için ikili dosyalarda hâlâ 0.1.0 yazıyor.
+0.1.1 ve 0.1.2'de yalnızca rehber, dokümanlar ve paketleme değiştiği için ikili dosyalarda hâlâ 0.1.0 yazıyor.
 
 ## Yaklaşımımız
 
@@ -197,7 +200,8 @@ numaralarını, UUID'leri, MAC adreslerini ve kullanıcı adlarını içinden ç
 - **Bizim yazdığımız kod:** MIT (`LICENSE`).
 - **PolyForm Noncommercial 1.0.0:** `nullmoth/` ve `kernel/IntelXeFB/IntelXeFB.cpp`.
 - **LGPL-3.0-or-later:** `nullmoth/translator/`.
-- **GuC/HuC yazılımları:** Intel'in `LICENSE.xe` lisansı; depoda yoklar, kurulumda indiriliyorlar.
+- **GuC/HuC yazılımları:** Intel'in `LICENSE.xe` lisansı; depoda yoklar (`firmware/fetch.sh` indiriyor), sürüm
+  paketlerinde `IntelXe.kext`'in içine gömülü geliyorlar.
 
 Depo da sürüm paketleri de **yalnızca ticari olmayan kullanım** içindir. Ayrıntılar `docs/LICENSING.md` ve `NOTICE`
 dosyalarında.

@@ -18,7 +18,8 @@ The order is roughly the intended one. Every item should follow the Linux xe/i91
 - **Upstream:** the ANV mutable-descriptor-list indexing fix (`mesa/patches/0013`).
 
 ### VRAM-shared IOSurfaces
-- In the tree and off by default (`debug.intelxe.surfvram` 1 = apps, 2-3 = also WindowServer). Goal: frames stay in VRAM from render to scan-out instead of crossing PCIe twice per frame (90 % of a game frame's GPU time). Needs the soak tests before it becomes the default.
+- **Done:** on at boot with `intelxe_surfvram=2` (applications and WindowServer), as the 0.1.x install guide sets it; frames stay in VRAM from render to scan-out instead of crossing PCIe twice per frame (90 % of a game frame's GPU time). The kernel's own default is still 0 (off) without the boot-arg.
+- Open: make it the kernel's default once more machines have run it.
 
 ### Descriptor model
 - Stage 1 (front end without per-draw atomics or retain/release, address table, bind cache): done. Stage 2, the descriptor-buffer model, is in the plugin behind `NVMTL_DESC_MODEL=buffer` and off by default until it has been soaked (`docs/design/DESCRIPTOR-MODEL.md`).
@@ -32,23 +33,22 @@ The order is roughly the intended one. Every item should follow the Linux xe/i91
 
 ### GPU resets
 - **Done (2026-10-30):** register save/restore lists for engine resets, queue replacement on the same VM in Mesa and the plugin; WindowServer survives a GT reset.
-- Open: three Vulkan CTS cases still hang or lose the device in the kernel (a timeline blit, an R8G8B8 sRGB multi-layer clear, a transform-feedback teardown).
+- The full Vulkan CTS run of 2026-11-04 (3.15 M cases) finished without a hang, a GT reset or a lost device; the three cases that used to hang (a timeline blit, an R8G8B8 sRGB multi-layer clear, a transform-feedback teardown) pass or fail cleanly.
+- Open: deliberate hang tests on the released kernel (the last ones ran on rb5/rb6b).
 
 ### Browsers
 - **Done (2026-10-30):** Chrome/Electron in their GPU sandbox; Safari WebGL through the optional system-volume plugin copy.
 - Open: the system-volume install breaks the sealed snapshot (as OpenCore Legacy Patcher's root patches do); a macOS update removes it (`ssv-install.sh --check`).
 
-### iGPU headless
-- With the monitor on the B580, the UHD 770 runs headless (BIOS iGPU Multi-Monitor), and Quick Sync works through VideoToolbox again.
-- **Open:**
-  - the B580 should be the default Metal and OpenCL device for every process;
-  - the iGPU should stay out of WindowServer's way.
+### Integrated GPU
+- Out of scope for this stack: the test machine runs with the CPU's integrated GPU off. A headless iGPU next to the B580
+  (Quick Sync through VideoToolbox) needs a separate iGPU driver and is not tested with this release.
 
 ### Remaining items from the workaround audit (2026-10-29)
 - Boot guard: since IntelXeFB v10c it needs WindowServer's own framebuffer connection and sustained accelerated frames; check it over a few boots, including a deliberately failing one.
 - Video was behind a debug gate; it is now on by default with the media GT up. Remove the ffmpeg vkshim.
 - Remove the AMFI boot-args: sign the plugin properly and use entitlements.
-- System sleep: IntelXeFB v10d and kernel rb6c (deployed 2026-10-30) fix the first failed test; repeat it.
+- System sleep: works on the released kernel (rb7u + IntelXeFB v10m, macOS 26.7.1). Open: in the tests of 2026-10-30 the machine woke by itself about 7 s after going to sleep (USB wake source, USBW); not re-checked on the released kernel.
 - Display hot-plug: interrupt-driven, instead of polling.
 - Second display pipe (pipe B, DBUF/MBUS split, watermarks). The test setup has only one monitor.
 

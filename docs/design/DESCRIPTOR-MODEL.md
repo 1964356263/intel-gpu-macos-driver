@@ -1,4 +1,7 @@
-# Descriptor model of the B580 Metal plugin
+# Descriptor model of the IntelXe Metal plugin
+
+> Design note with its date: it records the plan and the state of that day, not the current status. The current
+> state is in the README and `docs/devices/b580.md`.
 
 How the plugin turns Metal resource bindings into Vulkan descriptors on our ANV (Xe2, B580), and how that changes. The goal
 is less CPU time per draw in games such as Minecraft (GL 4.1 over Metal). Status 2026-10-29: measured, stage 1 built and

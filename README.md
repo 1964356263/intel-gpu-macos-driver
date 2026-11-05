@@ -47,7 +47,8 @@ You prepare everything from Windows, Linux or macOS; no Mac is needed. The full 
 
 1. Install macOS with a plain OpenCore EFI ([Dortania's guide](https://dortania.github.io/OpenCore-Install-Guide/)).
    The installer runs on the B580's firmware output, without acceleration; no integrated GPU is needed.
-2. In `config.plist`: SIP, the AMFI boot-arg and two quirks.
+2. In `config.plist`: SIP, the AMFI boot-arg, two quirks and `ReconnectGraphicsOnConnect = false` (otherwise
+   OpenCore's RELEASE build panics the boot).
 3. On macOS: download the package for your version from [Releases](../../releases) and run `sudo ./install.sh --apply`.
    It checks your setup first, backs up what it replaces and is undone with `--undo`.
 4. In the EFI: `IntelXe.kext` and an ACPI table with your board's path (from `-efi.zip`), then reboot with the monitor
@@ -62,7 +63,9 @@ To build everything yourself, see [Building from source](#building-from-source).
 - **Metal:** apps, Chrome and games; the Metal 3 feature set including ray tracing (acceleration structures, ray
   queries, curves) through Mesa's `intel-rt`. Translated shaders are cached on disk and survive reboots and driver
   updates.
-- **OpenGL and OpenCL** through Apple's GL-over-Metal and OpenCL-over-Metal; OpenGL also through Zink.
+- **OpenGL and OpenCL** through Apple's GL-over-Metal and OpenCL-over-Metal (the default). OpenGL also runs through
+  Mesa's Zink for applications that open their context with GLFW/EGL (LWJGL 3 games such as Minecraft); that is an
+  optional component, not installed by the release packages yet.
 - **Video:** VideoToolbox decoders for H.264, HEVC, AV1 and VP9, and encoders for H.264, HEVC and AV1, all on the GPU,
   for QuickTime, OBS, HandBrake and ffmpeg's `videotoolbox` encoders.
 - **GPU recovery:** a hung job resets only its engine; the desktop keeps running.
@@ -159,8 +162,8 @@ Releases follow [Semantic Versioning](https://semver.org) in its 0.x form until 
 (1.0.0): a new feature, a new macOS version or a new GPU raises the minor number (0.2.0); fixes alone raise the patch
 number (0.1.1). A change that needs manual steps when updating (an EFI change, renamed boot-args) comes with upgrade
 steps in the release notes. Packages, the GitHub tag and `install.sh` carry the release number; a kext or the Metal
-driver carries the number of the release that last rebuilt it (0.1.1 changed only the guide and the packaging, so its
-binaries still say 0.1.0).
+driver carries the number of the release that last rebuilt it (0.1.1 and 0.1.2 changed only the guide, the docs and
+the packaging, so their binaries still say 0.1.0).
 
 ## Philosophy
 
@@ -195,7 +198,8 @@ MAC addresses and user names first; please do not post raw system reports.
 - **Our code:** MIT (`LICENSE`).
 - **PolyForm Noncommercial 1.0.0:** `nullmoth/` and `kernel/IntelXeFB/IntelXeFB.cpp`.
 - **LGPL-3.0-or-later:** `nullmoth/translator/`.
-- **GuC/HuC firmware:** Intel's `LICENSE.xe`; it is downloaded, not included.
+- **GuC/HuC firmware:** Intel's `LICENSE.xe`; not in the repository (`firmware/fetch.sh` downloads it), built into
+  `IntelXe.kext` in the release packages.
 
 The repository and the release packages are for **noncommercial use**. Details: `docs/LICENSING.md` and `NOTICE`.
 

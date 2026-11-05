@@ -1,5 +1,8 @@
 # B580 hardware video on macOS: research and plan
 
+> Design note with its date: it records the plan and the state of that day, not the current status. The current
+> state is in the README and `docs/devices/b580.md`.
+
 Sources: Linux torvalds master `drivers/gpu/drm/xe` (fetched 2026-10-28 into `scratchpad/linux-video/`), Mesa main (local `src/mesa` checkout plus upstream `anv_physical_device.c`, which is identical in the gating lines), FFmpeg master (`scratchpad/ffmpeg-src/`), and nullmoth `plugin/NVMTLDevice.m`. **[V]** means I read it in source. **[I]** means it is my inference.
 
 ## TL;DR
