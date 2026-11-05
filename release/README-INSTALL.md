@@ -184,7 +184,7 @@ Mount the EFI partition as in stage 2; on the PC itself, `sudo diskutil mount di
   ```
 
   (`sudo nvram -d intelxe-accel-off` reports no error on macOS 26 but leaves the variable in place; `=ok` works on every
-  version. The kernel's log message still names `nvram -d`; that changes with the next kernel build.)
+  version. The kernel log of 0.1.x still names `nvram -d`; the source is fixed and the next kernel build has the new text.)
 - **Panic about 20 seconds into the boot, `watchdogd ... exited`** (the report in
   `/Library/Logs/DiagnosticReports/Kernel-*.panic` names `watchdogd`): `UEFI > Output > ReconnectGraphicsOnConnect`
   is `true`; set it to `false` (stage 2, item 5).

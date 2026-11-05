@@ -3129,7 +3129,7 @@ void IntelXeFramebuffer::guardBegin()
 		strlcpy(off, "the last accelerated boot ended inside its first minute (intelxe-guard accel)", sizeof off);
 		nvramWrite(kAccelOffKey, off);
 		accelOff = true;
-		FBLOG("guard: the last boot ended inside its accelerated first minute: acceleration OFF until `sudo nvram -d %s`", kAccelOffKey);
+		FBLOG("guard: the last boot ended inside its accelerated first minute: acceleration OFF until `sudo nvram %s=ok`", kAccelOffKey);
 	}
 	unsigned fails = 0;
 	if (had && prev[0] == 'f' && prev[1] == 'b') {

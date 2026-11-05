@@ -189,8 +189,8 @@ Dosyaları `intel-gpu-macos-driver-0.1.2-efi.zip`'ten alın (macOS paketinde de 
   sudo nvram intelxe-accel-off=ok
   ```
 
-  (`sudo nvram -d intelxe-accel-off` macOS 26'da hata vermez ama değişkeni silmez; `=ok` her sürümde çalışır. Kernel'in log mesajı hâlâ
-  `nvram -d` diyor, bir sonraki kernel derlemesinde değişecek.)
+  (`sudo nvram -d intelxe-accel-off` macOS 26'da hata vermez ama değişkeni silmez; `=ok` her sürümde çalışır. 0.1.x kernel'inin log mesajı
+  hâlâ `nvram -d` diyor; kaynak düzeltildi, bir sonraki kernel derlemesinde yeni metin gelecek.)
 - **Açılışın yaklaşık 20. saniyesinde panik, `watchdogd ... exited`** (`/Library/Logs/DiagnosticReports/Kernel-*.panic` içinde `watchdogd`
   geçiyorsa): `UEFI > Output > ReconnectGraphicsOnConnect` `true` kalmıştır; `false` yapın (2. aşama, 5. madde).
 - **Her şeyi geri almak:** `sudo ./install.sh --undo`, sonra `IntelXe.kext` ve `SSDT-ARCOFF.aml` EFI'den çıkarılmış olarak yeniden başlatın.

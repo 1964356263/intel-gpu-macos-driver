@@ -12,5 +12,5 @@ install -o root -g wheel -m 755 "$B/intelxe-accel.sh" /Library/IntelXe/intelxe-a
 if [ -e "$B/io.github.yusufklncc.intelxefb.plist" ]; then
 	install -o root -g wheel -m 644 "$B/io.github.yusufklncc.intelxefb.plist" /Library/LaunchDaemons/io.github.yusufklncc.intelxefb.plist
 fi
-nvram -d intelxe-guard 2>/dev/null || true
+nvram intelxe-guard=ok 2>/dev/null || true   # nvram -d does not remove it on macOS 26; the kext reads "ok" as absent
 echo "rolled back; now rebuild the AuxKC and reboot"
