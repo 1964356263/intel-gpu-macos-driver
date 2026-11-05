@@ -126,12 +126,17 @@ function Edit-Config([scriptblock]$change) {
     & $change $pl
     [IO.File]::WriteAllBytes($Cfg, $pl.ToBytes())
 }
+# A new EFI folder and backup folder for each test, never a deleted one again: Windows finishes a recursive delete late
+# (an open handle from Defender or the indexer), so a folder made again at once vanished under the test (5 Nov, 5.1).
+$script:efiRun = 0
 function New-Efi([string]$config) {
-    if (Test-Path -LiteralPath $F) { Remove-Item -LiteralPath $F -Recurse -Force }
-    if (Test-Path -LiteralPath $Bk) { Remove-Item -LiteralPath $Bk -Recurse -Force }
-    foreach ($d in 'EFI\OC\Kexts', 'EFI\OC\ACPI', 'EFI\BOOT') { $null = New-Item -ItemType Directory -Path (Join-Path $F $d) -Force }
+    $script:efiRun++
+    $script:F = Join-Path $Root ('efi' + $script:efiRun)
+    $script:Bk = Join-Path $Root ('backups' + $script:efiRun)
+    $script:Cfg = Join-Path $script:F 'EFI\OC\config.plist'
+    foreach ($d in 'EFI\OC\Kexts', 'EFI\OC\ACPI', 'EFI\BOOT') { $null = [IO.Directory]::CreateDirectory((Join-Path $script:F $d)) }
     [IO.File]::WriteAllBytes((Oc 'OpenCore.efi'), [byte[]]@())
-    Copy-Item -LiteralPath $config -Destination $Cfg -Force
+    [IO.File]::Copy($config, $script:Cfg, $true)
 }
 function Write-Sums {
     $lines = @()
