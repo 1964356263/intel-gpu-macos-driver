@@ -16,6 +16,7 @@
 # Installs:
 #   /Library/IntelXe/GL/                   libEGL (Mesa EGL, macOS platform), libgallium (zink), libGLzink (LWJGL's
 #                                          OpenGL library), libglfw.3 (GLFW 3.4 + the zink EGL patch)
+#   /Library/IntelXe/GL/libvulkan.1.dylib, intel_icd.x86_64.json: the loader and manifest again, for sandboxed applications
 #   /usr/local/lib/libvulkan.1.4.363.dylib the Khronos Vulkan loader (+ libvulkan.1.dylib, libvulkan.dylib links),
 #                                          which zink and ordinary Vulkan applications use to find the B580
 #   /usr/local/share/vulkan/icd.d/intel_icd.x86_64.json  -> /Library/GPUBundles/nvmtl/libvulkan_intel.dylib
@@ -99,6 +100,9 @@ install_all() {
     rm -rf "$H/.stage/GL"; mkdir "$H/.stage/GL"
     for f in $LIBS; do cp "$H/lib/$f" "$H/.stage/GL/"; done
     ln -s libEGL.1.dylib "$H/.stage/GL/libEGL.dylib"
+    # also beside zink: a sandboxed application cannot read /usr/local
+    install -m 755 "$H/vulkan/$VLIB" "$H/.stage/GL/libvulkan.1.dylib"
+    install -m 644 "$H/vulkan/icd.d/$ICD" "$H/.stage/GL/$ICD"
     place "$H/.stage/GL" $GL; rm -rf "$H/.stage"
     mkdir -p $VL $ICDD
     install -o root -g wheel -m 755 "$H/vulkan/$VLIB" $VL/$VLIB

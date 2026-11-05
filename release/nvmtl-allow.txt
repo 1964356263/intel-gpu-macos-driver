@@ -1,10 +1,7 @@
 # B580: which processes get the B580 Metal device (-Name denies, !Name = only when armed; NVMTL_ENABLE=1 bypasses)
-# 4 Nov Tahoe: Safari's GPU process restarted 16 times in 2 min on the plugin (black page content): kept off until fixed
-# 5 Nov Tahoe: the Dock's icon renderer (Calendar icon) and NotificationCenter (desktop widgets) drew empty content on
-# the plugin: kept off until the cause is fixed (nullmoth 2.7.1 and VRAM sharing off did not change it)
--com.apple.WebKit.GPU
--com.apple.dock.extra
--NotificationCenter
+# WebKit's GPU process has Metal only from the optional system-volume copy (its sandbox refuses /Library). The 4-5 Nov
+# denials here (Safari's GPU process, the Dock's icon renderer, NotificationCenter) ended with the translator's material
+# fix and the plugin's fc spec key fix.
 mtl_smoke
 !WindowServer
 !*
