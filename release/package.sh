@@ -6,7 +6,8 @@
 #
 # TAHOE_DIR / SEQUOIA_DIR hold the binaries in the package layout (EFI/, Library/, system-volume/, LICENSES/, sigcheck,
 # SOURCES.md), e.g. the unpacked previous release. install.sh and README-INSTALL.md come from templates/ with @VER@,
-# @MACOS@, @MAJOR@, @CODENAME@ and @TESTED@ filled in; SHA256SUMS is regenerated. The filled Tahoe copies are also
+# @MACOS@, @MAJOR@, @CODENAME@ and @TESTED@ filled in, Library/GPUBundles/nvmtl-allow.txt comes from release/; SHA256SUMS is
+# regenerated. The filled Tahoe copies are also
 # written next to this script (release/install.sh, release/README-INSTALL.md), for reading in the repository.
 # Writes to OUT_DIR:
 #   intel-gpu-macos-driver-VERSION-tahoe.zip, -sequoia.zip   (unpack on macOS: ditto -x -k)
@@ -50,6 +51,7 @@ for c in tahoe sequoia; do
     d=$W/$N-$c
     mkdir -p "$d"
     for x in EFI Library system-volume LICENSES sigcheck SOURCES.md; do ditto "$src/$x" "$d/$x"; done
+    cp "$R/nvmtl-allow.txt" "$d/Library/GPUBundles/nvmtl-allow.txt"   # the allow-list is kept in the repository
     fill "$R/templates/install.sh" "$d/install.sh" $c; chmod 755 "$d/install.sh"
     fill "$R/templates/README-INSTALL.md" "$d/README-INSTALL.md" $c
     if [ $c = tahoe ]; then cp "$d/install.sh" "$R/install.sh"; cp "$d/README-INSTALL.md" "$R/README-INSTALL.md"; fi

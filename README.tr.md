@@ -74,8 +74,11 @@ Her şeyi kendiniz derlemek isterseniz: [Kaynaktan derleme](#kaynaktan-derleme).
 
 ### Bilinen sorunlar
 
-- Safari'nin GPU süreci ve Dock'un yardımcı süreci (Takvim simgesini o çiziyor) şimdilik macOS'un yazılımsal yolunda
-  tutuluyor (`nvmtl-allow.txt`). Sebebi: ilk kullanımda web içeriği siyah kalabiliyordu ve Takvim simgesi görünmüyordu.
+- Safari'nin GPU süreci, Dock'un yardımcı süreci (Takvim simgesini o çiziyor) ve NotificationCenter (masaüstü
+  widget'larını o çiziyor) şimdilik macOS'un yazılımsal yolunda tutuluyor (`nvmtl-allow.txt`). Sebebi: ilk kullanımda
+  web içeriği siyah kalabiliyordu, Takvim simgesi ve widget'lar boş çiziliyordu.
+- Safari'de bazı web açılır listelerinde fareyle üstüne gelinen satır çizilmiyor (modrinth.com'da görüldü); sebebi henüz
+  bulunmadı.
 - İlk girişten sonraki ilk saniyelerde, shader'lar ilk kez çevrilirken takılmalar oluyor.
 - Yeniden başlattıktan sonra giriş ekranında, "Your password is required to log in" yazısının arkasında açık gri bir
   şerit görünüyor.

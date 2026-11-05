@@ -1,0 +1,10 @@
+# B580: which processes get the B580 Metal device (-Name denies, !Name = only when armed; NVMTL_ENABLE=1 bypasses)
+# 4 Nov Tahoe: Safari's GPU process restarted 16 times in 2 min on the plugin (black page content): kept off until fixed
+# 5 Nov Tahoe: the Dock's icon renderer (Calendar icon) and NotificationCenter (desktop widgets) drew empty content on
+# the plugin (SwiftUI/RenderBox, visible-function path): kept off until the nullmoth 2.7.1 fixes are in
+-com.apple.WebKit.GPU
+-com.apple.dock.extra
+-NotificationCenter
+mtl_smoke
+!WindowServer
+!*

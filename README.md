@@ -73,8 +73,10 @@ To build everything yourself, see [Building from source](#building-from-source).
 
 ### Known issues
 
-- Safari's GPU process and the Dock's helper (which draws the Calendar icon) stay on macOS's software path for now
-  (`nvmtl-allow.txt`): web content could stay black on first use, and the Calendar icon was missing.
+- Safari's GPU process, the Dock's helper (which draws the Calendar icon) and NotificationCenter (which draws the
+  desktop widgets) stay on macOS's software path for now (`nvmtl-allow.txt`): web content could stay black on first
+  use, and the Calendar icon and the widgets were drawn empty.
+- In Safari, a hovered row of some web drop-down lists is not drawn (seen on modrinth.com); not found yet.
 - The first seconds after the first login stutter while shaders are translated for the first time.
 - After a restart, the login screen shows a light grey band behind "Your password is required to log in".
 - Command-line tools whose first Metal use is a VideoToolbox encode (ffmpeg) do not see our encoders in their first

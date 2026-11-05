@@ -6,7 +6,8 @@ before you start**, and know how to boot from it (your firmware's boot menu key)
 What you get when it works: the desktop composited on the B580 with Metal (window dragging at the monitor's refresh
 rate, up to 180 Hz tested), Metal apps and games, VideoToolbox decode (H.264, HEVC, AV1, VP9) and encode (H.264, HEVC,
 AV1) on the GPU, one DisplayPort monitor with VRR, sleep and wake.
-Known issues: Safari's GPU process and the Dock's helper stay on macOS's software path (listed in
+Known issues: Safari's GPU process, the Dock's icon helper and NotificationCenter (desktop widgets) stay on macOS's
+software path (listed in
 `Library/GPUBundles/nvmtl-allow.txt`); the first seconds after the first login stutter while shaders are translated;
 a light grey band on the login screen after a restart; ffmpeg-style tools that bring Metal up through a VideoToolbox
 encode miss our encoders in their first session.
@@ -186,7 +187,9 @@ Mount the EFI partition as in stage 2; on the PC itself, `sudo diskutil mount di
 
 **From 0.1.0 or 0.1.1:** the driver binaries are the same in 0.1.0, 0.1.1 and 0.1.2; nothing needs to be reinstalled.
 Check `UEFI > Output > ReconnectGraphicsOnConnect = false` in your `config.plist` (stage 2, item 5), above all before
-you move OpenCore to a RELEASE build.
+you move OpenCore to a RELEASE build. Add `-NotificationCenter` to `/Library/GPUBundles/nvmtl-allow.txt` (after the `-com.apple.dock.extra` line) so that
+the desktop widgets are drawn again, then `killall NotificationCenter`; `install.sh --apply` keeps an existing
+allow-list that differs from the package's, so it does not add the line for you.
 
 **From the private builds named B580 (before 0.1.0):** `B580.kext` is now `IntelXe.kext`, `B580FB.kext` is
 `IntelXeFB.kext`, and the boot-args start with `intelxe_`. Do both halves before you reboot:
