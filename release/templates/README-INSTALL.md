@@ -174,8 +174,9 @@ Mount the EFI partition as in stage 2; on the PC itself, `sudo diskutil mount di
 - **Black screen or a reboot loop:** boot from your USB stick with the working EFI, or press Shift with the OpenCore
   entry selected to boot safe mode (it skips the Auxiliary Kernel Collection). Then run `sudo ./install.sh --undo` and
   remove `IntelXe.kext` and `SSDT-ARCOFF.aml` from the EFI.
-- **Desktop without acceleration after a crash:** when a boot ends inside its first accelerated minute (a panic, or the
-  power button held), the boot guard keeps acceleration off on the next boots. The desktop then runs on the framebuffer
+- **Desktop without acceleration after a crash:** when two boots in a row end inside their first accelerated minute (a
+  panic, or the power button held), the boot guard keeps acceleration off on the next boots. One such boot only makes the
+  next one try again. The desktop then runs on the framebuffer
   alone, `sysctl debug.nmxaccelfb` prints `0`, and `ioreg -rc IntelXeFramebuffer -d1 | grep AccelHeld` says why. Once
   the cause is gone, turn acceleration back on and reboot:
 

@@ -180,8 +180,9 @@ Dosyaları `intel-gpu-macos-driver-@VER@-efi.zip`'ten alın (macOS paketinde de 
 - **Siyah ekran ya da sürekli yeniden başlama:** Çalışan EFI'nin olduğu USB bellekten açın ya da OpenCore'da macOS seçiliyken Shift'e
   basarak güvenli modda açın (Yardımcı Kernel Koleksiyonu'nu atlar). Sonra `sudo ./install.sh --undo` çalıştırın ve `IntelXe.kext` ile
   `SSDT-ARCOFF.aml`'yi EFI'den çıkarın.
-- **Bir çökmeden sonra masaüstü hızlandırmasız:** Bir açılış, hızlandırmalı ilk dakikası içinde biterse (panik ya da güç düğmesine basılı
-  tutmak) açılış koruması sonraki açılışlarda hızlandırmayı kapalı tutar. Masaüstü yalnızca framebuffer ile çalışır, `sysctl
+- **Bir çökmeden sonra masaüstü hızlandırmasız:** Üst üste iki açılış, hızlandırmalı ilk dakikası içinde biterse (panik ya da güç
+  düğmesine basılı tutmak) açılış koruması sonraki açılışlarda hızlandırmayı kapalı tutar. Tek bir böyle açılış yalnızca bir sonrakinin
+  yeniden denemesine yol açar. Masaüstü yalnızca framebuffer ile çalışır, `sysctl
   debug.nmxaccelfb` `0` yazar, `ioreg -rc IntelXeFramebuffer -d1 | grep AccelHeld` da sebebini söyler. Sebep ortadan kalkınca
   hızlandırmayı açıp yeniden başlatın:
 
