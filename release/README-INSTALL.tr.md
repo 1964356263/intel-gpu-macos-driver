@@ -302,8 +302,12 @@ yeniden açtığı bir başlatıcı, ayar yerine oturmadan başlayıp Apple'ın 
 
 ## Yükseltme
 
-**0.1.0 ya da 0.1.1'den:** 0.1.2'de kext'ler ve Metal sürücüsü yeni; EFI'deki `IntelXe.kext` değişmedi. Paketi kurun
-(uygulamada *v0.1.2 sürümünü indir*, sonra *Bu paketi kur*; ya da `sudo ./install.sh --apply`) ve yeniden başlatın.
+**0.1.0 ya da 0.1.1'den:** Bütün kext'ler, Metal sürücüsü ve video kütüphaneleri yeni, **EFI'deki `IntelXe.kext` de**
+(bir güvenlik açığını kapatıyor: yetkisiz bir süreç yalnızca okuyabileceği sayfalara yazılabilir GPU eşlemesi
+alabiliyordu). Paketi kurun (uygulamada *v0.1.2 sürümünü indir*, sonra *Bu paketi kur*; ya da
+`sudo ./install.sh --apply`), sonra yeniden başlatmadan önce EFI'deki `IntelXe.kext`'i değiştirin (macOS'ta uygulamanın
+EFI sayfası ya da `sudo ./efi.sh --apply`, Windows'ta `IntelXe-EFI.ps1`, ya da elle kopyalayın; `config.plist` kaydı
+olduğu gibi kalır).
 `--apply` açılış korumasının LaunchDaemon'ını da kurar ve 0.1.0 ile 0.1.1'in izin listesini (0.1.1 rehberinin istediği
 `-NotificationCenter` satırıyla ya da satırsız) değiştirir; böylece Safari'nin GPU süreci, Dock simgeleri ve masaüstü
 widget'ları yeniden sürücüyü kullanır. Başka bir biçimde değiştirdiğiniz izin listesi korunur: paketteki
