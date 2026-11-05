@@ -6,7 +6,7 @@
 #
 # TAHOE_DIR / SEQUOIA_DIR hold the binaries in the package layout (EFI/, Library/, system-volume/, LICENSES/, sigcheck,
 # SOURCES.md), e.g. the unpacked previous release. install.sh and README-INSTALL.md come from templates/ with @VER@,
-# @MACOS@, @MAJOR@, @CODENAME@ and @TESTED@ filled in, Library/GPUBundles/nvmtl-allow.txt comes from release/; SHA256SUMS is
+# @MACOS@, @MAJOR@, @CODENAME@ and @TESTED@ / @TESTED_TR@ filled in, Library/GPUBundles/nvmtl-allow.txt comes from release/; SHA256SUMS is
 # regenerated. The filled Tahoe copies are also
 # written next to this script (release/install.sh, release/README-INSTALL.md), for reading in the repository.
 # Writes to OUT_DIR:
@@ -28,16 +28,18 @@ for f in EFI/OC/Kexts/IntelXe.kext/Contents/MacOS/IntelXe EFI/OC/Kexts/IntelXe.k
 done
 
 fill() { # fill SRC DST codename
-    local macos major tested
+    local macos major tested tested_tr
     case $3 in
         tahoe) macos="macOS 26 Tahoe"; major=26
-               tested="Experimental. Tested on one machine only: an Arc B580 in a Z790 desktop, macOS 26.7.1, OpenCore.";;
+               tested="Experimental. Tested on one machine only: an Arc B580 in a Z790 desktop, macOS 26.7.1, OpenCore."
+               tested_tr="Deneysel bir sürüm. Yalnızca tek makinede denendi: Z790 masaüstü, Arc B580, macOS 26.7.1, OpenCore.";;
         sequoia) macos="macOS 15 Sequoia"; major=15
-               tested="Experimental. **Not re-tested on Sequoia:** this package is built from the same sources as the Tahoe package, which was tested on one machine (an Arc B580 in a Z790 desktop, macOS 26.7.1, OpenCore); only NMXAccel is built for macOS 15. The same machine ran the previous build of this stack on macOS 15 until 4 November 2026.";;
+               tested="Experimental. **Not re-tested on Sequoia:** this package is built from the same sources as the Tahoe package, which was tested on one machine (an Arc B580 in a Z790 desktop, macOS 26.7.1, OpenCore); only NMXAccel is built for macOS 15. The same machine ran the previous build of this stack on macOS 15 until 4 November 2026."
+               tested_tr="Deneysel bir sürüm. **Sequoia'da yeniden denenmedi:** Bu paket, tek makinede denenen Tahoe paketiyle (Z790 masaüstü, Arc B580, macOS 26.7.1, OpenCore) aynı kaynaktan derlendi; yalnızca NMXAccel macOS 15 için derlendi. Aynı makine, bu yığının bir önceki derlemesini 4 Kasım 2026'ya kadar macOS 15'te çalıştırdı.";;
     esac
     sed -e "s|@VER@|$VER|g" -e "s|@MACOS@|$macos|g" -e "s|@MAJOR@|$major|g" -e "s|@CODENAME@|$3|g" \
-        -e "s|@TESTED@|$tested|g" "$1" > "$2"
-    ! grep -n '@[A-Z]*@' "$2" || { echo "unfilled placeholder in $2"; exit 1; }
+        -e "s|@TESTED@|$tested|g" -e "s|@TESTED_TR@|$tested_tr|g" "$1" > "$2"
+    ! grep -n '@[A-Z_]*@' "$2" || { echo "unfilled placeholder in $2"; exit 1; }
 }
 
 zipdir() { # zipdir PARENT NAME: NAME.zip with Unix modes, no resource forks, no extended attributes
@@ -55,7 +57,8 @@ for c in tahoe sequoia; do
     cp "$R/nvmtl-allow.txt" "$d/Library/GPUBundles/nvmtl-allow.txt"   # the allow-list is kept in the repository
     fill "$R/templates/install.sh" "$d/install.sh" $c; chmod 755 "$d/install.sh"
     fill "$R/templates/README-INSTALL.md" "$d/README-INSTALL.md" $c
-    if [ $c = tahoe ]; then cp "$d/install.sh" "$R/install.sh"; cp "$d/README-INSTALL.md" "$R/README-INSTALL.md"; fi
+    fill "$R/templates/README-INSTALL.tr.md" "$d/README-INSTALL.tr.md" $c
+    if [ $c = tahoe ]; then cp "$d/install.sh" "$R/install.sh"; cp "$d/README-INSTALL.md" "$R/README-INSTALL.md"; cp "$d/README-INSTALL.tr.md" "$R/README-INSTALL.tr.md"; fi
     xattr -cr "$d"
     (cd "$d" && find . -type f ! -name SHA256SUMS ! -path './system-volume/*' | sed 's#^\./##' | LC_ALL=C sort |
         while IFS= read -r f; do shasum -a 256 "$f"; done > SHA256SUMS

@@ -43,7 +43,7 @@ masaüstü (WindowServer), Metal uygulamaları ve oyunlar, VideoToolbox video i�
 ## Kurulum
 
 Hazırlığın tamamını Windows, Linux ya da macOS'tan yapabilirsiniz; elinizde bir Mac olması gerekmiyor. Ayrıntılı
-rehber [`release/README-INSTALL.md`](release/README-INSTALL.md)'de (İngilizce, her pakette de var). Kısaca:
+rehber [`release/README-INSTALL.tr.md`](release/README-INSTALL.tr.md)'de (her pakette de var). Kısaca:
 
 1. macOS'u sürücüsüz, düz bir OpenCore EFI'siyle kurun ([Dortania rehberi](https://dortania.github.io/OpenCore-Install-Guide/);
    test makinesinin seri numaraları çıkarılmış yapılandırması [`efi/sample-z790/`](efi/sample-z790/) klasöründe).

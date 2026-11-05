@@ -1,5 +1,7 @@
 # intel-gpu-macos-driver 0.1.2 for macOS 26 Tahoe (Intel Arc B580)
 
+[Türkçe](README-INSTALL.tr.md)
+
 Experimental. Tested on one machine only: an Arc B580 in a Z790 desktop, macOS 26.7.1, OpenCore. Unsigned, unsupported, and it changes how your PC boots macOS. **Keep a USB stick with a working OpenCore EFI
 before you start**, and know how to boot from it (your firmware's boot menu key). Noncommercial use only (see `LICENSES/`).
 

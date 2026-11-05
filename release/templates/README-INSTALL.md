@@ -1,5 +1,7 @@
 # intel-gpu-macos-driver @VER@ for @MACOS@ (Intel Arc B580)
 
+[Türkçe](README-INSTALL.tr.md)
+
 @TESTED@ Unsigned, unsupported, and it changes how your PC boots macOS. **Keep a USB stick with a working OpenCore EFI
 before you start**, and know how to boot from it (your firmware's boot menu key). Noncommercial use only (see `LICENSES/`).
 
