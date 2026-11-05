@@ -1,6 +1,6 @@
 # OpenCore notes
 
-This directory holds notes and the source of one ACPI table (`SSDT-ARCOFF.dsl`): no `config.plist` and no SMBIOS data. These are the settings the IntelXe stack depends on, as used on the test machine: an Intel Z790 desktop with an i7-14700K and an Arc B580 in the x16 slot (the CPU's integrated GPU is not used), running macOS 26 (x86_64) through OpenCore 1.0.8. The step-by-step install is `release/README-INSTALL.md`.
+This directory holds notes and the source of one ACPI table (`SSDT-ARCOFF.dsl`): no `config.plist` and no SMBIOS data. These are the settings the IntelXe stack depends on, as used on the test machine: an Intel Z790 desktop with an i7-14700K and an Arc B580 in the x16 slot (the CPU's integrated GPU is not used), running macOS 26 (x86_64) through OpenCore 1.0.8. The step-by-step install is `release/README-INSTALL.md`; the test machine's whole configuration, without its serial numbers, is in `sample-z790/`.
 
 ## Firmware (BIOS)
 

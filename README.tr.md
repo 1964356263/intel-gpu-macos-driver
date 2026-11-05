@@ -45,7 +45,8 @@ masaüstü (WindowServer), Metal uygulamaları ve oyunlar, VideoToolbox video i�
 Hazırlığın tamamını Windows, Linux ya da macOS'tan yapabilirsiniz; elinizde bir Mac olması gerekmiyor. Ayrıntılı
 rehber [`release/README-INSTALL.md`](release/README-INSTALL.md)'de (İngilizce, her pakette de var). Kısaca:
 
-1. macOS'u sürücüsüz, düz bir OpenCore EFI'siyle kurun ([Dortania rehberi](https://dortania.github.io/OpenCore-Install-Guide/)).
+1. macOS'u sürücüsüz, düz bir OpenCore EFI'siyle kurun ([Dortania rehberi](https://dortania.github.io/OpenCore-Install-Guide/);
+   test makinesinin seri numaraları çıkarılmış yapılandırması [`efi/sample-z790/`](efi/sample-z790/) klasöründe).
    Kurulum ekranı B580'in kendi UEFI çıktısıyla, hızlandırmasız gelir; dahili GPU gerekmez.
 2. `config.plist`'te SIP'i, AMFI boot-arg'ını, iki quirk'ü ve `ReconnectGraphicsOnConnect = false` ayarını yapın
    (bu ayar açık kalırsa OpenCore'un RELEASE sürümü açılışta panik veriyor).

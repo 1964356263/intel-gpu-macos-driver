@@ -45,7 +45,8 @@ OpenCore).
 You prepare everything from Windows, Linux or macOS; no Mac is needed. The full guide is
 [`release/README-INSTALL.md`](release/README-INSTALL.md) (also in each package). In short:
 
-1. Install macOS with a plain OpenCore EFI ([Dortania's guide](https://dortania.github.io/OpenCore-Install-Guide/)).
+1. Install macOS with a plain OpenCore EFI ([Dortania's guide](https://dortania.github.io/OpenCore-Install-Guide/); the
+   test machine's configuration without its serial numbers is in [`efi/sample-z790/`](efi/sample-z790/)).
    The installer runs on the B580's firmware output, without acceleration; no integrated GPU is needed.
 2. In `config.plist`: SIP, the AMFI boot-arg, two quirks and `ReconnectGraphicsOnConnect = false` (otherwise
    OpenCore's RELEASE build panics the boot).
