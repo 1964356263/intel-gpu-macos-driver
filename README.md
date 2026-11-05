@@ -66,7 +66,7 @@ To build everything yourself, see [Building from source](#building-from-source).
   updates.
 - **OpenGL and OpenCL** through Apple's GL-over-Metal and OpenCL-over-Metal (the default). OpenGL also runs through
   Mesa's Zink for applications that open their context with GLFW/EGL (LWJGL 3 games such as Minecraft); that is an
-  optional component, not installed by the release packages yet.
+  optional component ([`zink-gl/`](zink-gl/README.md)), not part of the release packages yet.
 - **Video:** VideoToolbox decoders for H.264, HEVC, AV1 and VP9, and encoders for H.264, HEVC and AV1, all on the GPU,
   for QuickTime, OBS, HandBrake and ffmpeg's `videotoolbox` encoders.
 - **GPU recovery:** a hung job resets only its engine; the desktop keeps running.

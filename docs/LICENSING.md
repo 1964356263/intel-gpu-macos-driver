@@ -20,6 +20,7 @@
 | `tools/report/`, `tools/quality/` | MIT | diagnostics collectors; encoder rate-distortion and VMAF scripts (they call FFmpeg and libvmaf, which are not included) |
 | `docs/design/` | MIT | design notes |
 | `firmware/` | `fetch.sh` MIT; `LICENSE.xe` is Intel's firmware licence text | the blobs are not in the repository |
+| `zink-gl/` | MIT (scripts, `src/glshim.c`, `src/egltri.c`); `src/mesa-zink.diff` under Mesa's licences; the GLFW patch under GLFW's zlib licence | the optional OpenGL-through-zink component; `src/` has the GLFW and Vulkan-Loader licence texts |
 | `release/` | MIT | `install.sh`, the install guide and its templates, `package.sh` |
 | `tools/parity/`, `data/` | MIT | the parity generators and their data (measurements, CTS results) |
 | `efi/`, `docs/`, root files | MIT | |

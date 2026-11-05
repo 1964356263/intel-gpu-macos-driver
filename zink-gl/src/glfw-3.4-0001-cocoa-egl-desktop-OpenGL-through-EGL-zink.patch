@@ -1,0 +1,81 @@
+From 3baa7725e2ffdea3650ee63d034fe740cb1ca629 Mon Sep 17 00:00:00 2001
+From: yusufklncc <78423442+yusufklncc@users.noreply.github.com>
+Date: Fri, 30 Oct 2026 19:39:02 +0300
+Subject: [PATCH] cocoa, egl: desktop OpenGL through EGL (Mesa zink) on macOS
+
+A build of GLFW 3.4 for Mesa's zink on macOS (the macOS EGL platform):
+
+- window.c: with _GLFW_ZINK_EGL, a desktop OpenGL context that asks for the
+  native context API (CGL/NSGL; Minecraft does) is made with EGL instead.
+  GLFW_ZINK_EGL=0 in the environment keeps the native API.
+- egl_context.c: GLFW_EGL_LIBRARY in the environment names the EGL library to
+  load before the built-in names (_GLFW_EGL_LIBRARY, here
+  "@loader_path/libEGL.1.dylib": the libEGL next to this library).
+
+Build: cmake -DBUILD_SHARED_LIBS=ON -DCMAKE_OSX_ARCHITECTURES=x86_64
+  '-DCMAKE_C_FLAGS=-D_GLFW_ZINK_EGL -D_GLFW_EGL_LIBRARY=\"@loader_path/libEGL.1.dylib\"'
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/egl_context.c | 16 ++++++++++++++++
+ src/window.c      | 13 +++++++++++++
+ 2 files changed, 29 insertions(+)
+
+diff --git a/src/egl_context.c b/src/egl_context.c
+index ef65dd3..9424765 100644
+--- a/src/egl_context.c
++++ b/src/egl_context.c
+@@ -383,6 +383,20 @@ GLFWbool _glfwInitEGL(void)
+     if (_glfw.egl.handle)
+         return GLFW_TRUE;
+ 
++    {
++        // GLFW_EGL_LIBRARY in the environment: the EGL library to load
++        const char* env = getenv("GLFW_EGL_LIBRARY");
++        if (env && env[0])
++        {
++            _glfw.egl.handle = _glfwPlatformLoadModule(env);
++            if (_glfw.egl.handle)
++            {
++                _glfw.egl.prefix = GLFW_TRUE;
++                goto loaded;
++            }
++        }
++    }
++
+     for (i = 0;  sonames[i];  i++)
+     {
+         _glfw.egl.handle = _glfwPlatformLoadModule(sonames[i]);
+@@ -398,6 +412,8 @@ GLFWbool _glfwInitEGL(void)
+ 
+     _glfw.egl.prefix = (strncmp(sonames[i], "lib", 3) == 0);
+ 
++loaded:
++
+     _glfw.egl.GetConfigAttrib = (PFN_eglGetConfigAttrib)
+         _glfwPlatformGetModuleSymbol(_glfw.egl.handle, "eglGetConfigAttrib");
+     _glfw.egl.GetConfigs = (PFN_eglGetConfigs)
+diff --git a/src/window.c b/src/window.c
+index 1463d16..406e505 100644
+--- a/src/window.c
++++ b/src/window.c
+@@ -211,6 +211,19 @@ GLFWAPI GLFWwindow* glfwCreateWindow(int width, int height,
+     wndconfig.title   = title;
+     ctxconfig.share   = (_GLFWwindow*) share;
+ 
++#if defined(_GLFW_COCOA) && defined(_GLFW_ZINK_EGL)
++    // This build is for Mesa's zink on macOS: desktop OpenGL contexts that
++    // ask for the native API (CGL/NSGL) are made with EGL instead.
++    // GLFW_ZINK_EGL=0 in the environment keeps the native API.
++    if (ctxconfig.client == GLFW_OPENGL_API &&
++        ctxconfig.source == GLFW_NATIVE_CONTEXT_API)
++    {
++        const char* env = getenv("GLFW_ZINK_EGL");
++        if (!env || strcmp(env, "0") != 0)
++            ctxconfig.source = GLFW_EGL_CONTEXT_API;
++    }
++#endif
++
+     if (!_glfwIsValidContextConfig(&ctxconfig))
+         return NULL;
+ 

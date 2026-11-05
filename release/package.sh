@@ -13,8 +13,9 @@
 #   intel-gpu-macos-driver-VERSION-tahoe.zip, -sequoia.zip   (unpack on macOS: ditto -x -k)
 #   intel-gpu-macos-driver-VERSION-efi.zip                    (the OpenCore pieces, the same in both; any system)
 #   intel-gpu-macos-driver-VERSION.sha256
+# With ZINK_DIR set in the environment also intel-gpu-macos-driver-VERSION-zink-gl.zip (see below).
 set -euo pipefail
-[ $# = 4 ] || { sed -n '3,15p' "$0"; exit 2; }
+[ $# = 4 ] || { sed -n '3,16p' "$0"; exit 2; }
 VER=$1 T=$2 S=$3 OUT=$4
 R=$(cd "$(dirname "$0")" && pwd)
 N=intel-gpu-macos-driver-$VER
@@ -83,5 +84,19 @@ xattr -cr "$e"
 (cd "$e" && find . -type f ! -name SHA256SUMS | sed 's#^\./##' | LC_ALL=C sort | while IFS= read -r f; do shasum -a 256 "$f"; done > SHA256SUMS)
 zipdir "$W" "$N-efi"
 
-(cd "$OUT" && shasum -a 256 "$N-tahoe.zip" "$N-sequoia.zip" "$N-efi.zip" > "$N.sha256")
+# ZINK_DIR: built zink-gl binaries (lib/, vulkan/, bin/, sigcheck): adds the optional -zink-gl.zip from zink-gl/ in this
+# repository. Without it no zink package is made.
+ZIPS=("$N-tahoe.zip" "$N-sequoia.zip" "$N-efi.zip")
+if [ -n "${ZINK_DIR:-}" ]; then
+    z=$W/$N-zink-gl
+    mkdir -p "$z"
+    ditto "$R/../zink-gl" "$z"
+    for x in lib vulkan bin sigcheck; do ditto "$ZINK_DIR/$x" "$z/$x"; done
+    chmod 755 "$z/install.sh" "$z/zink-gl-version.sh" "$z/sigcheck"
+    xattr -cr "$z"
+    (cd "$z" && find . -type f ! -name SHA256SUMS | sed 's#^\./##' | LC_ALL=C sort | while IFS= read -r f; do shasum -a 256 "$f"; done > SHA256SUMS)
+    zipdir "$W" "$N-zink-gl"
+    ZIPS+=("$N-zink-gl.zip")
+fi
+(cd "$OUT" && shasum -a 256 "${ZIPS[@]}" > "$N.sha256")
 cat "$OUT/$N.sha256"
