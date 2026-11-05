@@ -8,7 +8,11 @@ that the IntelXe stack uses, with our modifications applied.
   (`29432bb` on today's `main`; upstream rewrote its history, so `6e37546` is not an ancestor of `main`) and 2.6.6 that
   touch the plugin and the translator, the 41 general fixes and 4 that can be switched off were taken as 45 patches;
   NVIDIA-specific changes were left out. The released plugin is that merge plus our ray-tracing and uniform-buffer work.
-  2.7.1 is reviewed but not merged yet.
+- **Merged from upstream 2.7.1 (2026-11-05):** of the 107 upstream commits between `v2.6.6` and `v2.7.1` that touch the
+  plugin and the translator, 51 were taken (38 whole, 13 in part) as 30 patches (8 translator, 22 plugin), 4 were
+  already in this copy in another form, and 52 were left out: nvconv/SASS, changes specific to NVIDIA, NVK or the RM
+  kernel module, application profiles, and the device-loss diagnostics chain. The plugin and translator sections below
+  list what the merge changed. 2.7.2 is reviewed but not merged.
 - **Our work:** one commit on a local branch `b580` (`428ca50`, "NMXAccel for the Arc B580: class-name header, no NVIDIA headers, B580-only personality"), plus working-tree changes made 2026-10-28/30. Both are included here; the repository history records each installed state.
 - **Recorded diff:** `b580-changes-vs-6e37546.diff` is the diff of these directories against the base commit as it
   stood on 2026-10-30, with the names of that time (the stack was renamed from B580 to IntelXe on 2026-11-05). It is a
@@ -114,6 +118,38 @@ Note: `kexts/NVRM/accel/iofam/`, `kexts/NVRM/accel/re/` and `kexts/NVRMAGDC/Appl
 - **GPU reset recovery (recover1):** a banned exec queue is replaced on the same VM through Mesa's `nvmtl_anv_device_recover_v1` (`mesa/patches/0050`); at most 3 per minute and 16 per process.
 - **Function constants (speccst6):** variants are specializations of one translated module (`nvmtl_spec_fc.h`); only the constants that shape the module are baked in.
 - **VRAM-shared IOSurfaces (sv2-sv8):** IOSurfaces in shared B580 VRAM through Mesa 0014 and NMXAccel's registry, with implicit sync of every access, instead of per-process VRAM copies synchronised with the system pages. Off until `debug.intelxe.surfvram` is 1 (apps) or 2-3 (also WindowServer).
+- **Function-constant module key without a cache folder:** in a process with no shader cache folder (a sandbox such as
+  WebKit's GPU process) the in-memory key of a specialized module printed the structural values' JSON with `%@` of an
+  `NSData`, which shows only its length and a few bytes. Variants whose JSON had the same length shared one module, so
+  rounded boxes and gradients in Safari drew through the module of a plain fill. The key now holds the JSON text.
+- **nullmoth 2.7.1 merge, plugin part (22 patches):**
+  - visible functions: a function that calls visible functions is deferred to pipeline link before it is translated
+    (`NVMTL_EAGER_LINK_PROBE=1`: the old order); function tables are found from the intrinsics that read them and in
+    linked modules, with `linkedFunctions` entries for their handles and handle 0 for the pipeline's own function;
+  - bindless heaps: storage-image and texel-buffer bindings next to the sampled ones, prefilled with dummies, slots
+    zeroed when released (`NVMTL_NO_HEAP_STORAGE=1`, `NVMTL_HEAP_PREFILL=0`); application heaps are zero-filled when
+    created (`NVMTL_HEAP_ZERO=0`); a pipeline that indexes a binding the heap does not have is refused;
+  - `useHeap:` members are pinned and residency sets kept alive; the identity-compared resource set is off
+    (`NVMTL_RESSET_IDENTITY=1`; on upstream);
+  - argument buffers owned by a Managed buffer are read from its CPU copy (`NVMTL_EMBEDDED_MANAGED=0`: the old reads);
+  - a pipeline that does not fit the open render pass ends it and starts a compatible one (`NVMTL_NO_PASS_TRANSITION=1`);
+  - freed buffers stay alive until the submissions that may read them complete, rewritten on this copy's submission
+    tracking (`NVMTL_BUFFER_GRACE=0`; textures with `NVMTL_IMAGE_GRACE=1`); parked buffers are released after
+    `NVMTL_BUFPARK_AGE_MS` (default 5000, 0 = never; a fixed 5 s upstream);
+  - compute: binding tables in fixed arrays; indirect dispatch prepares the textures declared with
+    `useResource:usage:`; a compute-to-compute barrier in concurrent encoders too (`NVMTL_CONC_NO_BARRIER=1`); the
+    grid-only threadgroup reshape is taken but off (`NVMTL_TG_RESHAPE=1`; on upstream, tuned for NVIDIA SMs), and so is
+    the ordering barrier after every dispatch and pass (`NVMTL_ORDER_BARRIER=1`; on upstream, for NVK);
+  - `recommendedMaxWorkingSetSize` is capped at 71% of the card (`NVMTL_WS_RESERVE_MB`, 0 = no cap); setting the
+    same pipeline again in an open pass is skipped (`NVMTL_PSO_REBIND=1`: rebind);
+  - sRGB textures that ask for ShaderWrite keep their storage use through a UNORM view
+    (`NVMTL_NO_SRGB_VIEW_STORAGE=1`); `newAccelerationStructureWithSize:` falls back to system memory when VRAM refuses;
+  - the shader-cache tag names every translation mode and the stale sweep keeps other modes' entries
+    (`nvmtl_spvcache_name.h`; the default tag is unchanged); `NVMTL_AIR_DUMP=<dir>`; `NVMTL_PROCESS_ENV=1` and the
+    release-build environment filter (`nvmtl_env_knobs.h`, only in `RELEASE=1` builds).
+  - Not taken: nvconv and the SASS path, the device-loss report/witness/frame-dump chain, `NVMTL_HAZARD`,
+    `NVMTL_CANONICAL_POINTERS`, application profiles and `NVMTL_APPLE_FAMILY`, the RM-specific pool, sparse and
+    zeroing changes, and the BGR10A2 storage remap (Xe writes B10G10R10A2 directly).
 
 ### Translator (`translator/`)
 
@@ -127,4 +163,32 @@ Note: `kexts/NVRM/accel/iofam/`, `kexts/NVRM/accel/re/` and `kexts/NVRMAGDC/Appl
   - one-element vector views (`uchar4` over u32 words) are bitcast.
 - **`wrapper/src/buffer_addresses.rs`:** descriptor-kept buffers at offsets that are not a multiple of the storage-buffer alignment are indexed from the rounded-down offset, plus the remainder.
 - **Function constants as specialization constants (`wrapper/src/spec_fc.rs`, `meta/`):** `nvmtl_fc_structural` lists the constants the module's shape depends on; `nvmtl_translate_fc_spec2` bakes those, translates with the others unknown and turns each remaining one into a SPIR-V specialization constant. Every other entry point gives byte-identical output.
+- **nullmoth 2.7.1 merge, translator part (8 patches):** barrier execution scope from the callee, memory scope from the
+  operand; pixel-coordinate linear clamp-to-edge 2D samples without mips through the hardware filter
+  (`NVMTL_NO_PIXEL_HW_FILTER=1` keeps the four-fetch emulation); `air.simdgroup_matrix_8x8_init_filled`; a pointer
+  phi's load may follow sibling loads and arithmetic (`NVMTL_NO_PTR_PHI_LOAD=1` skips it); a device address plus a
+  constant offset as a BDA phi arm; byte-addressed threadgroup parameters stay at their byte offset; the ray-tracing
+  group (punned payload access chains, `punned_access_chain.rs`; named types kept apart across linked modules;
+  function tables read from the body; the acceleration-structure BDA sidecar; reachability walk in
+  `prune_unreferenced_functions`). The function-table runtime of `ift_runtime.rs` stays this copy's.
+- **Translation speed (idx1, idx2):** the same SPIR-V, byte for byte and with the same refusals, on 362 recorded shaders
+  (arm64 and x86_64), in less time: about a third less for the whole set, up to 72% less for large compute kernels.
+  - reflection's normalized text and typed module are reused by the translation that follows
+    (`native/module_reuse.rs`, scoped in the wrapper): reflection had parsed every compute kernel a second time;
+  - the inliner parses and renders a module once per caller and collects call-result substitutions per caller (was
+    quadratic); substitution tokens once per function, not per block;
+  - per-instruction parsing skips what the opcode rules out; whole-module scans skip lines by their first byte;
+    byte-level `split_top_level`; the vector-scalar merge analysis works on borrowed text, each line parsed once;
+  - structurizer: shape regions and construct membership are bit sets, `check_structure` walks dominator intervals,
+    switch-bypass reachability shares bit vectors;
+  - `wrapper/src/arena.rs` (ours, MIT): inside a translation small blocks come from thread-owned chunks with one free
+    list per size, given back when the translation ends; outside it, and for large blocks, the system allocator.
+    Peak memory during a translation is higher (259 → 318 MB in a 4-thread stress test), memory kept afterwards lower
+    (226 → 157 MB).
+- **Function constants that have no value yet are not folded (material fix):** constant folding treated a private
+  variable that is never written as a constant. In spec-constant mode (`nvmtl_translate_fc_spec2`, a function constant
+  without a baked value) the initial value of `_shader_state.MTL_FC_INIT` is a placeholder zero, so the branches lowered
+  from a `switch` were folded as if the constant were 0. SwiftUI's RenderBox took the default shape in every
+  specialized variant, its coverage was zero and widgets, the Dock's Calendar icon and other materials drew nothing.
+  Unbaked function constants are no longer folded; baked ones still are (unit test in `native/constfold/mod.rs`).
 - **`translator/Cargo.lock`:** regenerated by `cargo build` of the wrapper on this machine. It is smaller than upstream's because it resolves only the wrapper's dependency graph.

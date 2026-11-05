@@ -1459,6 +1459,9 @@ impl Emitter {
             return Some(name.clone());
         }
         let (id, _) = self.values.get(name)?;
+        if let Some(found) = self.i8_root_by_index(*id, false) {
+            return found;
+        }
         self.values
             .iter()
             .find_map(|(candidate, (candidate_id, _))| {
@@ -1471,10 +1474,41 @@ impl Emitter {
             })
     }
 
+    /// idx1: the scans below answered from the set of names whose pointee is an i8 array. Some(answer) when it is
+    /// unambiguous (no candidate, or exactly one: the scans' own result whatever their map order), None when two or
+    /// more qualify and the scan's map order decides - the caller then scans as before.
+    fn i8_root_by_index(&self, id: Word, with_globals: bool) -> Option<Option<String>> {
+        let roots = self.pointer_pointees.i8_roots();
+        let mut found = None;
+        for candidate in roots {
+            if self.values.get(candidate).is_some_and(|(cid, _)| *cid == id) {
+                if found.is_some() {
+                    return None;
+                }
+                found = Some(candidate);
+            }
+        }
+        if found.is_some() || !with_globals {
+            return Some(found.cloned());
+        }
+        for candidate in roots {
+            if self.global_values.get(candidate).is_some_and(|(cid, _)| *cid == id) {
+                if found.is_some() {
+                    return None;
+                }
+                found = Some(candidate);
+            }
+        }
+        Some(found.cloned())
+    }
+
     pub(in crate::native::emitter) fn byte_array_reinterpret_root_for_id(
         &self,
         id: Word,
     ) -> Option<String> {
+        if let Some(found) = self.i8_root_by_index(id, true) {
+            return found;
+        }
         self.values
             .iter()
             .chain(self.global_values.iter())

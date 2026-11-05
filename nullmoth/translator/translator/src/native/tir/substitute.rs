@@ -47,13 +47,22 @@ fn rename_in_place(line: &mut String, tokens: &HashMap<String, String>) {
         let bytes = line.as_bytes();
         let mut i = 0usize;
         let mut hit = false;
+        // idx1: one key (the inliner renames one call result at a time): compare its bytes instead of hashing
+        // every token of every line
+        let single = (tokens.len() == 1)
+            .then(|| tokens.keys().next().map(String::as_bytes))
+            .flatten();
         while let Some(relative) = bytes[i..].iter().position(|&b| b == b'%') {
             let at = i + relative;
             let mut j = at + 1;
             while j < bytes.len() && crate::native::cfg::clone_crossarm::is_ident_byte(bytes[j]) {
                 j += 1;
             }
-            if tokens.contains_key(&line[at..j]) {
+            let found = match single {
+                Some(key) => &bytes[at..j] == key,
+                None => tokens.contains_key(&line[at..j]),
+            };
+            if found {
                 hit = true;
                 break;
             }
@@ -191,7 +200,7 @@ fn replacement_token(value: &TypedValue) -> String {
     }
 }
 
-fn token_map(substitutions: &Substitutions) -> HashMap<String, String> {
+pub(in crate::native) fn token_map(substitutions: &Substitutions) -> HashMap<String, String> {
     substitutions
         .iter()
         .map(|(name, value)| (name.clone(), replacement_token(value)))
@@ -313,9 +322,18 @@ impl TirBlock {
             return;
         }
         let tokens = token_map(substitutions);
+        self.substitute_values_with_tokens(substitutions, &tokens, include_phis);
+    }
+
+    pub(in crate::native) fn substitute_values_with_tokens(
+        &mut self,
+        substitutions: &Substitutions,
+        tokens: &HashMap<String, String>,
+        include_phis: bool,
+    ) {
         for inst in &mut self.insts {
             if include_phis || !inst.is_phi() {
-                substitute_inst(inst, substitutions, &tokens);
+                substitute_inst(inst, substitutions, tokens);
             }
         }
         match &mut self.terminator {
@@ -350,6 +368,49 @@ impl TirBlock {
 
     pub(in crate::native) fn substitute_non_phi_values(&mut self, substitutions: &Substitutions) {
         self.substitute_values_impl(substitutions, false);
+    }
+}
+
+/// Substitutions a caller collects while it walks a function, applied in one pass when the walk ends. Applying each one
+/// to the whole function at once made inlining quadratic in the function's size. The map is kept resolved: a new value is
+/// rewritten through the earlier ones and the earlier values through the new one, so one pass gives what the same
+/// substitutions applied one after the other give. An instruction the walk needs to read now is brought up to date with
+/// `apply_inst`.
+#[derive(Default)]
+pub(in crate::native) struct PendingSubstitutions {
+    map: Substitutions,
+    tokens: HashMap<String, String>,
+}
+
+impl PendingSubstitutions {
+    pub(in crate::native) fn add(&mut self, key: String, mut value: TypedValue) {
+        substitute_typed_value(&mut value, &self.map);
+        let single: Substitutions = crate::fxhash::map_from([(key.clone(), value.clone())]);
+        for (earlier_key, earlier) in self.map.iter_mut() {
+            let mention = matches!(&earlier.value, LlValue::Local(name) if *name == key)
+                || mentions_key(&earlier.value, &single);
+            if mention {
+                substitute_typed_value(earlier, &single);
+                self.tokens.insert(earlier_key.clone(), replacement_token(earlier));
+            }
+        }
+        self.tokens.insert(key.clone(), replacement_token(&value));
+        self.map.insert(key, value);
+    }
+
+    pub(in crate::native) fn apply_inst(&self, block: &mut TirBlock, index: usize) {
+        if self.map.is_empty() {
+            return;
+        }
+        if let Some(inst) = block.insts.get_mut(index) {
+            substitute_inst(inst, &self.map, &self.tokens);
+        }
+    }
+
+    pub(in crate::native) fn apply_block(&self, block: &mut TirBlock) {
+        if !self.map.is_empty() {
+            block.substitute_values_with_tokens(&self.map, &self.tokens, true);
+        }
     }
 }
 

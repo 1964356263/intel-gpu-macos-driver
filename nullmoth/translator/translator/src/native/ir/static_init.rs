@@ -305,6 +305,8 @@ impl LlModule {
             if substitutions.is_empty() {
                 continue;
             }
+            // Once for the function, not once per block: a 38 MB kernel spent half of its time on this map.
+            let tokens = crate::native::tir::token_map(&substitutions);
             for block in &mut function.blocks {
                 let Some(typed) = block.typed_mut() else {
                     continue;
@@ -314,7 +316,7 @@ impl LlModule {
                         .as_ref()
                         .is_none_or(|result| !substitutions.contains_key(result))
                 });
-                typed.substitute_values(&substitutions);
+                typed.substitute_values_with_tokens(&substitutions, &tokens, true);
             }
             prune_constant_cfg_edges(&mut function.blocks);
         }

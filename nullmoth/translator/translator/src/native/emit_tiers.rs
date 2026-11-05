@@ -82,9 +82,11 @@ fn emit_vulkan_spirv_inner(
     if retry_debug {
         eprintln!("[retry-debug] native emit: AIR normalizations start");
     }
-    let san_ll = super::lower_air_text(san_ll);
-    let san_ll = vec_scalar_merge::lower_vector_scalar_pointer_merge(&san_ll);
-    let pointer_consumers = inline::inline_pointer_select_consumers(&san_ll, entry_name);
+    let pointer_consumers = super::module_reuse::normalized(san_ll, entry_name).unwrap_or_else(|| {
+        let san_ll = super::lower_air_text(san_ll);
+        let san_ll = vec_scalar_merge::lower_vector_scalar_pointer_merge(&san_ll);
+        inline::inline_pointer_select_consumers(&san_ll, entry_name)
+    });
     let san_ll = pointer_consumers.source;
     if retry_debug {
         eprintln!("[retry-debug] native emit: AIR normalizations complete; typed parse start");
@@ -154,12 +156,20 @@ fn emit_lowered_air_text(
 ) -> Result<crate::emit_sidecar::EmittedSpirv, crate::emit_sidecar::EmissionFailure> {
     let retry_debug = crate::env_vars::retry_debug();
     let san_ll = san_ll.to_string();
-    let mut parsed = if primitive_phi_metadata {
-        LlModule::parse_with_primitive_phi_metadata_and_stage_meta(&san_ll, kern, entry_name)
+    let reused = if primitive_phi_metadata {
+        None
     } else {
-        LlModule::parse_with_stage_meta(&san_ll, kern, entry_name)
-    }
-    .map_err(crate::emit_sidecar::EmissionFailure::from_error)?;
+        super::module_reuse::take_parsed(&san_ll, kern, entry_name)
+    };
+    let mut parsed = match reused {
+        Some(parsed) => parsed,
+        None if primitive_phi_metadata => {
+            LlModule::parse_with_primitive_phi_metadata_and_stage_meta(&san_ll, kern, entry_name)
+                .map_err(crate::emit_sidecar::EmissionFailure::from_error)?
+        }
+        None => LlModule::parse_with_stage_meta(&san_ll, kern, entry_name)
+            .map_err(crate::emit_sidecar::EmissionFailure::from_error)?,
+    };
     let requires_device_addresses = requires_device_address_model(&parsed);
     if retry_debug {
         eprintln!(

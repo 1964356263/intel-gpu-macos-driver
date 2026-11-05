@@ -275,8 +275,14 @@ pub(crate) fn parse_type_prefix(s: &str) -> Result<LlType, String> {
 }
 
 pub(super) fn parse_typed_value(s: &str) -> Result<TypedValue, String> {
-    let s = s.trim();
+    let s = super::lex::trim_fast(s);
     let toks = split_top_level_whitespace(s);
+    // The first candidates below, without joining tokens: a one-word type and a one-word value.
+    if let [ty, value] = toks[..] {
+        if let (Ok(value), Ok(ty)) = (parse_value(value), parse_type(ty)) {
+            return Ok(TypedValue { ty, value });
+        }
+    }
     let mut last_value_err = None;
     for value_start in (1..toks.len()).rev() {
         let value_text = toks[value_start..].join(" ");
@@ -968,7 +974,7 @@ fn parse_phi_incoming_value(token: &str) -> Result<LlValue, String> {
 }
 
 pub(super) fn parse_type(s: &str) -> Result<LlType, String> {
-    let s = strip_leading_fast_math_flags(s.trim());
+    let s = strip_leading_fast_math_flags(super::lex::trim_fast(s));
     if s == "void" {
         return Ok(LlType::Void);
     }
@@ -1061,6 +1067,10 @@ fn split_trailing_addrspace(s: &str) -> Result<(&str, u32), String> {
 
 fn strip_leading_fast_math_flags(mut s: &str) -> &str {
     loop {
+        // The caller trimmed s, so its first byte starts the first token; nearly every type leaves here.
+        if !matches!(s.as_bytes().first(), Some(b'a' | b'c' | b'f' | b'n' | b'r' | b'v')) || s == "float" {
+            return s;
+        }
         let toks = split_top_level_whitespace(s);
         let Some(flag) = toks.first().copied() else {
             return s;
@@ -1076,6 +1086,14 @@ fn strip_leading_fast_math_flags(mut s: &str) -> &str {
 }
 
 pub(super) fn parse_struct_fields(s: &str) -> Result<Vec<LlType>, String> {
+    // `{}` is a real type and not a parse failure. The shader converter uses it for the user payload inside a
+    // ray's fat payload when the function it is handing the payload to does not know the payload's type: an
+    // intersection function reads only the header, so the second member is declared empty there and spelled
+    // out in the hit shaders. Parsing it as no fields keeps the two views of that memory compatible; without
+    // this the whole type failed to parse, and the GEP through it was reported as an unhandled instruction.
+    if s.trim().is_empty() {
+        return Ok(Vec::new());
+    }
     split_top_level(s, ',')
         .into_iter()
         .map(parse_type)

@@ -164,6 +164,7 @@ typedef struct { void *cb; void *fb; void *pool; void *dset[2]; void *depth_view
                     and which of them were written; hz_unknown: one of those dispatches could reach anything */
                  uint64_t hz_lo[32], hz_hi[32]; uint32_t hz_wr, hz_n; uint8_t hz_unknown;
                  void *asq_pages; uint32_t asq_count;   /* acceleration structure compacted-size queries (nvmtl_vk_cmd_write_compacted_size) */
+                 uint8_t life_live;   /* nm271 grace: counted in g_cb_live from nvmtl_vk_cmd_begin to nvmtl_cmd_retire */
                } nvk_cmdbuf;
 #define NVMTL_VBC_NOSTRIDE (~0ull)
 int  nvmtl_vk_init(void);
@@ -273,6 +274,7 @@ int  nvmtl_vk_cmd_begin_render(nvk_cmdbuf *c, nvk_image *img, nvk_pipeline *p, c
 int  nvmtl_vk_cmd_begin_render_ex(nvk_cmdbuf *c, nvk_image *img, nvk_pipeline *p, const float clear[4], uint32_t load);
 int  nvmtl_vk_cmd_begin_render_ms(nvk_cmdbuf *c, nvk_image *img, nvk_pipeline *p, const float clear[4], uint32_t load, nvk_image *resolve);
 uint64_t nvmtl_vk_working_set(void);
+uint64_t nvmtl_vk_recommended_working_set(void);   /* 931d015: the working set capped at the card less a reserve */
 uint64_t nvmtl_vk_vram_bytes(void);
 void     nvmtl_vk_mem_split(uint64_t *vram, uint64_t *sys);
 int  nvmtl_vk_image_create_ms(uint32_t w, uint32_t h, uint32_t vkfmt, uint32_t bpp, uint32_t samples, nvk_image *out);
@@ -382,6 +384,8 @@ int  nvmtl_vk_format_is_storage(uint32_t vkfmt);
 int  nvmtl_vk_format_mip_blit(uint32_t vkfmt);
 int  nvmtl_vk_bind_storage_view(nvk_cmdbuf *c, uint32_t set, uint32_t index, void *view);
 uint32_t nvmtl_vk_bindless_put(void *view);
+void nvmtl_vk_bindless_put_storage(uint32_t slot, void *view);
+uint32_t nvmtl_vk_bindless_put_texel(void *bufview, int storage);
 uint32_t nvmtl_vk_bindless_sampler_slot(void *vksampler);
 void     nvmtl_vk_bindless_drop(uint32_t slot);
 int  nvmtl_vk_pipeline_create_ex(const void *vs, size_t vn, const void *fs, size_t fn, uint32_t vkfmt, int hasDepth, nvk_pipeline *out);
@@ -473,6 +477,7 @@ uint64_t nvmtl_vk_buffer_address(nvk_buffer *b);
 int nvmtl_vk_image_create_typed(uint32_t w, uint32_t h, uint32_t vkfmt, uint32_t bpp, int a8, uint32_t mips, int storage, uint32_t mtl_type, uint32_t layers, nvk_image *out);
 typedef struct { void *mem; void *map; size_t size; uint32_t memtype; int host_visible; } nvk_heap;
 int  nvmtl_vk_heap_create(size_t size, int host_visible, nvk_heap *out);
+int  nvmtl_vk_heap_zero(nvk_heap *h, const char *what);   /* 5fcf1ad: clear a fresh heap before its first placement (NVMTL_HEAP_ZERO) */
 int  nvmtl_vk_format_block(uint32_t vkfmt, uint32_t *bw, uint32_t *bh, uint32_t *block_bytes);
 static inline uint32_t nvmtl_vk_layers_for_type(uint32_t t, uint32_t n) { n = n ? n : 1; return (t == 1 || t == 3 || t == 8) ? n : t == 5 ? 6u : t == 6 ? 6u * n : 1u; }
 int nvmtl_vk_cmd_prepare_sampled_image(nvk_cmdbuf *c, nvk_image *img, int storage);

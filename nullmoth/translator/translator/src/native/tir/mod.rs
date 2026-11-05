@@ -19,6 +19,7 @@ mod phi_edit;
 mod rename;
 pub(in crate::native) use rename::renamed_llvalue;
 mod substitute;
+pub(in crate::native) use substitute::{token_map, PendingSubstitutions};
 
 pub(in crate::native) fn canonicalize_single_predecessor_phis(
     blocks: &mut [crate::native::cfg::BodyBlock],
@@ -121,9 +122,10 @@ pub(in crate::native) fn canonicalize_single_predecessor_phis(
                 .insts
                 .remove(inst_index);
         }
+        let tokens = token_map(&map);
         for block in blocks.iter_mut() {
             if let Some(typed) = block.typed_mut() {
-                typed.substitute_values(&map);
+                typed.substitute_values_with_tokens(&map, &tokens, true);
             }
         }
     }

@@ -1,3 +1,6 @@
+
+mod arena;
+#[global_allocator] static ALLOCATOR: arena::Allocator = arena::Allocator;
 use metal2vulkan::passes::Stage;
 use std::ffi::CStr;
 use std::os::raw::c_char;
@@ -152,14 +155,17 @@ fn translate_with_pointer_retry(
 }
 
 fn translate_one_as_written(ll: &str, st: Stage) -> Result<Vec<u8>, String> {
-    let caps = CAPS.load(Ordering::Relaxed);
-    if let Some(o) = if caps != 0 { formatless_options(ll, st, caps) } else { None } {
-        match metal2vulkan::translate_native_no_retry_constructed_with_options(ll, st, apply_tg(o)) {
-            Ok(v) => return Ok(v),
-            Err(e) => eprintln!("nvmtl_translate: formatless storage images refused, falling back: {e}"),
+    // formatless_options reflects first: the translation reuses the module that reflection parsed
+    arena::scope(|| metal2vulkan::native::with_module_reuse(|| {
+        let caps = CAPS.load(Ordering::Relaxed);
+        if let Some(o) = if caps != 0 { formatless_options(ll, st, caps) } else { None } {
+            match metal2vulkan::translate_native_no_retry_constructed_with_options(ll, st, apply_tg(o)) {
+                Ok(v) => return Ok(v),
+                Err(e) => eprintln!("nvmtl_translate: formatless storage images refused, falling back: {e}"),
+            }
         }
-    }
-    metal2vulkan::translate_native_no_retry_constructed_with_options(ll, st, apply_tg(metal2vulkan::passes::TransformOptions::default()))
+        metal2vulkan::translate_native_no_retry_constructed_with_options(ll, st, apply_tg(metal2vulkan::passes::TransformOptions::default()))
+    }))
 }
 
 #[no_mangle]
@@ -620,7 +626,7 @@ pub extern "C" fn nvmtl_reflect(
         Ok("vertex") => Stage::Vertex, Ok("fragment") => Stage::Fragment, Ok("kernel") => Stage::Kernel,
         _ => { set_err("stage must be vertex|fragment|kernel"); return -1; }
     };
-    let refl = match metal2vulkan::reflect_sanitized(ll, st, metal2vulkan::passes::TransformOptions::default()) {
+    let refl = match arena::scope(|| metal2vulkan::reflect_sanitized(ll, st, metal2vulkan::passes::TransformOptions::default())) {
         Ok(r) => r,
         Err(e) => { set_err(&e); return -1; }
     };
@@ -665,7 +671,7 @@ pub extern "C" fn nvmtl_reflect_fc(
         Ok(v) => v,
         Err(e) => { set_err(&format!("AIR specialization: {e}")); return -1; }
     };
-    let refl = match metal2vulkan::reflect_sanitized(specialized.as_ref(), st, metal2vulkan::passes::TransformOptions::default()) {
+    let refl = match arena::scope(|| metal2vulkan::reflect_sanitized(specialized.as_ref(), st, metal2vulkan::passes::TransformOptions::default())) {
         Ok(r) => r,
         Err(e) => { set_err(&e); return -1; }
     };

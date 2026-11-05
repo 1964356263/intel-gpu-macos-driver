@@ -4,18 +4,22 @@ pub(in crate::passes) fn function_value_types(
     ctx: &Ctx,
     function_idx: usize,
 ) -> HashMap<Word, Word> {
-    ctx.new_globals
-        .iter()
-        .chain(ctx.module.types_global_values.iter())
-        .chain(ctx.module.functions[function_idx].parameters.iter())
-        .chain(
-            ctx.module.functions[function_idx]
-                .blocks
-                .iter()
-                .flat_map(|block| block.instructions.iter()),
-        )
-        .filter_map(|instruction| Some((instruction.result_id?, instruction.result_type?)))
-        .collect()
+    let function = &ctx.module.functions[function_idx];
+    // Dozens of passes build this map: sized once, it does not grow and rehash on the way.
+    let capacity = function.blocks.iter().map(|block| block.instructions.len()).sum::<usize>()
+        + function.parameters.len()
+        + ctx.new_globals.len()
+        + ctx.module.types_global_values.len();
+    let mut types = HashMap::with_capacity_and_hasher(capacity, Default::default());
+    types.extend(
+        ctx.new_globals
+            .iter()
+            .chain(ctx.module.types_global_values.iter())
+            .chain(function.parameters.iter())
+            .chain(function.blocks.iter().flat_map(|block| block.instructions.iter()))
+            .filter_map(|instruction| Some((instruction.result_id?, instruction.result_type?))),
+    );
+    types
 }
 
 pub(in crate::passes) fn type_def_of(ctx: &Ctx, ty: Word) -> Option<Instruction> {

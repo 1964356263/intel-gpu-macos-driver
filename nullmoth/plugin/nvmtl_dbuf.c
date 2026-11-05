@@ -403,7 +403,7 @@ static int nvmtl_db_heap_create_locked(void)
         for (uint32_t k = 0; k < NVMTL_BINDLESS_SAMPLER_SLOTS; k++) memcpy(g_dbheap.map + g_dbheap_samp_off + (size_t)k * ss, d, ss);
         g_heap_sampler_binding = 1;
     }
-    g_heapLayout = hl; g_heap_ready = 1;
+    g_heapLayout = hl; g_heap_ready = 1; g_heap_nbind = hnb;
     nvlog("vk: BINDLESS heap ready (descriptor buffer, %llu bytes) - set 2, %d sampled images%s", (unsigned long long)size,
           NVMTL_BINDLESS_SLOTS, hnb == 2 ? " + samplers" : "");
     return 0;

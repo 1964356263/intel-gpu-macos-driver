@@ -1896,6 +1896,18 @@ fn normalize_one_switch_bypass_merge(
         .map(|b| (b.name.clone(), block_successors(b)))
         .collect();
 
+    let succ_idx: Vec<Vec<usize>> = blocks
+        .iter()
+        .map(|b| {
+            successors[&b.name]
+                .iter()
+                .filter_map(|t| order.get(t).copied())
+                .collect()
+        })
+        .collect();
+    let mut reach = ReachCache {
+        sets: HashMap::default(),
+    };
     for block in blocks.clone() {
         let Some(targets) = switch_targets(&block) else {
             continue;
@@ -1908,20 +1920,19 @@ fn normalize_one_switch_bypass_merge(
         if live_targets.is_empty() {
             continue;
         }
+        // idx1: forward reachability as per-block bit vectors, shared by every switch of this round (was a fresh
+        // String set per target and switch: ~6% of the WindowServer uber shader's translation)
         let reachable = live_targets
             .iter()
-            .map(|target| (target, reachable_from(target, &successors)))
+            .map(|target| (target, reach.get(target, &order, &succ_idx)))
             .collect::<Vec<_>>();
         let Some(start) = order.get(&block.name).map(|i| i + 1) else {
             continue;
         };
         let mut intermediate = None;
         let mut merge = None;
-        for candidate in blocks.iter().skip(start) {
-            if !reachable
-                .iter()
-                .all(|(_, seen)| seen.contains(&candidate.name))
-            {
+        for (candidate_index, candidate) in blocks.iter().enumerate().skip(start) {
+            if !reachable.iter().all(|(_, seen)| seen[candidate_index]) {
                 continue;
             }
             if reachable

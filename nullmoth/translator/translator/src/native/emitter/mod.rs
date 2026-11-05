@@ -42,6 +42,46 @@ mod types;
 mod layout_tests;
 
 use helpers::*;
+
+/// idx1: the emitter's pointer -> pointee map, which also keeps (on every write) the names whose pointee is an i8
+/// array. byte_array_reinterpret_root* asked "which value with this id points at an i8 array" by scanning every value
+/// of the function on every load and GEP (~6% of the WindowServer uber shader); the set answers it directly.
+#[derive(Clone, Default)]
+pub(super) struct PointeeMap {
+    map: HashMap<String, LlType>,
+    i8_roots: HashSet<String>,
+}
+
+impl std::ops::Deref for PointeeMap {
+    type Target = HashMap<String, LlType>;
+    fn deref(&self) -> &Self::Target {
+        &self.map
+    }
+}
+
+impl PointeeMap {
+    fn is_i8_array(ty: &LlType) -> bool {
+        matches!(ty, LlType::Array(elem, _) if elem.as_ref() == &LlType::Int(8))
+    }
+    pub(super) fn insert(&mut self, name: String, ty: LlType) -> Option<LlType> {
+        if Self::is_i8_array(&ty) {
+            self.i8_roots.insert(name.clone());
+        } else {
+            self.i8_roots.remove(&name);
+        }
+        self.map.insert(name, ty)
+    }
+    pub(super) fn clear(&mut self) {
+        self.map.clear();
+        self.i8_roots.clear();
+    }
+    pub(super) fn i8_roots(&self) -> &HashSet<String> {
+        &self.i8_roots
+    }
+    pub(super) fn to_map(&self) -> HashMap<String, LlType> {
+        self.map.clone()
+    }
+}
 use staged::staged_emit;
 
 pub(super) struct Emitter {
@@ -78,7 +118,7 @@ pub(super) struct Emitter {
     forward_pointer_selects: HashMap<String, (TypedValue, TypedValue)>,
     forward_pointer_select_conditions: HashMap<String, TypedValue>,
     pointer_storage: HashMap<String, StorageClass>,
-    pointer_pointees: HashMap<String, LlType>,
+    pointer_pointees: PointeeMap,
     local_alloca_pointees: HashMap<String, LlType>,
     pointer_nullness: HashMap<String, Word>,
     bda_inttoptr_sources: HashMap<String, TypedValue>,
@@ -390,7 +430,7 @@ impl Emitter {
             forward_pointer_selects: HashMap::default(),
             forward_pointer_select_conditions: HashMap::default(),
             pointer_storage: HashMap::default(),
-            pointer_pointees: HashMap::default(),
+            pointer_pointees: PointeeMap::default(),
             local_alloca_pointees: HashMap::default(),
             pointer_nullness: HashMap::default(),
             bda_inttoptr_sources: HashMap::default(),

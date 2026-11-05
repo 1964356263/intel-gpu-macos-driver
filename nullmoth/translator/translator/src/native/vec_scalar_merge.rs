@@ -55,13 +55,14 @@ fn lower_impl(san_ll: &str, widen: bool) -> Cow<'_, str> {
     Cow::Owned(result)
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
-enum Pointee {
-    Scalar(String),
-    Vec(String, usize),
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Pointee<'a> {
+    Scalar(&'a str),
+    Vec(&'a str, usize),
     Unknown,
 }
 
+#[derive(Clone, Copy)]
 struct Def<'a> {
     name: &'a str,
     opcode: &'a str,
@@ -70,18 +71,18 @@ struct Def<'a> {
 
 fn parse_def(line: &str) -> Option<Def<'_>> {
     let line = line.trim();
-    let eq = line.find(" = ")?;
-    let name = line[..eq].trim();
-    if !name.starts_with('%') {
+    if !line.starts_with('%') {
         return None;
     }
+    let eq = line.find(" = ")?;
+    let name = line[..eq].trim();
     let rhs = line[eq + 3..].trim();
     let opcode = rhs.split_whitespace().next()?;
     let rest = rhs[opcode.len()..].trim();
     Some(Def { name, opcode, rest })
 }
 
-fn vec_elem_lanes(ty: &str) -> Option<(String, usize)> {
+fn vec_elem_lanes(ty: &str) -> Option<(&str, usize)> {
     let ty = ty.trim();
     let inner = ty.strip_prefix('<')?.strip_suffix('>')?.trim();
     let (n, elem) = inner.split_once(" x ")?;
@@ -90,13 +91,13 @@ fn vec_elem_lanes(ty: &str) -> Option<(String, usize)> {
     if !is_simple_scalar(elem) {
         return None;
     }
-    Some((elem.to_string(), lanes))
+    Some((elem, lanes))
 }
 
 fn is_simple_scalar(ty: &str) -> bool {
-    !ty.is_empty()
-        && ty.chars().all(|c| c.is_ascii_alphanumeric())
-        && ty.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
+    let bytes = ty.as_bytes();
+    bytes.first().is_some_and(u8::is_ascii_alphabetic)
+        && bytes.iter().all(u8::is_ascii_alphanumeric)
 }
 
 fn split_ptr_operand(chunk: &str) -> Option<(&str, &str)> {
@@ -141,17 +142,26 @@ fn parse_gep(rest: &str) -> Option<GepInfo<'_>> {
     })
 }
 
-fn pointer_neighbours(def: &Def) -> Vec<String> {
-    match def.opcode {
-        "getelementptr" => parse_gep(def.rest)
-            .map(|g| vec![g.base_name.to_string()])
-            .unwrap_or_default(),
-        "bitcast" => bitcast_source(def.rest)
-            .map(|s| vec![s.to_string()])
-            .unwrap_or_default(),
-        "phi" => phi_arm_values(def.rest),
-        "select" => select_arm_values(def.rest),
-        _ => Vec::new(),
+/// One definition with what the analyses read from it, parsed once.
+struct DefInfo<'a> {
+    def: Def<'a>,
+    gep: Option<GepInfo<'a>>,
+    neighbours: Vec<&'a str>,
+}
+
+impl<'a> DefInfo<'a> {
+    fn new(def: Def<'a>) -> Self {
+        let gep = (def.opcode == "getelementptr")
+            .then(|| parse_gep(def.rest))
+            .flatten();
+        let neighbours = match def.opcode {
+            "getelementptr" => gep.iter().map(|gep| gep.base_name).collect(),
+            "bitcast" => bitcast_source(def.rest).into_iter().collect(),
+            "phi" => phi_arm_values(def.rest),
+            "select" => select_arm_values(def.rest),
+            _ => Vec::new(),
+        };
+        Self { def, gep, neighbours }
     }
 }
 
@@ -163,25 +173,23 @@ fn bitcast_source(rest: &str) -> Option<&str> {
     trailing_local(lhs)
 }
 
-fn phi_arm_values(rest: &str) -> Vec<String> {
+fn phi_arm_values(rest: &str) -> Vec<&str> {
     let mut out = Vec::new();
     let mut search = rest;
     while let Some(open) = search.find('[') {
         let after = &search[open + 1..];
         let Some(close) = after.find(']') else { break };
         let inner = &after[..close];
-        if let Some(val) = inner.split(',').next() {
-            let val = val.trim();
-            if val.starts_with('%') {
-                out.push(val.to_string());
-            }
+        let val = inner.split(',').next().unwrap_or(inner).trim();
+        if val.starts_with('%') {
+            out.push(val);
         }
         search = &after[close + 1..];
     }
     out
 }
 
-fn select_arm_values(rest: &str) -> Vec<String> {
+fn select_arm_values(rest: &str) -> Vec<&str> {
     let parts = split_top_level(rest, ',');
     if parts.len() != 3 {
         return Vec::new();
@@ -190,96 +198,114 @@ fn select_arm_values(rest: &str) -> Vec<String> {
         .iter()
         .filter(|p| p.trim_start().starts_with("ptr"))
         .filter_map(|p| trailing_local(p))
-        .map(str::to_string)
         .collect()
 }
 
-fn classify(defs: &BTreeMap<String, Def>) -> (HashMap<String, Pointee>, HashSet<String>) {
-    let mut pointees: HashMap<String, Pointee> = HashMap::default();
-    let mut mismatches: HashSet<String> = HashSet::default();
-    for _ in 0..=defs.len() {
+/// `defs` in name order (the order the fixed point has always run in); the arms are indices into it.
+fn classify<'a>(
+    defs: &BTreeMap<&'a str, DefInfo<'a>>,
+) -> (HashMap<&'a str, Pointee<'a>>, HashSet<&'a str>) {
+    enum Step<'a> {
+        Fixed(Pointee<'a>),
+        Bitcast(Option<usize>),
+        Merge(Vec<usize>),
+    }
+    let index: HashMap<&str, usize> = defs.keys().enumerate().map(|(i, name)| (*name, i)).collect();
+    let arm_indices = |arms: &[&str]| -> Vec<usize> {
+        arms.iter().filter_map(|arm| index.get(arm).copied()).collect()
+    };
+    let steps: Vec<Step<'a>> = defs
+        .values()
+        .map(|info| match info.def.opcode {
+            "getelementptr" => Step::Fixed(gep_pointee(info.gep.as_ref())),
+            "bitcast" => Step::Bitcast(
+                info.neighbours.first().and_then(|source| index.get(source).copied()),
+            ),
+            "phi" | "select" => Step::Merge(arm_indices(&info.neighbours)),
+            _ => Step::Fixed(Pointee::Unknown),
+        })
+        .collect();
+    let mut pointees: Vec<Option<Pointee<'a>>> = vec![None; steps.len()];
+    let mut mismatches: Vec<usize> = Vec::new();
+    for _ in 0..=steps.len() {
         let mut changed = false;
-        let mut round_mismatch = HashSet::default();
-        for (name, def) in defs {
-            let p = compute_pointee(def, &pointees, &mut round_mismatch, name);
-            if pointees.get(name) != Some(&p) {
-                pointees.insert(name.clone(), p);
+        mismatches.clear();
+        for (i, step) in steps.iter().enumerate() {
+            let p = match step {
+                Step::Fixed(p) => *p,
+                Step::Bitcast(source) => source
+                    .and_then(|source| pointees[source])
+                    .unwrap_or(Pointee::Unknown),
+                Step::Merge(arms) => merge_arms(arms, &pointees, &mut mismatches, i),
+            };
+            if pointees[i] != Some(p) {
+                pointees[i] = Some(p);
                 changed = true;
             }
         }
-        mismatches = round_mismatch;
         if !changed {
             break;
         }
     }
-    (pointees, mismatches)
+    let names: Vec<&'a str> = defs.keys().copied().collect();
+    (
+        mismatches.iter().filter_map(|m| Some((names[*m], pointees[*m]?))).collect(),
+        mismatches.iter().map(|m| names[*m]).collect(),
+    )
 }
 
-fn compute_pointee(
-    def: &Def,
-    pointees: &HashMap<String, Pointee>,
-    mismatches: &mut HashSet<String>,
-    name: &str,
-) -> Pointee {
-    match def.opcode {
-        "getelementptr" => {
-            let Some(g) = parse_gep(def.rest) else {
-                return Pointee::Unknown;
-            };
-            if let Some((elem, lanes)) = vec_elem_lanes(g.src_ty) {
-                if g.indices.len() == 1 {
-                    Pointee::Vec(elem, lanes)
-                } else {
-                    Pointee::Scalar(elem)
-                }
-            } else if is_simple_scalar(g.src_ty) {
-                Pointee::Scalar(g.src_ty.to_string())
-            } else {
-                Pointee::Unknown
-            }
+fn gep_pointee<'a>(gep: Option<&GepInfo<'a>>) -> Pointee<'a> {
+    let Some(g) = gep else {
+        return Pointee::Unknown;
+    };
+    if let Some((elem, lanes)) = vec_elem_lanes(g.src_ty) {
+        if g.indices.len() == 1 {
+            Pointee::Vec(elem, lanes)
+        } else {
+            Pointee::Scalar(elem)
         }
-        "bitcast" => bitcast_source(def.rest)
-            .and_then(|s| pointees.get(s).cloned())
-            .unwrap_or(Pointee::Unknown),
-        "phi" => merge_arms(&phi_arm_values(def.rest), pointees, mismatches, name),
-        "select" => merge_arms(&select_arm_values(def.rest), pointees, mismatches, name),
-        _ => Pointee::Unknown,
+    } else if is_simple_scalar(g.src_ty) {
+        Pointee::Scalar(g.src_ty)
+    } else {
+        Pointee::Unknown
     }
 }
 
-fn merge_arms(
-    arms: &[String],
-    pointees: &HashMap<String, Pointee>,
-    mismatches: &mut HashSet<String>,
-    name: &str,
-) -> Pointee {
-    let mut elems: HashSet<String> = HashSet::default();
+fn merge_arms<'a>(
+    arms: &[usize],
+    pointees: &[Option<Pointee<'a>>],
+    mismatches: &mut Vec<usize>,
+    index: usize,
+) -> Pointee<'a> {
+    let mut elem: Option<&'a str> = None;
+    let mut several_elems = false;
     let mut saw_scalar = false;
     let mut vec_lanes: Option<usize> = None;
     let mut consistent_vec = true;
     for arm in arms {
-        match pointees.get(arm) {
+        let e = match pointees[*arm] {
             Some(Pointee::Scalar(e)) => {
-                elems.insert(e.clone());
                 saw_scalar = true;
+                e
             }
             Some(Pointee::Vec(e, n)) => {
-                elems.insert(e.clone());
                 match vec_lanes {
-                    Some(prev) if prev != *n => consistent_vec = false,
-                    _ => vec_lanes = Some(*n),
+                    Some(prev) if prev != n => consistent_vec = false,
+                    _ => vec_lanes = Some(n),
                 }
+                e
             }
-            _ => {}
-        }
+            _ => continue,
+        };
+        several_elems |= elem.is_some_and(|prev| prev != e);
+        elem = Some(e);
     }
-    if elems.len() != 1 || !consistent_vec {
+    let Some(elem) = elem.filter(|_| !several_elems && consistent_vec) else {
         return Pointee::Unknown;
-    }
-    let elem = elems.into_iter().next().unwrap();
+    };
     match (saw_scalar, vec_lanes) {
         (true, Some(_)) => {
-            mismatches.insert(name.to_string());
+            mismatches.push(index);
             Pointee::Scalar(elem)
         }
         (true, None) => Pointee::Scalar(elem),
@@ -288,29 +314,28 @@ fn merge_arms(
     }
 }
 
-fn pointer_adjacency(defs: &BTreeMap<String, Def>) -> BTreeMap<String, Vec<String>> {
-    let mut adj: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for (name, def) in defs {
-        for nb in pointer_neighbours(def) {
-            adj.entry(name.clone()).or_default().push(nb.clone());
-            adj.entry(nb).or_default().push(name.clone());
+fn pointer_adjacency<'a>(defs: &BTreeMap<&'a str, DefInfo<'a>>) -> HashMap<&'a str, Vec<&'a str>> {
+    let mut adj: HashMap<&'a str, Vec<&'a str>> = HashMap::default();
+    for (name, info) in defs {
+        for nb in &info.neighbours {
+            adj.entry(*name).or_default().push(*nb);
+            adj.entry(*nb).or_default().push(*name);
         }
     }
     adj
 }
 
-fn component(defs: &BTreeMap<String, Def>, seeds: &HashSet<String>) -> HashSet<String> {
-    let adj = pointer_adjacency(defs);
-    let mut seen: HashSet<String> = HashSet::default();
-    let mut queue: VecDeque<String> = seeds.iter().cloned().collect();
-    for s in seeds {
-        seen.insert(s.clone());
-    }
+fn component<'a>(
+    adj: &HashMap<&'a str, Vec<&'a str>>,
+    seeds: &HashSet<&'a str>,
+) -> HashSet<&'a str> {
+    let mut seen: HashSet<&'a str> = seeds.clone();
+    let mut queue: VecDeque<&'a str> = seeds.iter().copied().collect();
     while let Some(cur) = queue.pop_front() {
-        if let Some(nbs) = adj.get(&cur) {
+        if let Some(nbs) = adj.get(cur) {
             for nb in nbs {
-                if seen.insert(nb.clone()) {
-                    queue.push_back(nb.clone());
+                if seen.insert(*nb) {
+                    queue.push_back(*nb);
                 }
             }
         }
@@ -319,29 +344,11 @@ fn component(defs: &BTreeMap<String, Def>, seeds: &HashSet<String>) -> HashSet<S
 }
 
 #[derive(Default)]
-struct UseWidths {
-    scalars: HashSet<String>,
-    vectors: HashSet<String>,
+struct UseWidths<'a> {
+    scalars: Vec<&'a str>,
+    vectors: Vec<&'a str>,
     other: bool,
     logical: bool,
-}
-
-fn memory_reloaded_pointers(body: &[&str]) -> HashSet<String> {
-    let mut out = HashSet::default();
-    for line in body {
-        if let Some(def) = parse_def(line) {
-            if def.opcode == "load" {
-                let loaded_ty = split_top_level(def.rest, ',')
-                    .first()
-                    .map(|c| c.trim().to_string())
-                    .unwrap_or_default();
-                if loaded_ty.starts_with("ptr") {
-                    out.insert(def.name.to_string());
-                }
-            }
-        }
-    }
-    out
 }
 
 fn is_word_addressable_ptr(prefix: &str) -> bool {
@@ -361,22 +368,26 @@ fn scalar_byte_width(elem: &str) -> Option<usize> {
     }
 }
 
-fn use_widths(body: &[&str]) -> HashMap<String, UseWidths> {
-    let mut map: HashMap<String, UseWidths> = HashMap::default();
-    let mut observe = |name: &str, ty: &str, ptr_prefix: &str| {
-        let entry = map.entry(name.to_string()).or_default();
+fn use_widths<'a>(body: &[&'a str], line_defs: &[Option<Def<'a>>]) -> HashMap<&'a str, UseWidths<'a>> {
+    fn push_new<'a>(list: &mut Vec<&'a str>, value: &'a str) {
+        if !list.contains(&value) {
+            list.push(value);
+        }
+    }
+    let mut map: HashMap<&'a str, UseWidths<'a>> = HashMap::default();
+    let mut observe = |name: &'a str, ty: &'a str, ptr_prefix: &'a str| {
+        let entry = map.entry(name).or_default();
         if let Some((elem, _)) = vec_elem_lanes(ty) {
-            entry.vectors.insert(elem);
+            push_new(&mut entry.vectors, elem);
         } else if is_simple_scalar(ty.trim()) {
-            entry.scalars.insert(ty.trim().to_string());
+            push_new(&mut entry.scalars, ty.trim());
         } else {
             entry.other = true;
         }
         entry.logical |= !is_word_addressable_ptr(ptr_prefix);
     };
-    for line in body {
-        let trimmed = line.trim();
-        if let Some(def) = parse_def(line) {
+    for (line, def) in body.iter().zip(line_defs) {
+        if let Some(def) = def {
             match def.opcode {
                 "load" => {
                     let chunks = split_top_level(def.rest, ',');
@@ -396,7 +407,7 @@ fn use_widths(body: &[&str]) -> HashMap<String, UseWidths> {
             }
             continue;
         }
-        if let Some(rest) = trimmed.strip_prefix("store ") {
+        if let Some(rest) = line.trim().strip_prefix("store ") {
             let chunks = split_top_level(rest, ',');
             if chunks.len() >= 2 {
                 if let (Some((ty, _)), Some((prefix, ptr))) =
@@ -410,57 +421,78 @@ fn use_widths(body: &[&str]) -> HashMap<String, UseWidths> {
     map
 }
 
-fn widen_targets(body: &[&str], defs: &BTreeMap<String, Def>) -> Vec<(HashSet<String>, String)> {
-    let widths = use_widths(body);
-    let reloaded = memory_reloaded_pointers(body);
-    let adj = pointer_adjacency(defs);
-    let mut nodes: BTreeSet<String> = adj.keys().cloned().collect();
-    nodes.extend(widths.keys().cloned());
+fn memory_reloaded_pointers<'a>(line_defs: &[Option<Def<'a>>]) -> HashSet<&'a str> {
+    let mut out = HashSet::default();
+    for def in line_defs.iter().flatten() {
+        if def.opcode == "load" && split_top_level(def.rest, ',')[0].starts_with("ptr") {
+            out.insert(def.name);
+        }
+    }
+    out
+}
 
-    let mut visited: HashSet<String> = HashSet::default();
-    let mut targets: Vec<(HashSet<String>, String)> = Vec::new();
-    for start in &nodes {
-        if !visited.insert(start.clone()) {
+fn widen_targets<'a>(
+    body: &[&'a str],
+    line_defs: &[Option<Def<'a>>],
+    adj: &HashMap<&'a str, Vec<&'a str>>,
+) -> Vec<(Vec<&'a str>, &'a str)> {
+    let widths = use_widths(body, line_defs);
+    // A target uses one pointer component at scalar and at vector width: with no use at both widths anywhere in
+    // the function there is none to find.
+    if !widths.values().any(|w| !w.vectors.is_empty())
+        || !widths.values().any(|w| !w.scalars.is_empty())
+    {
+        return Vec::new();
+    }
+    let reloaded = memory_reloaded_pointers(line_defs);
+    let mut nodes: Vec<&'a str> = adj.keys().copied().collect();
+    nodes.extend(widths.keys().copied());
+    nodes.sort_unstable();
+    nodes.dedup();
+
+    let mut visited: HashSet<&'a str> = HashSet::default();
+    let mut targets: Vec<(Vec<&'a str>, &'a str)> = Vec::new();
+    let mut members: Vec<&'a str> = Vec::new();
+    for start in nodes {
+        if !visited.insert(start) {
             continue;
         }
-        let mut members: HashSet<String> = HashSet::default();
-        let mut queue: VecDeque<String> = VecDeque::new();
-        queue.push_back(start.clone());
-        members.insert(start.clone());
-        while let Some(cur) = queue.pop_front() {
-            if let Some(nbs) = adj.get(&cur) {
+        members.clear();
+        members.push(start);
+        let mut next = 0;
+        while next < members.len() {
+            if let Some(nbs) = adj.get(members[next]) {
                 for nb in nbs {
-                    if visited.insert(nb.clone()) {
-                        members.insert(nb.clone());
-                        queue.push_back(nb.clone());
+                    if visited.insert(*nb) {
+                        members.push(*nb);
                     }
                 }
             }
+            next += 1;
         }
-        let mut elems: HashSet<String> = HashSet::default();
+        let mut elem: Option<&'a str> = None;
+        let mut several_elems = false;
         let (mut has_scalar, mut has_vector, mut other, mut logical) = (false, false, false, false);
         let mut memory_ptr = false;
         for m in &members {
             memory_ptr |= reloaded.contains(m);
             if let Some(w) = widths.get(m) {
-                for s in &w.scalars {
-                    elems.insert(s.clone());
-                    has_scalar = true;
+                for e in w.scalars.iter().chain(&w.vectors) {
+                    several_elems |= elem.is_some_and(|prev| prev != *e);
+                    elem = Some(*e);
                 }
-                for v in &w.vectors {
-                    elems.insert(v.clone());
-                    has_vector = true;
-                }
+                has_scalar |= !w.scalars.is_empty();
+                has_vector |= !w.vectors.is_empty();
                 other |= w.other;
                 logical |= w.logical;
             }
         }
-        if !other && !logical && !memory_ptr && has_scalar && has_vector && elems.len() == 1 {
-            let elem = elems.into_iter().next().unwrap();
-            if scalar_byte_width(&elem).is_some_and(|w| w < 4) {
+        if !other && !logical && !memory_ptr && has_scalar && has_vector && !several_elems {
+            let Some(elem) = elem else { continue };
+            if scalar_byte_width(elem).is_some_and(|w| w < 4) {
                 continue;
             }
-            targets.push((members, elem));
+            targets.push((members.clone(), elem));
         }
     }
     targets
@@ -614,24 +646,26 @@ impl Rewriter {
 }
 
 fn rewrite_function_body(body: &[&str], widen: bool) -> Option<Vec<String>> {
-    let defs: BTreeMap<String, Def> = body
+    let line_defs: Vec<Option<Def<'_>>> = body.iter().map(|line| parse_def(line)).collect();
+    let defs: BTreeMap<&str, DefInfo<'_>> = line_defs
         .iter()
-        .filter_map(|line| parse_def(line))
-        .map(|d| (d.name.to_string(), d))
+        .flatten()
+        .map(|def| (def.name, DefInfo::new(*def)))
         .collect();
 
-    let mut comp_elem: HashMap<String, String> = HashMap::default();
+    let mut comp_elem: HashMap<&str, &str> = HashMap::default();
+    let adj = pointer_adjacency(&defs);
 
     let (pointees, mismatches) = classify(&defs);
     if let Some(elem) = unify_mismatch_elem(&mismatches, &pointees) {
-        for m in component(&defs, &mismatches) {
-            comp_elem.entry(m).or_insert_with(|| elem.clone());
+        for m in component(&adj, &mismatches) {
+            comp_elem.entry(m).or_insert(elem);
         }
     }
     if widen {
-        for (members, elem) in widen_targets(body, &defs) {
+        for (members, elem) in widen_targets(body, &line_defs, &adj) {
             for m in members {
-                comp_elem.entry(m).or_insert_with(|| elem.clone());
+                comp_elem.entry(m).or_insert(elem);
             }
         }
     }
@@ -654,16 +688,16 @@ fn rewrite_function_body(body: &[&str], widen: bool) -> Option<Vec<String>> {
     Some(out)
 }
 
-fn unify_mismatch_elem(
-    mismatches: &HashSet<String>,
-    pointees: &HashMap<String, Pointee>,
-) -> Option<String> {
-    let mut elem: Option<String> = None;
+fn unify_mismatch_elem<'a>(
+    mismatches: &HashSet<&'a str>,
+    pointees: &HashMap<&'a str, Pointee<'a>>,
+) -> Option<&'a str> {
+    let mut elem: Option<&'a str> = None;
     for m in mismatches {
         if let Some(Pointee::Scalar(e)) = pointees.get(m) {
-            match &elem {
-                Some(prev) if prev != e => return None,
-                _ => elem = Some(e.clone()),
+            match elem {
+                Some(prev) if prev != *e => return None,
+                _ => elem = Some(*e),
             }
         }
     }
@@ -672,7 +706,7 @@ fn unify_mismatch_elem(
 
 fn rewrite_line(
     line: &str,
-    comp_elem: &HashMap<String, String>,
+    comp_elem: &HashMap<&str, &str>,
     rw: &mut Rewriter,
 ) -> Option<Vec<String>> {
     let trimmed = line.trim();
@@ -682,10 +716,10 @@ fn rewrite_line(
                 let elem = comp_elem.get(def.name)?;
                 let g = parse_gep(def.rest)?;
                 let (e, lanes) = vec_elem_lanes(g.src_ty)?;
-                if &e != elem {
+                if e != *elem {
                     return None;
                 }
-                return Some(rw.rewrite_gep(def.name, &g, &e, lanes));
+                return Some(rw.rewrite_gep(def.name, &g, e, lanes));
             }
             "load" => {
                 let chunks = split_top_level(def.rest, ',');
@@ -695,10 +729,10 @@ fn rewrite_line(
                 let (e, lanes) = vec_elem_lanes(chunks[0].trim())?;
                 let (ptr_prefix, ptr_name) = split_ptr_operand(chunks[1])?;
                 let elem = comp_elem.get(ptr_name)?;
-                if &e != elem {
+                if e != *elem {
                     return None;
                 }
-                return Some(rw.split_load(def.name, &e, lanes, ptr_prefix, ptr_name));
+                return Some(rw.split_load(def.name, e, lanes, ptr_prefix, ptr_name));
             }
             _ => return None,
         }
@@ -712,10 +746,10 @@ fn rewrite_line(
         let (e, lanes) = vec_elem_lanes(ty)?;
         let (ptr_prefix, ptr_name) = split_ptr_operand(chunks[1])?;
         let elem = comp_elem.get(ptr_name)?;
-        if &e != elem {
+        if e != *elem {
             return None;
         }
-        return Some(rw.split_store(value, &e, lanes, ptr_prefix, ptr_name));
+        return Some(rw.split_store(value, e, lanes, ptr_prefix, ptr_name));
     }
     None
 }

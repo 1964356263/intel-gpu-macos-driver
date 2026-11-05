@@ -92,17 +92,12 @@ static _Atomic uint64_t gRes2Tick;
 static void nvmtl_res2_note_use(NVMTLTexture *t);
 static uint64_t nvmtl_res2_evict(uint64_t want);
 extern uint64_t (*nvmtl_res2_evict_hook)(uint64_t want);
+#include "nvmtl_env_knobs.h"
 __attribute__((constructor)) static void nvmtl_conf_knobs(void)
 {
 #if NVMTL_RELEASE
-    { extern char **environ; char *names[256]; unsigned n = 0;
-      for (char **e = environ; e && *e && n < 256; e++)
-          if (!strncmp(*e, "NVMTL_", 6) || !strncmp(*e, "NVK_", 4) || !strncmp(*e, "NAK_", 4) || !strncmp(*e, "NVRM_", 5)) {
-              // Keep the switch that restores inline presents.
-              if (!strncmp(*e, "NVMTL_PRESENT_INLINE=", 21)) continue;
-              const char *eq = strchr(*e, '='); if (!eq) continue;
-              names[n] = strndup(*e, (size_t)(eq - *e)); if (names[n]) n++; }
-      for (unsigned i = 0; i < n; i++) { unsetenv(names[i]); free(names[i]); } }
+    // Inherited driver knobs are forgotten unless this process set NVMTL_PROCESS_ENV=1 (nvmtl_env_knobs.h has the rule).
+    { extern char **environ; nvmtl_release_forget_env(environ); }
 #endif
     unsigned forgot = 0;
     { const char *rec = getenv("NVMTL_CONF_SET");
@@ -210,6 +205,19 @@ static void nvmtl_resref_prod7(id o, int d) {
                  nvmtl_res2_note_use(t); }
     else if (v == 0 && __atomic_load_n(&t->_wantOn, __ATOMIC_ACQUIRE)) nvmtl_res2_kick(1);
 }
+// 0aacf15: a Metal object is equal only to itself, so the set may hash and compare pointers: NSMutableSet sends -hash and
+// -isEqual: to every object it probes, two message sends per lookup (upstream: the top plugin leaf on a game's
+// render-encoding threads). CFRetain/CFRelease keep the set's ownership unchanged.
+// B580: OFF unless NVMTL_RESSET_IDENTITY=1. The fork's sets already skip most lookups (epoch tags, glcpu4), its
+// contract test (tools/b580/resource-set-check.m) requires -isEqual: semantics (4 failures with identity on), and the
+// same test measured no gain (CPU set add p50 574 vs 504 ns/op, x86_64 ASan under Rosetta).
+static NSMutableSet *nvmtl_identity_set(NSUInteger cap) {
+    static int on = -1;
+    if (on < 0) { const char *e = getenv("NVMTL_RESSET_IDENTITY"); on = e && e[0] == '1'; }
+    if (!on) return cap ? [[NSMutableSet alloc] initWithCapacity:cap] : [NSMutableSet new];
+    CFSetCallBacks cb = kCFTypeSetCallBacks; cb.equal = NULL; cb.hash = NULL;
+    return (__bridge_transfer NSMutableSet *)CFSetCreateMutable(kCFAllocatorDefault, (CFIndex)cap, &cb);
+}
 /* the set epochs: unique in the process, never 0 (a resource's tag starts at 0) */
 static _Atomic uint64_t gResSetEpoch;
 static uint64_t nvmtl_resset_next_epoch(void) { return atomic_fetch_add(&gResSetEpoch, 1) + 1; }
@@ -221,8 +229,8 @@ static NSUInteger nvmtl_resset_hint(void) { return atomic_load_explicit(&gResSet
 static void nvmtl_resset_note(NSUInteger n) { if (n > 65536) n = 65536; atomic_store_explicit(&gResSetHint, (unsigned)n, memory_order_relaxed); }
 @implementation NVMTLResSet
 - (instancetype)init { if ((self = [super init])) { const NSUInteger h = nvmtl_resset_hint();
-    _s = h ? [[NSMutableSet alloc] initWithCapacity:h] : [NSMutableSet new]; _epoch = nvmtl_resset_next_epoch(); } return self; }
-- (instancetype)initWithCapacity:(NSUInteger)n { if ((self = [super init])) { _s = [[NSMutableSet alloc] initWithCapacity:n]; _epoch = nvmtl_resset_next_epoch(); } return self; }
+    _s = nvmtl_identity_set(h); _epoch = nvmtl_resset_next_epoch(); } return self; }
+- (instancetype)initWithCapacity:(NSUInteger)n { if ((self = [super init])) { _s = nvmtl_identity_set(n); _epoch = nvmtl_resset_next_epoch(); } return self; }
 /* -addObject: that also tags the resource with this set's epoch, under the set's lock: the tag can only equal the current
    epoch while the resource is a member (every removal renews the epoch, also under the lock) */
 // glcpu4 NVMTL_RESREF_BORROW: o is borrowed (the caller binds it and holds it; the set retains it when added) and the member
@@ -268,7 +276,7 @@ static void nvmtl_resset_add_prod7(__unsafe_unretained NVMTLResSet *s, id o, uin
 // ever touched stayed alive, and Super Resolution filled VRAM with 9 MB MPS buffers until allocations were refused.
 // The sets below are owned (+1) and released at the end of scope.
 - (void)removeAllObjects { NSMutableSet *old; const NSUInteger h = nvmtl_resset_hint();
-    NSMutableSet *fresh = h ? [[NSMutableSet alloc] initWithCapacity:h] : [NSMutableSet new];
+    NSMutableSet *fresh = nvmtl_identity_set(h);
     os_unfair_lock_lock(&_lk); old = _s; _s = fresh; memset(_mru, 0, sizeof _mru); nvmtl_resset_note(old.count);
     __atomic_store_n(&_epoch, nvmtl_resset_next_epoch(), __ATOMIC_RELEASE); os_unfair_lock_unlock(&_lk);
     for (id o in old) nvmtl_resref(o, -1); }
@@ -521,7 +529,13 @@ static int nvmtl_res2_move(NVMTLTexture *t, int to_sys) {
             nvk_image old; memset(&old, 0, sizeof old);
             r = nvmtl_vk_image_migrate(&t->_i, to_sys, t->_fmt == MTLPixelFormatA8Unorm, &old);
             if (r == 0) {
-                if (t->_resid & (1ull << 62)) nvmtl_vk_bindless_rewrite((uint32_t)(t->_resid & 0xffffffffu), t->_i.view);
+                if (t->_resid & (1ull << 62)) {
+                    // the slot's sampled view follows the new image, and so must its storage descriptor (binding 2):
+                    // the old image is freed below, and a kernel writing through a stale binding 2 stored into freed memory
+                    const uint32_t slot = (uint32_t)(t->_resid & 0xffffffffu);
+                    nvmtl_vk_bindless_rewrite(slot, t->_i.view);
+                    nvmtl_vk_bindless_put_storage(slot, t->_stex ? [t nvview] : NULL);
+                }
                 if (gRes2Batching) { nvmtl_res2_pend(t, &old); held = 1; }
                 else nvmtl_grave_put(&old);
             }
@@ -901,7 +915,7 @@ static NVMTLTexture *nvmtl_texbuf_make(NVMTLBuffer *b, MTLTextureDescriptor *d, 
         return nil; }
     t->_q = nvmtl_device_queue();
     t->_fmt = d.pixelFormat; t->_mips = 1;
-    t->_stex = t->_i.storage != 0;
+    t->_stex = t->_i.storage == 1;
     t->_ropt |= (MTLResourceOptions)d.storageMode << MTLResourceStorageModeShift;
     t->_usage = d.usage;
     _texSeen = YES;
@@ -996,6 +1010,8 @@ static void nvmtl_surf_dirty(NVMTLCommandBuffer *cb, NVMTLTexture *t) {
 // storage twin of the same VkFormat in optimal tiling, filled from the texture when this encoder first binds it and
 // copied back after every dispatch (nvmtl_storage_twins_out), the IOSurface marked dirty as for a direct write.
 static void nvmtl_retain_resource(__unsafe_unretained NVMTLCommandBuffer *cb, __unsafe_unretained id resource);
+static void nvmtl_heap_register(NVMTLHeap *heap, id resource);
+static void nvmtl_use_heap(NVMTLCommandBuffer *cb, id<MTLHeap> heap);
 // `writes`: the shader declares a storage binding there. A texture made with MTLTextureUsageUnknown (0) may be used
 // any way Metal allows - ImageIO makes its HDR output IOSurface textures that way and writes them.
 static void *nvmtl_storage_view_for(NVMTLCommandBuffer *cb, NVMTLTexture *t, BOOL writes) {
@@ -1316,6 +1332,7 @@ unsigned long long nvmtl_tex_objs_released(void) { return nvmtl_tex_objs_gone; }
     for (NSUInteger k = 0; k < m; k++) { NSUInteger w = i->w >> k ? i->w >> k : 1, h = i->h >> k ? i->h >> k : 1; tot += ((w + bw - 1) / bw) * ((h + bh - 1) / bh) * bpp; }
     return tot * l; }
 - (MTLResourceID)gpuResourceID {
+    nvmtl_heap_register((NVMTLHeap *)self.heap, self);
     @synchronized (self) { if (!_resid) _resid = nvmtl_resid_for_texture(self); }
     MTLResourceID rid; rid._impl = _resid; return rid;
 }
@@ -2238,6 +2255,7 @@ static uint32_t nvmtl_tex_attach_vkfmt(NVMTLTexture *t, int *a8) {
 NSArray<NSDictionary *> *nvmtl_argbuf_fields(NVMTLFunction *function, NSUInteger ownerBufferIndex);
 NSArray<NSDictionary *> *nvmtl_air_argbuf_layout(NVMTLFunction *fn, NSUInteger bufferIndex, NSUInteger *size, NSUInteger *align);
 BOOL nvmtl_needs_visible_link(NSString *air, NSString *why);
+BOOL nvmtl_needs_visible_link_once(NSString *air);
 void nvmtl_fc_expect_link(int on);
 NSData *nvmtl_translate_with_fc(NSString *air, NSString *stage, const uint32_t *idx, const uint32_t *sizes,
                                 const uint8_t *const *payloads, size_t n, NSString **err);
@@ -3011,9 +3029,22 @@ extern NSData *nvmtl_compile_library_entry(NSData *, NSString *, NSString *, NSS
     return spv;
 }
 - (id<MTLDevice>)device { return (id<MTLDevice>)gNVMTLMainDevice; }
+// NVMTL_AIR_DUMP=<dir>: write each function's AIR text, once, as <dir>/<name>.ll when an app first asks for it, so an
+// app that builds its libraries from memory can be studied offline kernel by kernel. Nothing is written when unset.
+static void nvmtl_air_dump(NSString *name, NSString *air)
+{
+    static const char *dir; static dispatch_once_t once;
+    dispatch_once(&once, ^{ dir = getenv("NVMTL_AIR_DUMP"); if (dir && !*dir) dir = NULL; });
+    if (!dir || !air.length || !name.length || [name containsString:@"/"]) return;
+    NSString *path = [[@(dir) stringByAppendingPathComponent:name] stringByAppendingPathExtension:@"ll"];
+    if ([[NSFileManager defaultManager] fileExistsAtPath:path]) return;
+    [[NSFileManager defaultManager] createDirectoryAtPath:@(dir) withIntermediateDirectories:YES attributes:nil error:nil];
+    [air writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+}
 - (id<MTLFunction>)newFunctionWithName:(NSString *)name {
     NSData *spv = [_fns objectForKey:name];
     if (!spv && !_airs[name]) { nvlog("library: no function \"%s\" (this library holds %lu, externs %lu)", name.UTF8String, (unsigned long)(_fns.count + _airs.count), (unsigned long)_externs.count); return nil; }
+    nvmtl_air_dump(name, _airs[name]);
     if (spv && ([_stages[name] isEqualToString:@"mesh"] || [_stages[name] isEqualToString:@"object"])) {
         NVMTLFunction *f = [NVMTLFunction new]; f->_spirv = nil; f->_fname = name; f->_stage = _stages[name];
         f->_air = _airs[name]; f->_lib = self; return f;
@@ -3062,6 +3093,7 @@ static size_t nvmtl_fc_width(NSUInteger dataType)
 - (id<MTLFunction>)newFunctionWithName:(NSString *)name constantValues:(MTLFunctionConstantValues *)cv error:(NSError **)error {
     if (error) *error = nil;
     NSData *spv = [_fns objectForKey:name];
+    nvmtl_air_dump(name, _airs[name]);
     if (!spv && _airs[name]) {
         if (cv) nvlog("library: visible function \"%s\" asked with constant values — carried on the function",
                       name.UTF8String);
@@ -3153,8 +3185,18 @@ static size_t nvmtl_fc_width(NSUInteger dataType)
         NVMTLFunction *f = [NVMTLFunction new]; f->_spirv = nil; f->_fc = [constants copy]; f->_fname = name; f->_stage = _stages[name];
         f->_air = _airs[name]; f->_lib = self; f->_fcv = cv; return f;
     }
+    // A function that names visible functions or a function table is only translated once its pipeline links them
+    // (nvmtl_link_stage). Translating it here can only fail, and the failure is not cached: MPS's depthwise
+    // weight-gradient kernels paid seconds of failed translation on the encoding thread in every Geekbench run.
+    // The reference query is cheap, so defer at once. NVMTL_EAGER_LINK_PROBE=1 restores the translate-first order.
+    // B580: the answer is cached per AIR string (nvmtl_needs_visible_link_once) - fc-spec callers such as WindowServer's
+    // uber shader ask here for every variant, and the query parses the whole module; the fc-spec translation is skipped
+    // for such a function as well, since it fails the same way.
+    static int eagerProbe = -1;
+    if (eagerProbe < 0) { const char *ep = getenv("NVMTL_EAGER_LINK_PROBE"); eagerProbe = ep && ep[0] == '1'; }
+    const BOOL linkFirst = !eagerProbe && _airs[name] && nvmtl_needs_visible_link_once(_airs[name]);
     // one translation for every set of values when the function's constants can be specialization constants
-    if (_airs[name] && nvmtl_fc_spec_wanted(_stages[name])) {
+    if (!linkFirst && _airs[name] && nvmtl_fc_spec_wanted(_stages[name])) {
         uint64_t t0 = clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW);
         NSData *gen = nvmtl_translate_fc_spec_cached(_airs[name], _stages[name], name, idx, sz, pay, n, NULL);
         NSData *sv = gen ? nvmtl_fc_spec_variant(gen, idx, sz, pay, n) : nil;
@@ -3171,10 +3213,13 @@ static size_t nvmtl_fc_width(NSUInteger dataType)
             return f;
         }
     }
-    nvmtl_fc_expect_link(1);
-    NSData *spec = nvmtl_translate_with_fc_cached(_airs[name], _stages[name], name, constants, idx, sz, pay, n, &e);
-    nvmtl_fc_expect_link(0);
-    if (!spec && _airs[name] && nvmtl_needs_visible_link(_airs[name], e)) {
+    NSData *spec = nil;
+    if (!linkFirst) {
+        nvmtl_fc_expect_link(1);
+        spec = nvmtl_translate_with_fc_cached(_airs[name], _stages[name], name, constants, idx, sz, pay, n, &e);
+        nvmtl_fc_expect_link(0);
+    }
+    if (!spec && _airs[name] && (linkFirst || nvmtl_needs_visible_link(_airs[name], e))) {
         nvlog("newFunctionWithName:constantValues: \"%s\" has visible-function references - DEFERRED to pipeline creation (%zu constant(s))", name.UTF8String, n);
         if (error) *error = nil;
         NVMTLFunction *f = [NVMTLFunction new]; f->_spirv = nil; f->_fc = [constants copy]; f->_fname = name; f->_stage = (_stages[name] ?: @"");
@@ -3306,6 +3351,149 @@ static void nvmtl_retain_resource(__unsafe_unretained NVMTLCommandBuffer *cb, __
     if (!tag) { [s addObject:resource]; return; }
     if (__atomic_load_n(tag, __ATOMIC_ACQUIRE) == __atomic_load_n(&s->_epoch, __ATOMIC_ACQUIRE)) return;
     [s nvmtlAdd:resource tag:tag];
+}
+// An app that declares a HEAP is not required to declare the resources inside it: useHeap: says the
+// encoder may reach any of them indirectly, through an argument buffer or a bindless slot, and Metal
+// keeps the heap alive and resident for the command buffer's lifetime. Every useHeap:/useHeaps:
+// implementation here used to do nothing, so such a heap was retained by nobody: released after
+// encoding, -[NVMTLHeap dealloc] ran nvmtl_vk_heap_destroy -> vkFreeMemory on the whole block while
+// submitted work still read placed resources inside it, and the range lost its page table entry -
+// the next access is an MMU fault on a valid-looking address. Cyberpunk 2077 references all four
+// useHeap variants and creates heaps of 3 GiB and 384 MiB, so the window is large.
+// The command buffer's resource set is class-checked everywhere it is read, so a heap sitting in it
+// is skipped by the readers and only its lifetime matters.
+static void nvmtl_retain_heaps(NVMTLCommandBuffer *cb, const id<MTLHeap> __unsafe_unretained heaps[], NSUInteger n) {
+    if (!cb || !heaps) return;
+    for (NSUInteger i = 0; i < n; i++) nvmtl_retain_resource(cb, heaps[i]);
+}
+
+// A heap in use: Metal's contract for useHeap: is that the encoder may reach any resource placed in the heap, through an
+// argument buffer or a bindless slot, without naming it in useResource:. Every heap member is therefore held and made
+// resident for the command buffer the way a used resource is. A pin is an immutable snapshot of the members at one
+// version of the heap, shared by every command buffer that used the heap at that version, and it holds residency until
+// the last submission that references it finishes. A delta pin covers a heap that only gained members since its last
+// pin: it keeps that pin alive through _base and takes residency only on the new members (_own), so the members are not
+// walked again on every use. The chain is collapsed by a full pin every 16 links so members the app frees are let go.
+// _members and _copyCandidates are this link's only; -allMembers / -allCopyCandidates join the chain once and keep it.
+@interface NVMTLHeapPin : NSObject { @public NSArray *_members; NSArray *_copyCandidates; NSArray *_own; NVMTLHeapPin *_base; unsigned _depth;
+                                     NSArray *_allMembers; NSArray *_allCopyCandidates; }
+- (NSArray *)allMembers;
+- (NSArray *)allCopyCandidates;
+- (instancetype)initWithMembers:(NSArray *)members;
+- (instancetype)initWithBase:(NVMTLHeapPin *)base added:(NSArray *)added;
+@end
+@implementation NVMTLHeapPin
+- (instancetype)initWithBase:(NVMTLHeapPin *)base added:(NSArray *)added {
+    if ((self = [self initWithMembers:added])) { _base = base; _depth = base->_depth + 1; }
+    return self;
+}
+- (NSArray *)allMembers {
+    if (!_base) return _members;
+    @synchronized (self) { if (!_allMembers) _allMembers = [[_base allMembers] arrayByAddingObjectsFromArray:_members]; return _allMembers; }
+}
+- (NSArray *)allCopyCandidates {
+    if (!_base) return _copyCandidates;
+    @synchronized (self) {
+        if (!_allCopyCandidates) _allCopyCandidates = [[_base allCopyCandidates] arrayByAddingObjectsFromArray:_copyCandidates];
+        return _allCopyCandidates;
+    }
+}
+- (instancetype)initWithMembers:(NSArray *)members {
+    if ((self = [super init])) {
+        _members = members; _own = members;
+        NSMutableArray *copies = [NSMutableArray new];
+        for (id resource in members) {
+            nvmtl_resref(resource, 1);
+            NVMTLBuffer *buffer = nil;
+            if ([resource isKindOfClass:[NVMTLBuffer class]]) buffer = resource;
+            else if ([resource isKindOfClass:[NVMTLTexture class]]) {
+                NVMTLTexture *texture = resource;
+                buffer = texture->_backBuf ?: (texture->_parent ? texture->_parent->_backBuf : nil);
+            }
+            if (buffer && (buffer->_hostPtr || buffer->_shadow.map)) [copies addObject:resource];
+        }
+        _copyCandidates = [copies copy];
+    }
+    return self;
+}
+- (void)dealloc { for (id resource in _own) nvmtl_resref(resource, -1); }   // only what this link took; _base releases the rest
+@end
+// The heap's membership: weak, so the heap never owns its members through this; _added lists the members since the
+// cached pin for the next delta.
+@interface NVMTLHeapMembers : NSObject { @public NSHashTable *_members; uint64_t _version; __weak NVMTLHeapPin *_pin; uint64_t _pinVersion; NSPointerArray *_added; }
+@end
+@implementation NVMTLHeapMembers
+- (instancetype)init { if ((self = [super init])) { _members = [NSHashTable weakObjectsHashTable]; _added = [NSPointerArray weakObjectsPointerArray]; } return self; }
+@end
+// Per command buffer: the version of each heap it already holds a pin for, so a heap used by every encoder of a frame
+// is pinned once per command buffer.
+@interface NVMTLHeapUseCache : NSObject { @public NSLock *_lock; NSMutableDictionary *_versions; }
+@end
+@implementation NVMTLHeapUseCache
+- (instancetype)init { if ((self = [super init])) { _lock = [NSLock new]; _versions = [NSMutableDictionary new]; } return self; }
+@end
+static const char kHeapMembers, kHeapUseCache;
+static NVMTLHeapMembers *nvmtl_heap_members(NVMTLHeap *heap) {
+    if (!heap) return nil;
+    @synchronized (heap) {
+        NVMTLHeapMembers *m = objc_getAssociatedObject(heap, &kHeapMembers);
+        if (!m) { m = [NVMTLHeapMembers new]; objc_setAssociatedObject(heap, &kHeapMembers, m, OBJC_ASSOCIATION_RETAIN_NONATOMIC); }
+        return m;
+    }
+}
+static void nvmtl_heap_register(NVMTLHeap *heap, id resource) {
+    if (!heap || !resource) return;
+    NVMTLHeapMembers *m = nvmtl_heap_members(heap);
+    @synchronized (m) {
+        if (![m->_members containsObject:resource]) { [m->_members addObject:resource]; [m->_added addPointer:(__bridge void *)resource]; m->_version++; }
+    }
+}
+static void nvmtl_use_heap(NVMTLCommandBuffer *cb, id<MTLHeap> value) {
+    NVMTLHeap *heap = (NVMTLHeap *)value;
+    if (!cb || !heap || ![heap isKindOfClass:[NVMTLHeap class]]) return;
+    NVMTLHeapUseCache *cache;
+    // A lock object of its own: the command buffer's monitor may be held by the application.
+    @synchronized ([NVMTLHeapUseCache class]) {
+        cache = objc_getAssociatedObject(cb, &kHeapUseCache);
+        if (!cache) { cache = [NVMTLHeapUseCache new]; objc_setAssociatedObject(cb, &kHeapUseCache, cache, OBJC_ASSOCIATION_RETAIN_NONATOMIC); }
+    }
+    NVMTLHeapMembers *members = nvmtl_heap_members(heap);
+    [cache->_lock lock];
+    NSArray *resources = nil, *added = nil; NVMTLHeapPin *pin = nil, *base = nil; uint64_t version;
+    NSValue *key = [NSValue valueWithNonretainedObject:heap];
+    @synchronized (members) {
+        version = members->_version;
+        NSNumber *prior = cache->_versions[key];
+        if (!prior || prior.unsignedLongLongValue != version) {
+            if (members->_pinVersion == version) pin = members->_pin;
+            if (!pin) {
+                base = members->_pin;   // the last pin, if a submission still holds it
+                if (base && base->_depth < 16) { [members->_added compact]; added = members->_added.allObjects; }
+                else { base = nil; resources = members->_members.allObjects; }
+            }
+        }
+        { static _Atomic uint64_t calls, rebuilds, walked, deltas; const uint64_t c = atomic_fetch_add(&calls, 1) + 1;
+          if (resources) { atomic_fetch_add(&rebuilds, 1); atomic_fetch_add(&walked, resources.count); }
+          if (added) atomic_fetch_add(&deltas, 1);
+          if ((c & 4095) == 0) nvlog("heap pin: %llu uses, %llu full pins walking %llu members, %llu delta pins", (unsigned long long)c,
+                                     (unsigned long long)atomic_load(&rebuilds), (unsigned long long)atomic_load(&walked), (unsigned long long)atomic_load(&deltas)); }
+    }
+    // Residency can wait inside allocator locks: build the pin outside the membership monitor.
+    if (resources || added) {
+        pin = added ? [[NVMTLHeapPin alloc] initWithBase:base added:added] : [[NVMTLHeapPin alloc] initWithMembers:resources];
+        @synchronized (members) {
+            // The added list is cleared only when this pin is the one cached: if the heap gained members meanwhile, the
+            // members just consumed stay listed, or the next delta would miss them (an unpinned member is a GPU fault).
+            if (members->_version == version) { members->_pin = pin; members->_pinVersion = version;
+                                                 members->_added = [NSPointerArray weakObjectsPointerArray]; }
+        }
+    }
+    if (pin) {
+        nvmtl_retain_resource(cb, heap);
+        nvmtl_retain_resource(cb, pin);
+        cache->_versions[key] = @(version);
+    }
+    [cache->_lock unlock];
 }
 
 @implementation NVMTLCounter
@@ -3659,10 +3847,19 @@ __attribute__((noinline)) static void nvmtl_ps_bindfns_slow(__unsafe_unretained 
     if (!_hasRef) { nvmtl_vk_cmd_set_stencil_ref(&_cb->_c, 0, 0); _hasRef = YES; }
 }
 - (void)setRenderPipelineState:(id<MTLRenderPipelineState>)ps {
+    // The same pipeline again inside a begun pass changes nothing: Apple's OpenGL renderer sets it before every draw, so
+    // GL games paid a full bind per draw (the GL-on-Metal per-draw overhead). Not inside an open pass-time pool.
+    // NVMTL_PSO_REBIND=1 takes the full path every time (an A/B switch).
+    if (ps && (NVMTLRenderPipelineState *)ps == _ps && _begun && !(_cb->_c.pt_open && _cb->_c.pt_pool)) {
+        static int rebind = -1; if (rebind < 0) { const char *e = getenv("NVMTL_PSO_REBIND"); rebind = e && e[0] == '1'; }
+        if (!rebind) return;
+    }
     // NVMTL_DUMP_PSO=<text>: the first encoder that sets a pipeline whose label contains it has the fragment buffers bound
     // at its end dumped, as NVMTL_DUMP_GROUP does, for apps that label pipelines but push no debug groups (diagnostic)
+    // Only asked for when the switch is set: this runs on every pipeline bind, and an unconditional `ps.label` was a message
+    // send plus a string retain/release per draw call in profiles of a game that never sets NVMTL_DUMP_PSO.
     { static const char *want; static int once; static _Atomic int armed; if (!once) { once = 1; want = getenv("NVMTL_DUMP_PSO"); }
-      NSString *lbl = ps.label;
+      NSString *lbl = want ? ps.label : nil;
       if (want && !strcmp(want, "?") && lbl) { static NSMutableSet *seen; static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;
           pthread_mutex_lock(&mu); if (!seen) seen = [NSMutableSet new]; BOOL n = ![seen containsObject:lbl]; if (n) [seen addObject:lbl];
           pthread_mutex_unlock(&mu); if (n) nvlog("NVMTL_DUMP_PSO: pipeline label %s", lbl.UTF8String); }
@@ -3690,7 +3887,26 @@ __attribute__((noinline)) static void nvmtl_ps_bindfns_slow(__unsafe_unretained 
     NVMTLRenderPipelineState *p = (NVMTLRenderPipelineState *)ps;
     if (!p) { nvlog("encoder: nil render pipeline refused"); return; }
     if (_begun && !nvmtl_vk_pipeline_compatible(&_passSig, &p->_p)) {
-        nvlog("encoder: incompatible render pipeline refused before changing draw state"); return;
+        static int refuse = -1;   // NVMTL_NO_PASS_TRANSITION=1: the old refusal instead of the transition below (a split switch, 84e655e)
+        if (refuse < 0) { const char *e = getenv("NVMTL_NO_PASS_TRANSITION"); refuse = e && e[0] == '1';
+            if (refuse) nvlog("encoder: an incompatible render pipeline is REFUSED, not transitioned (NVMTL_NO_PASS_TRANSITION=1)"); }
+        if (refuse) { nvlog("encoder: incompatible render pipeline refused before changing draw state"); return; }
+        // Metal can omit unused attachments in a later pipeline. Vulkan requires a new compatible pass: end this one,
+        // keep every attachment an earlier segment used, preserve the encoder's dynamic state and begin again below.
+        // Refusing the pipeline instead dropped every draw until the next compatible one: Cyberpunk's parallel render
+        // encoders replay thousands of such binds per frame (4,096+ refusals logged per run) and the frame lost them.
+        uint32_t keep = 0;
+        for (uint32_t i = 0; i < _passSig.ncol; i++)
+            if (_passSig.cfmts[i]) keep |= NVMTL_LOAD_COLOUR(i);
+        if (_passSig.has_depth) keep |= NVMTL_LOAD_DEPTH;
+        if (_ps && _ps->_p.has_stencil) keep |= NVMTL_LOAD_STENCIL;
+        BOOL visibility = _visActive || _visPending;
+        [self nvmtlCloseVisibility];
+        nvmtl_vk_cmd_end_render(&_cb->_c);
+        _begun = NO; _pass.load |= keep; _load |= keep; _visPending = visibility;
+        static _Atomic unsigned long long transitions; const unsigned long long k = atomic_fetch_add(&transitions, 1) + 1;
+        if (!(k & (k - 1))) nvlog("encoder: pipeline attachment transition #%llu preserves load mask 0x%x (pass %u colour, depth %u, %u samples -> pipeline %s / %s)",
+                                 k, keep, _passSig.ncol, _passSig.has_depth, _passSig.samples, p->_vname.UTF8String ?: "?", p->_fname.UTF8String ?: "?");
     }
     _ps = p;
     nvmtl_retain_resource(_cb, p);
@@ -4225,13 +4441,13 @@ static BOOL nvmtl_bytes_ring_at(__unsafe_unretained NVMTLCommandBuffer *cb, NSUI
     for(NSUInteger k=0;k<r.length;k++) [self setVertexSamplerState:ss[k] lodMinClamp:lo[k] lodMaxClamp:hi[k] atIndex:r.location+k];
 }
 - (void)useResource:(id<MTLResource>)r usage:(MTLResourceUsage)u { nvmtl_retain_resource(_cb, r); }
-- (void)useHeaps:(const id<MTLHeap> __unsafe_unretained [])h count:(NSUInteger)n {}
-- (void)useHeaps:(const id<MTLHeap> __unsafe_unretained [])h count:(NSUInteger)n stages:(MTLRenderStages)st { nvtrace("USEHEAPS %lu stages %lu", (unsigned long)n, (unsigned long)st); }
+- (void)useHeaps:(const id<MTLHeap> __unsafe_unretained [])h count:(NSUInteger)n { for (NSUInteger i = 0; i < n; i++) nvmtl_use_heap(_cb, h[i]); }
+- (void)useHeaps:(const id<MTLHeap> __unsafe_unretained [])h count:(NSUInteger)n stages:(MTLRenderStages)st { nvtrace("USEHEAPS %lu stages %lu", (unsigned long)n, (unsigned long)st); for (NSUInteger i = 0; i < n; i++) [self useHeap:h[i] stages:st]; }
 - (void)useResource:(id<MTLResource>)r usage:(MTLResourceUsage)u stages:(MTLRenderStages)st { nvmtl_retain_resource(_cb, r); nvtrace("USERES %s %p usage %lu stages %lu", object_getClassName(r), (__bridge void *)r, (unsigned long)u, (unsigned long)st); }
 - (void)useResources:(const id<MTLResource> __unsafe_unretained [])r count:(NSUInteger)n usage:(MTLResourceUsage)u { for (NSUInteger i=0;i<n;i++) nvmtl_retain_resource(_cb,r[i]); }
 - (void)useResources:(const id<MTLResource> __unsafe_unretained [])r count:(NSUInteger)n usage:(MTLResourceUsage)u stages:(MTLRenderStages)st { for (NSUInteger i=0;i<n;i++) nvmtl_retain_resource(_cb,r[i]); nvtrace("USERES x%lu usage %lu stages %lu", (unsigned long)n, (unsigned long)u, (unsigned long)st); }
-- (void)useHeap:(id<MTLHeap>)h {}
-- (void)useHeap:(id<MTLHeap>)h stages:(MTLRenderStages)st {}
+- (void)useHeap:(id<MTLHeap>)h { nvmtl_use_heap(_cb, h); }
+- (void)useHeap:(id<MTLHeap>)h stages:(MTLRenderStages)st { (void)st; nvmtl_use_heap(_cb, h); }
 - (void)sampleCountersInBuffer:(id)sb atSampleIndex:(NSUInteger)i withBarrier:(BOOL)b { nvmtl_sample_counter(_cb, sb, i, self, b); }
 - (void)textureBarrier { nvmtl_vk_cmd_barrier(&_cb->_c); }
 - (void)updateFence:(id<MTLFence>)f afterStages:(MTLRenderStages)st {}
@@ -4462,6 +4678,7 @@ void nvmtl_heap_back(NVMTLHeap *h, NSUInteger size, int shared) {
               shared ? "shared" : "private", (unsigned long)size);
         return;
     }
+    nvmtl_vk_heap_zero(&h->_hm, shared ? "shared" : "private");
     h->_fl = OS_UNFAIR_LOCK_INIT; h->_nfr = 0; h->_cfr = 0; h->_fr = NULL;
     if (nvmtl_heap_grow(h)) { nvmtl_vk_heap_destroy(&h->_hm); nvlog("heap alias: no free list for a %lu-byte heap - legacy path", (unsigned long)size); return; }
     h->_fr[0] = 0; h->_fr[1] = size; h->_nfr = 1; h->_backed = YES;
@@ -4495,6 +4712,7 @@ void nvmtl_heap_back(NVMTLHeap *h, NSUInteger size, int shared) {
         return nil;
     }
     b->_subHeap = self; b->_subCharge = charge; b->_subPlaced = YES; b->_heapOffset = off; _used += charge;
+    nvmtl_heap_register(self, b);
     atomic_fetch_add(&gHAPlaced, 1); atomic_fetch_add(&gHALive, charge);
     nvmtl_heap_census("placed");
     return b;
@@ -4522,6 +4740,7 @@ void nvmtl_heap_back(NVMTLHeap *h, NSUInteger size, int shared) {
     b->_storage = (MTLStorageMode)((opt >> MTLResourceStorageModeShift) & 0xF);
     if (nvmtl_vk_buffer_create_placed(len, &_hm, off, &b->_b)) { nvlog("heap newBufferWithLength:%lu offset:%lu FAILED", (unsigned long)len, (unsigned long)off); return nil; }
     b->_heap = self; b->_heapOffset = off; if (off + len > _used) _used = off + len;
+    nvmtl_heap_register(self, b);
     nvlog("heap newBufferWithLength:%lu offset:%lu -> %p", (unsigned long)len, (unsigned long)off, (__bridge void *)b);
     return b;
 }
@@ -4538,6 +4757,7 @@ void nvmtl_heap_back(NVMTLHeap *h, NSUInteger size, int shared) {
     if (nvmtl_depthfmt_public(d.pixelFormat, &dvk, &dasp) == 0) {
         if (nvmtl_vk_depth_create_ex_placed((uint32_t)d.width, (uint32_t)d.height, dvk, dasp, &_hm, off, &t->_i)) { nvlog("heap depth texture FAILED (format %lu offset %lu)", (unsigned long)d.pixelFormat, (unsigned long)off); return nil; }
         t->_q = nvmtl_device_queue(); t->_heap = self; t->_heapOffset = off;
+        nvmtl_heap_register(self, t);
         nvlog("heap newTextureWithDescriptor: %lux%lu DEPTH offset:%lu -> %p", (unsigned long)d.width, (unsigned long)d.height, (unsigned long)off, (__bridge void *)t);
         return t;
     }
@@ -4547,7 +4767,8 @@ void nvmtl_heap_back(NVMTLHeap *h, NSUInteger size, int shared) {
     if (nvmtl_vk_image_create_typed_placed((uint32_t)d.width, (uint32_t)d.height, vkf, bpp, a8, (uint32_t)d.mipmapLevelCount, wantStex,
                                             (uint32_t)d.textureType, nvmtl_vk_layers_for_desc((uint32_t)d.textureType, (uint32_t)d.arrayLength, (uint32_t)d.depth), &_hm, off, &t->_i)) {
         nvlog("heap newTextureWithDescriptor: %lux%lu offset:%lu FAILED", (unsigned long)d.width, (unsigned long)d.height, (unsigned long)off); return nil; }
-    t->_q = nvmtl_device_queue(); t->_stex = t->_i.storage != 0; t->_heap = self; t->_heapOffset = off;
+    t->_q = nvmtl_device_queue(); t->_stex = t->_i.storage == 1; t->_heap = self; t->_heapOffset = off;
+    nvmtl_heap_register(self, t);
     nvmtl_texture_desc_swizzle(t, d);
     nvlog("heap newTextureWithDescriptor: %lux%lu%s offset:%lu -> %p", (unsigned long)d.width, (unsigned long)d.height, t->_stex ? " +storage" : "", (unsigned long)off, (__bridge void *)t);
     return t;
@@ -4577,6 +4798,7 @@ void nvmtl_heap_back(NVMTLHeap *h, NSUInteger size, int shared) {
         return b;
     }
     NVMTLBuffer *nb = (NVMTLBuffer *)b; nb->_subHeap = self; nb->_subCharge = charge; _used += charge;
+    nvmtl_heap_register(self, nb);
     return b;
 }
 - (id<MTLAccelerationStructure>)newAccelerationStructureWithSize:(NSUInteger)size {
@@ -4590,6 +4812,7 @@ void nvmtl_heap_back(NVMTLHeap *h, NSUInteger size, int shared) {
         return as;
     }
     NVMTLAccelerationStructure *na = (NVMTLAccelerationStructure *)as; na->_subHeap = self; na->_subCharge = charge; _used += charge;
+    nvmtl_heap_register(self, na);
     nvlog("heap newAccelerationStructureWithSize:%lu (charge %lu) -> %p", (unsigned long)size, (unsigned long)charge, (__bridge void *)na);
     return as;
 }
@@ -4606,6 +4829,7 @@ void nvmtl_heap_back(NVMTLHeap *h, NSUInteger size, int shared) {
     a->_storage = MTLStorageModePrivate;
     if (nvmtl_vk_buffer_create_placed(len, &_hm, off, &a->_b)) { nvlog("heap newAccelerationStructureWithSize:%lu offset:%lu FAILED", (unsigned long)size, (unsigned long)off); return nil; }
     a->_heap = self; a->_heapOffset = off; if (off + len > _used) _used = off + len;
+    nvmtl_heap_register(self, a);
     nvlog("heap newAccelerationStructureWithSize:%lu offset:%lu -> %p", (unsigned long)size, (unsigned long)off, (__bridge void *)a);
     return a;
 }
@@ -4652,8 +4876,9 @@ void nvmtl_heap_back(NVMTLHeap *h, NSUInteger size, int shared) {
     t->_ropt = (MTLResourceOptions)d.cpuCacheMode | ((MTLResourceOptions)d.hazardTrackingMode << MTLResourceHazardTrackingModeShift)
              | ((MTLResourceOptions)d.storageMode << MTLResourceStorageModeShift);
     t->_fmt = d.pixelFormat; t->_mips = mips; t->_usage = d.usage;
-    t->_q = nvmtl_device_queue(); t->_stex = t->_i.storage != 0;
+    t->_q = nvmtl_device_queue(); t->_stex = t->_i.storage == 1;
     t->_subHeap = self; t->_subCharge = len; t->_subPlaced = YES; t->_heapOffset = off;
+    nvmtl_heap_register(self, t);
     t->_parkable = !noRecycle; memcpy(t->_pkey, key, sizeof key); t->_pkLen = len;
     _used += len;
     atomic_fetch_add(&gHAPlaced, 1); atomic_fetch_add(&gHALive, len);
@@ -4676,6 +4901,7 @@ void nvmtl_heap_back(NVMTLHeap *h, NSUInteger size, int shared) {
         return t;
     }
     NVMTLTexture *nt = (NVMTLTexture *)t; nt->_subHeap = self; nt->_subCharge = charge; _used += charge;
+    nvmtl_heap_register(self, nt);
     return t;
 }
 @end
@@ -4904,6 +5130,10 @@ static void nvmtl_g79_flush(NVMTLCommandBuffer *cb) {
 }
 @interface NVMTLComputeCommandEncoder () {
 @public
+    // Textures declared with useResource:usage:, keyed by their Vulkan image (a view and its root share one), latest
+    // usage wins. An indirect dispatch reaches them only through argument buffers, so nothing else moves them into the
+    // layout a shader access needs; see nvmtlPrepareIndirectImages.
+    NSMutableDictionary *_indirectImages;
     NSData *_e78Key;
     NVMTLComputePipelineState *_e78VarFor, *_e78VarSel;
     NSUInteger _e78NDisp; BOOL _e78Concurrent, _e78Loose;
@@ -5003,7 +5233,7 @@ static int nvmtl_nvconv_try(NVMTLComputeCommandEncoder *e, MTLSize grid, MTLSize
     if (nar >= 4 && (kp[44] != cout || kp[48] != 1)) NVC_SKIP("bias descriptor");
     if (nar == 5 && (kp[64] != cout || kp[65] != dw || kp[66] != dh || kp[67] != batch || kp[68] != 1 || (dw > 1 && kp[69] != cout) || (dh > 1 && kp[70] != cout * dw)))
         NVC_SKIP("residual descriptor");
-    NSArray *bi = e->_bufAt[@0], *bw = e->_bufAt[@1], *bo = e->_bufAt[@(nar - 1)], *bb = nar >= 4 ? e->_bufAt[@2] : nil, *br = nar == 5 ? e->_bufAt[@3] : nil;
+    NSArray *bi = nvmtl_bufat(e, 0), *bw = nvmtl_bufat(e, 1), *bo = nvmtl_bufat(e, nar - 1), *bb = nar >= 4 ? nvmtl_bufat(e, 2) : nil, *br = nar == 5 ? nvmtl_bufat(e, 3) : nil;
     if (!bi || !bw || !bo || (nar >= 4 && !bb) || (nar == 5 && !br)) NVC_SKIP("buffer slot unbound");
     #define NVC_ROOM(arr, need) ([(id<MTLBuffer>)arr[0] length] >= [arr[1] unsignedLongValue] + (uint64_t)(need) * 4)
     const uint64_t nin = (uint64_t)(cin - 1) * kp[8] + (uint64_t)(sw - 1) * kp[9] + (uint64_t)(sh - 1) * kp[10] + (uint64_t)(batch - 1) * kp[11] + 1;
@@ -5067,7 +5297,7 @@ static void nvmtl_stride_dropped(NSUInteger st) { static BOOL said; if (!said &&
     for (NSUInteger k = 0; k < r.length; k++) [self setBuffer:bs ? bs[k] : nil offset:offs ? offs[k] : 0 attributeStride:sts ? sts[k] : 0 atIndex:r.location + k]; }
 - (void)setBytes:(const void *)bytes length:(NSUInteger)len attributeStride:(NSUInteger)st atIndex:(NSUInteger)i {
     nvmtl_stride_dropped(st); [self setBytes:bytes length:len atIndex:i]; }
-- (void)useHeaps:(const id<MTLHeap> __unsafe_unretained [])hs count:(NSUInteger)n { (void)hs; (void)n; }
+- (void)useHeaps:(const id<MTLHeap> __unsafe_unretained [])hs count:(NSUInteger)n { for (NSUInteger i = 0; i < n; i++) [self useHeap:hs[i]]; }
 - (void)setSamplerStates:(const id<MTLSamplerState> __unsafe_unretained [])s lodMinClamps:(const float *)lo lodMaxClamps:(const float *)hi withRange:(NSRange)r {
     for (NSUInteger k = 0; k < r.length; k++)
         [self setSamplerState:s ? s[k] : nil lodMinClamp:lo ? lo[k] : 0.0f lodMaxClamp:hi ? hi[k] : FLT_MAX atIndex:r.location + k]; }
@@ -5108,7 +5338,7 @@ static void nvmtl_stride_dropped(NSUInteger st) { static BOOL said; if (!said &&
         _e78VarFor = _ps; _e78VarSel = selected;
     }
     nvmtl_retain_resource(_cb, selected);
-    nvmtl_bind_embedded_dict(_cb, NVMTL_SET_VERTEX, _ps->_function, _bufAt);
+    nvmtl_bind_embedded_enc(_cb, NVMTL_SET_VERTEX, _ps->_function, self);
     return selected;
 }
 static int nvmtl_zprobe_on(void);
@@ -5122,7 +5352,7 @@ static int nvmtl_zprobe_on(void);
 - (void)setBuffer:(id<MTLBuffer>)b offset:(NSUInteger)off atIndex:(NSUInteger)i {
     NVMTLBuffer *nb = (NVMTLBuffer *)b;
     if (!nb) {
-        [_bufAt removeObjectForKey:@(i)];   // the binding table must not keep the previous resource
+        if (i < NVMTL_NBUFAT) { _baObj[i] = nil; _baN[i] = 0; }   // the binding table must not keep the previous resource
         size_t zoff = 0;
         NVMTLBuffer *zb = nvmtl_bytes_ring(_cb, 16, &zoff);
         const BOOL zring = zb != nil;
@@ -5140,9 +5370,9 @@ static int nvmtl_zprobe_on(void);
         return;
     }
     if (!_cb->_resources) _cb->_resources = [NVMTLResSet new];
-    [_cb->_resources addObject:nb];
-    if (!_bufAt) _bufAt = [NSMutableDictionary new];
-    _bufAt[@(i)] = @[nb, @(off)];
+    // the same buffer at the same index of this encoder is already held by the command buffer's set
+    if (i >= NVMTL_NBUFAT || _baObj[i] != (id)nb) [_cb->_resources addObject:nb];
+    if (i < NVMTL_NBUFAT) { _baObj[i] = nb; _baOff[i] = off; _baN[i] = 2; }
     if (nvmtl_vk_bind_buffer(&_cb->_c, NVMTL_SET_VERTEX, (uint32_t)i, &nb->_b, off)) nvlog("compute setBuffer: bind FAILED");
     if (nvmtl_zprobe_on()) {
         static const char *ZH = "0123456789abcdef";
@@ -5173,8 +5403,7 @@ static int nvmtl_zprobe_on(void);
         if (nvmtl_vk_bind_buffer(&_cb->_c, NVMTL_SET_VERTEX, (uint32_t)i, &_cb->_g79BRing[i]->_b, _cb->_g79BOff[i])) nvlog("compute setBytes: bind FAILED");
         // The binding table follows the binding: kernels run from compiled machine code read their buffer
         // addresses from it, and a stale entry hands the GPU an address that belongs to nothing.
-        if (!_bufAt) _bufAt = [NSMutableDictionary new];
-        _bufAt[@(i)] = @[_cb->_g79BRing[i], @(_cb->_g79BOff[i]), @(len), @(_cb->_g79BOff[i])];
+        _baObj[i] = _cb->_g79BRing[i]; _baOff[i] = _baBase[i] = _cb->_g79BOff[i]; _baLen[i] = len; _baN[i] = 4;
         nvmtl_g79_count(G79C_BYTESDUP);
         return;
     }
@@ -5190,8 +5419,7 @@ static int nvmtl_zprobe_on(void);
         _cb->_g79BRing[i] = ring && nb->_b.map ? nb : nil; _cb->_g79BOff[i] = roff; _cb->_g79BLen[i] = (uint32_t)len;
         memcpy(_cb->_g79B[i], bytes, len);
     }
-    if (!_bufAt) _bufAt = [NSMutableDictionary new];
-    _bufAt[@(i)] = @[nb, @(roff), @(len), @(roff)];   // buffer, offset, inline length, base
+    if (i < NVMTL_NBUFAT) { _baObj[i] = nb; _baOff[i] = _baBase[i] = roff; _baLen[i] = len; _baN[i] = 4; }   // buffer, offset, inline length, base
     if (nvmtl_vk_bind_buffer(&_cb->_c, NVMTL_SET_VERTEX, (uint32_t)i, &nb->_b, roff)) nvlog("compute setBytes: bind FAILED");
     if (nvmtl_zprobe_on()) {
         const uint32_t *zw = (const uint32_t *)bytes; char zb[220]; int zo = 0;
@@ -5275,6 +5503,13 @@ static void nvmtl_zprobe_drain(void) {
     nvmtl_vk_bind_storage_view(&_cb->_c, NVMTL_SET_VERTEX, (uint32_t)i, nvmtl_storage_view_for(_cb, nt, nt->_stex || nvmtl_function_writes_texture(_ps ? _ps->_function : nil, i)));
     }
 }
+static int nvmtl_conc_no_barrier(void)
+{
+    static int on = -1;
+    if (on < 0) { const char *e = getenv("NVMTL_CONC_NO_BARRIER"); on = e && e[0] == '1';
+        if (on) nvlog("compute: a concurrent encoder's later dispatches take NO barrier unless the app asks (NVMTL_CONC_NO_BARRIER=1)"); }
+    return on;
+}
 - (void)nvmtlE78Barrier:(BOOL)indirect pipe:(const nvk_pipeline *)pipe {
     int kind;
     if (indirect) kind = 0;
@@ -5282,7 +5517,18 @@ static void nvmtl_zprobe_drain(void) {
         kind = _cb->_g79C2C && nvmtl_g79_on(NVMTL_G79_ENC) ? 1 : 0;
         nvmtl_g79_count(kind ? G79C_ENCNARROW : G79C_ENCFULL);
     }
-    else if (_e78Concurrent && nvmtl_enc78_on(NVMTL_E78_H7)) {
+    // A concurrent compute encoder's later dispatches used to get NO barrier at all unless the app had called
+    // memoryBarrierWithScope: (the H7 row: kind 2 = none). That reads Metal's concurrent dispatch type as a
+    // promise that the dispatches are independent, and Cyberpunk's are not: a later dispatch read a buffer an
+    // earlier one in the same encoder was still writing, so it consumed garbage - wrong lighting, and pointers
+    // loaded out of that garbage faulted the channel at addresses no buffer covers (FAULT_PTE / FAULT_PDE).
+    // Measured 2026-11-03 on the benchmark, every other setting held: H7 on faulted in every run that reached
+    // the light pass; NVMTL_ENC78_OFF=h7 completed at 39.28 fps against 41.08 with it on, so the narrow
+    // compute->compute barrier it costs is within noise. Concurrent dispatches now take that same narrow
+    // barrier serial ones do (P1); NVMTL_ENC78_OFF still turns the rows off for an A/B.
+    // nm271: NVMTL_CONC_NO_BARRIER=1 restores the H7 row (Metal's documented concurrent semantics: no barrier unless
+    // the app asks with memoryBarrierWithScope:), for an A/B of the cost on Xe2.
+    else if (_e78Concurrent && nvmtl_conc_no_barrier() && nvmtl_enc78_on(NVMTL_E78_H7)) {
         kind = _g79Bar ? 1 : 2;
         if (_g79Bar) nvmtl_g79_count(G79C_BARFOLD);
     }
@@ -5306,6 +5552,30 @@ static void nvmtl_zprobe_drain(void) {
     nvmtl_enc78_count(E78C_DISP, 1); nvmtl_enc78_count(E78C_FULL + kind, 1);
     if (_e78Concurrent) nvmtl_enc78_count(E78C_CONC, 1);
 }
+// A threadgroup of 1024 threads fits once per SM at 40 registers (32 of 48 warps) and MPS's Gaussian ran 1.5x
+// slower in 32x32 groups than in 32x4 on the RTX 5060 (gblin, identical pixels). A kernel that cannot see its
+// grouping (nvmtl_air_grid_only) runs the same threads in groups of at most 128: height first, then depth, then
+// width down to 32, each halved only while it stays a divisor, so the thread set and every grid position are
+// unchanged. B580: OFF unless NVMTL_TG_RESHAPE=1 - the occupancy argument above is NVIDIA's (warps per SM) and was
+// not measured on Xe2; =force skips the grid-only check, which only a test uses, to prove its probe sees a kernel
+// that depends on its grouping.
+static void nvmtl_tg_reshape(NVMTLComputePipelineState *ps, const uint32_t l[3], uint32_t out[3])
+{
+    out[0] = l[0]; out[1] = l[1]; out[2] = l[2];
+    static int mode = -1;
+    if (mode < 0) { const char *e = getenv("NVMTL_TG_RESHAPE"); mode = !e ? 0 : e[0] == '1' ? 1 : e[0] == 'f' ? 2 : 0; }
+    if (!mode || !ps || l[0] * l[1] * l[2] <= 128) return;
+    if (mode == 2) ps->_gridOnly = 1;
+    if (!ps->_gridOnly) {
+        ps->_gridOnly = nvmtl_air_grid_only(ps->_function) ? 1 : -1;
+        if (ps->_gridOnly > 0) nvlog("dispatch: %s uses only its grid position - threadgroups above 128 threads are split",
+                                     ps->_function ? ps->_function->_fname.UTF8String : "-");
+    }
+    if (ps->_gridOnly < 0) return;
+    while (out[0] * out[1] * out[2] > 128 && out[1] % 2 == 0) out[1] /= 2;
+    while (out[0] * out[1] * out[2] > 128 && out[2] % 2 == 0) out[2] /= 2;
+    while (out[0] * out[1] * out[2] > 128 && out[0] > 32 && out[0] % 2 == 0) out[0] /= 2;
+}
 - (void)dispatchThreadgroups:(MTLSize)grid threadsPerThreadgroup:(MTLSize)tg {
     if (_ps && _ps->_sassKernel) _cb->_c.hz_unknown = 1;   // compute2: not tracked by NVMTL_CS_HAZARD
     if (_ps && _ps->_sassKernel) {
@@ -5323,7 +5593,10 @@ static void nvmtl_zprobe_drain(void) {
         nvtrace("DISPATCH %s | threads %ux%ux%u tg %ux%ux%u", (_ps && _ps->_function ? _ps->_function->_fname.UTF8String : NULL) ?: "-", t[0], t[1], t[2], l[0], l[1], l[2]);
         nvtrace("  BUFS%s", bufs_); }
     [self nvmtlE78Barrier:NO pipe:&selected->_p];
-    if (nvmtl_vendor_dispatch_sass(selected, &_cb->_c, t, l) != 0) nvmtl_vk_cmd_dispatch_threads(&_cb->_c, &selected->_p, t, l);
+    if (nvmtl_vendor_dispatch_sass(selected, &_cb->_c, t, l) != 0) {
+        uint32_t lr[3]; nvmtl_tg_reshape(_ps, l, lr);
+        nvmtl_vk_cmd_dispatch_threads(&_cb->_c, &selected->_p, t, lr);
+    }
     if (_cb->_stTwins.count) nvmtl_storage_twins_out(_cb);
 }
 - (void)dispatchThreads:(MTLSize)threads threadsPerThreadgroup:(MTLSize)tg {
@@ -5342,11 +5615,14 @@ static void nvmtl_zprobe_drain(void) {
         nvtrace("DISPATCH %s | threads %ux%ux%u tg %ux%ux%u", (_ps && _ps->_function ? _ps->_function->_fname.UTF8String : NULL) ?: "-", t[0], t[1], t[2], l[0], l[1], l[2]);
         nvtrace("  BUFS%s", bufs_); }
     [self nvmtlE78Barrier:NO pipe:&selected->_p];
-    if (nvmtl_vendor_dispatch_sass(selected, &_cb->_c, t, l) != 0) nvmtl_vk_cmd_dispatch_threads(&_cb->_c, &selected->_p, t, l);
+    if (nvmtl_vendor_dispatch_sass(selected, &_cb->_c, t, l) != 0) {
+        uint32_t lr[3]; nvmtl_tg_reshape(_ps, l, lr);
+        nvmtl_vk_cmd_dispatch_threads(&_cb->_c, &selected->_p, t, lr);
+    }
     if (_cb->_stTwins.count) nvmtl_storage_twins_out(_cb);
 }
 - (void)setBufferOffset:(NSUInteger)off atIndex:(NSUInteger)i {
-    { NSArray *b = _bufAt[@(i)]; if (b) _bufAt[@(i)] = @[b[0], @(off)]; }
+    if (i < NVMTL_NBUFAT && _baN[i]) { _baOff[i] = off; _baN[i] = 2; }
     if (nvmtl_vk_bind_buffer_offset(&_cb->_c, NVMTL_SET_VERTEX, (uint32_t)i, off))
         nvlog("compute setBufferOffset: nothing bound at index %lu", (unsigned long)i);
 }
@@ -5430,12 +5706,42 @@ static void nvmtl_zprobe_drain(void) {
     uint32_t l[3] = { (uint32_t)tg.width, (uint32_t)tg.height, (uint32_t)tg.depth };
     if (nvmtl_vk_tg_reject(l, NULL, _ps && _ps->_function ? _ps->_function->_fname.UTF8String : NULL, selected->_p.lin)) return;
     [self nvmtlE78Barrier:YES pipe:&selected->_p];
+    if (![self nvmtlPrepareIndirectImages]) return;
     nvmtl_vk_cmd_dispatch_indirect_tg(&_cb->_c, &selected->_p, &nb->_b, off, l);
     if (_cb->_stTwins.count) nvmtl_storage_twins_out(_cb);
 }
-- (void)useResource:(id<MTLResource>)r usage:(MTLResourceUsage)u { nvmtl_retain_resource(_cb, r); }
-- (void)useResources:(const id<MTLResource> __unsafe_unretained [])r count:(NSUInteger)n usage:(MTLResourceUsage)u { for (NSUInteger i=0;i<n;i++) nvmtl_retain_resource(_cb,r[i]); }
-- (void)useHeap:(id<MTLHeap>)h {}
+// Before an indirect dispatch, every texture the encoder declared with useResource:usage: is brought in for this command
+// buffer and moved to the layout the access needs: GENERAL when it may be written as a storage image, read-only otherwise.
+// A texture written earlier in the frame as a render target is still in its attachment layout; on NVIDIA that layout can
+// keep the surface compressed, and a storage write into it without the transition reaches memory the image does not own
+// (Cyberpunk's 2048x2048 RG11B10 clear faulted in a page no image or buffer held). Direct dispatches get the same
+// preparation through setTexture:atIndex:; textures reached only through an argument buffer get it here.
+- (BOOL)nvmtlPrepareIndirectImages {
+    for (NSValue *key in _indirectImages) {
+        NSArray *entry = _indirectImages[key]; NVMTLTexture *t = entry[0];
+        MTLResourceUsage usage = [entry[1] unsignedLongLongValue];
+        nvmtl_surface_in_for_cb(_cb, t);
+        if (usage & MTLResourceUsageWrite) nvmtl_surf_dirty(_cb, t);
+        if (nvmtl_vk_cmd_prepare_sampled_image(&_cb->_c, [t nvi], (usage & MTLResourceUsageWrite) && t->_stex)) {
+            [_cb nvmtlRecordEncodingError:[NSError errorWithDomain:MTLCommandBufferErrorDomain code:MTLCommandBufferErrorInternal
+                userInfo:@{NSLocalizedDescriptionKey:@"Cannot prepare a declared indirect texture for dispatch"}]];
+            return NO;
+        }
+    }
+    return YES;
+}
+- (void)useResource:(id<MTLResource>)r usage:(MTLResourceUsage)u {
+    nvmtl_retain_resource(_cb, r);
+    if ([(id)r isKindOfClass:[NVMTLTexture class]]) {
+        NVMTLTexture *t = (NVMTLTexture *)r;
+        if (!t->_tbView) {
+            if (!_indirectImages) _indirectImages = [NSMutableDictionary new];
+            _indirectImages[[NSValue valueWithPointer:[t nvi]]] = @[t, @(u)];
+        }
+    }
+}
+- (void)useResources:(const id<MTLResource> __unsafe_unretained [])r count:(NSUInteger)n usage:(MTLResourceUsage)u { for (NSUInteger i=0;i<n;i++) [self useResource:r[i] usage:u]; }
+- (void)useHeap:(id<MTLHeap>)h { nvmtl_use_heap(_cb, h); }
 - (void)sampleCountersInBuffer:(id)sb atSampleIndex:(NSUInteger)i withBarrier:(BOOL)b { nvmtl_sample_counter(_cb, sb, i, self, b); }
 - (void)memoryBarrierWithScope:(MTLBarrierScope)scope {
     if (nvmtl_g79_on(NVMTL_G79_BAR)) { _g79Bar = YES; nvmtl_g79_count(G79C_BARLAZY); } else nvmtl_vk_cmd_barrier(&_cb->_c); }
@@ -5457,7 +5763,9 @@ static void nvmtl_zprobe_drain(void) {
     // The command buffer holds every resource until the GPU is done; the encoder's own binding tables are dead after
     // this point, as in Apple's encoders. WAS: kept until dealloc, which MPS defers to the completion handler; by then
     // Espresso had recycled the objects they named and .cxx_destruct released freed memory (mediaanalysisd, issue #107).
-    _bufAt = nil; _samplers = nil; _cpixMask = 0; _tgLen = nil; _e78Key = nil;
+    for (unsigned k = 0; k < NVMTL_NBUFAT; k++) { _baObj[k] = nil; _baN[k] = 0; }
+    _samplers = nil; _cpixMask = 0; _tgLen = nil; _e78Key = nil;
+    _indirectImages = nil;   // 9a05b0a's declared textures: dead with the encoder's other tables
 }
 - (void)setLabel:(NSString *)l { _label = [l copy]; }
 - (NSString *)label { return _label; }
@@ -5731,8 +6039,13 @@ destinationBytesPerImage:(NSUInteger)img options:(MTLBlitOption)opt {
     }
     return self;
 }
-- (void)useResidencySet:(id<MTLResidencySet>)r {}
-- (void)useResidencySets:(const id<MTLResidencySet> __unsafe_unretained [])r count:(NSUInteger)n {}
+// as on the queue, but for this command buffer only: holding the set holds its allocations, and the
+// resource set is released when the command buffer completes
+- (void)useResidencySet:(id<MTLResidencySet>)r { nvmtl_retain_resource(self, r); }
+- (void)useResidencySets:(const id<MTLResidencySet> __unsafe_unretained [])r count:(NSUInteger)n {
+    if (!r) return;
+    for (NSUInteger i = 0; i < n; i++) nvmtl_retain_resource(self, r[i]);
+}
 - (NSMutableDictionary *)userDictionary {
     @synchronized ([NVMTLCommandBuffer class]) { if (!_userDictionary) _userDictionary = [NSMutableDictionary new]; return _userDictionary; }
 }
@@ -5792,7 +6105,7 @@ destinationBytesPerImage:(NSUInteger)img options:(MTLBlitOption)opt {
     {
         extern void nvmtl_vk_submit_wait_stats(uint64_t *total_ns, uint64_t *waits);
         static int off = -1;
-        if (off < 0) { const char *e = getenv("NVMTL_NO_FPS"); off = NVMTL_RELEASE ? 1 : (e && *e && *e != '0') ? 1 : 0; }
+        if (off < 0) { const char *e = getenv("NVMTL_NO_FPS"); off = (NVMTL_RELEASE && !nvmtl_process_env_on()) ? 1 : (e && *e && *e != '0') ? 1 : 0; }
         if (!off) {
             static _Atomic uint64_t frames, t0, lastn, lastwns, lastwaits;
             const uint64_t n = atomic_fetch_add(&frames, 1) + 1;
@@ -6031,10 +6344,25 @@ NVMTL_G4_FIX(nvmtl_uncommitted_handlers_on, "NVMTL_UNCOMMITTED_HANDLERS", "handl
     nvlog("queue: background GPU priority hint %lu unavailable; retaining fixed backend priority", (unsigned long)priority);
     return NO;
 }
-- (void)addResidencySet:(id<MTLResidencySet>)r {}
-- (void)addResidencySets:(const id<MTLResidencySet> __unsafe_unretained [])r count:(NSUInteger)n {}
-- (void)removeResidencySet:(id<MTLResidencySet>)r {}
-- (void)removeResidencySets:(const id<MTLResidencySet> __unsafe_unretained [])r count:(NSUInteger)n {}
+// Residency is implicit in this backend, so these only have to hold the set: a set retains the
+// allocations added to it, so the app may hand the queue its only reference and release its own.
+// They are called from any thread, hence the lock.
+- (void)addResidencySet:(id<MTLResidencySet>)r {
+    if (!r) return;
+    @synchronized (self) { if (!_resSets) _resSets = [NSMutableArray new]; [_resSets addObject:r]; }
+}
+- (void)addResidencySets:(const id<MTLResidencySet> __unsafe_unretained [])r count:(NSUInteger)n {
+    if (!r) return;
+    for (NSUInteger i = 0; i < n; i++) [self addResidencySet:r[i]];
+}
+- (void)removeResidencySet:(id<MTLResidencySet>)r {
+    if (!r) return;
+    @synchronized (self) { [_resSets removeObject:r]; }
+}
+- (void)removeResidencySets:(const id<MTLResidencySet> __unsafe_unretained [])r count:(NSUInteger)n {
+    if (!r) return;
+    for (NSUInteger i = 0; i < n; i++) [self removeResidencySet:r[i]];
+}
 - (void)dealloc { nvmtl_vk_queue_destroy(&_q); }
 - (id<MTLCommandBuffer>)commandBuffer {
     dispatch_semaphore_t cap = nil;
@@ -6128,7 +6456,10 @@ typedef struct {
     void    *o0;
     const void *p0;
 } nvp_cmd;
-@interface NVMTLDeferredRenderCommandEncoder : NSProxy { @public __weak NVMTLParallelRenderCommandEncoder *_owner; NSMutableArray *_inv, *_keep; BOOL _ended; NSString *_label; nvp_cmd *_cmds; uint32_t _ncmd, _capcmd; }
+// _heaps: heaps this sub-encoder declared. Sub-encoders record on their own threads, so they are
+// collected here under the sub's own lock and handed to the real encoder during the single-threaded
+// replay in -endEncoding, which is what puts them on the command buffer (nvmtl_retain_heaps).
+@interface NVMTLDeferredRenderCommandEncoder : NSProxy { @public __weak NVMTLParallelRenderCommandEncoder *_owner; NSMutableArray *_inv, *_keep, *_heaps; BOOL _ended; NSString *_label; nvp_cmd *_cmds; uint32_t _ncmd, _capcmd; }
 @end
 @implementation NVMTLDeferredRenderCommandEncoder
 static int nvp_fast_off(void) {
@@ -6281,8 +6612,16 @@ static int nvp_fast_off(void) {
 - (void)setFragmentSamplerStates:(const id<MTLSamplerState> __unsafe_unretained [])s withRange:(NSRange)r { for (NSUInteger k = 0; k < r.length; k++) [(id)self setFragmentSamplerState:s[k] atIndex:r.location + k]; }
 - (void)useResources:(const id<MTLResource> __unsafe_unretained [])r count:(NSUInteger)n usage:(MTLResourceUsage)u { for (NSUInteger i = 0; i < n; i++) [(id)self useResource:r[i] usage:u]; }
 - (void)useResources:(const id<MTLResource> __unsafe_unretained [])r count:(NSUInteger)n usage:(MTLResourceUsage)u stages:(MTLRenderStages)st { for (NSUInteger i = 0; i < n; i++) [(id)self useResource:r[i] usage:u stages:st]; }
-- (void)useHeaps:(const id<MTLHeap> __unsafe_unretained [])h count:(NSUInteger)n {}
-- (void)useHeaps:(const id<MTLHeap> __unsafe_unretained [])h count:(NSUInteger)n stages:(MTLRenderStages)st {}
+- (void)useHeaps:(const id<MTLHeap> __unsafe_unretained [])h count:(NSUInteger)n { for (NSUInteger i = 0; i < n; i++) [self useHeap:h[i]]; }
+- (void)useHeaps:(const id<MTLHeap> __unsafe_unretained [])h count:(NSUInteger)n stages:(MTLRenderStages)st { for (NSUInteger i = 0; i < n; i++) [self useHeap:h[i] stages:st]; }
+- (void)useHeap:(id<MTLHeap>)h { [self nvpSlowObj:@selector(useHeap:) obj:h]; }
+- (void)useHeap:(id<MTLHeap>)h stages:(MTLRenderStages)st {
+    SEL sel = @selector(useHeap:stages:);
+    NSMethodSignature *m = [NVMTLRenderCommandEncoder instanceMethodSignatureForSelector:sel];
+    NSInvocation *inv = [NSInvocation invocationWithMethodSignature:m]; inv.selector = sel;
+    [inv setArgument:&h atIndex:2]; [inv setArgument:&st atIndex:3];
+    [self forwardInvocation:inv];
+}
 @end
 @implementation NVMTLParallelRenderCommandEncoder
 - (id<MTLRenderCommandEncoder>)renderCommandEncoder {
@@ -6300,6 +6639,10 @@ static int nvp_fast_off(void) {
     for (NVMTLDeferredRenderCommandEncoder *s in subs) {
         if (!s->_ended) dropped++;
         @synchronized (s) {
+            // straight into the command buffer's resource set, which is what keeps a heap's memory alive
+            // while this submission still reads resources placed inside it (-useHeap: itself is
+            // deprecated, and this is the same set it would have added them to)
+            for (id<MTLHeap> heap in s->_heaps) nvmtl_retain_resource(real->_cb, heap);
             NSUInteger invi = 0;
             @autoreleasepool {
                 for (uint32_t ci = 0; ci < s->_ncmd; ci++) {
@@ -7003,8 +7346,8 @@ static uint64_t nvmtl_align16(uint64_t v) { return (v + 15) & ~15ull; }
 }
 - (void)useResource:(id<MTLResource>)r usage:(MTLResourceUsage)u { [self nvmtlTrack:r]; }
 - (void)useResources:(const id<MTLResource> __unsafe_unretained [])rs count:(NSUInteger)n usage:(MTLResourceUsage)u { for (NSUInteger i = 0; i < n; i++) [self nvmtlTrack:rs[i]]; }
-- (void)useHeap:(id<MTLHeap>)h {}
-- (void)useHeaps:(const id<MTLHeap> __unsafe_unretained [])hs count:(NSUInteger)n {}
+- (void)useHeap:(id<MTLHeap>)h { nvmtl_use_heap(_cb, h); }
+- (void)useHeaps:(const id<MTLHeap> __unsafe_unretained [])hs count:(NSUInteger)n { for (NSUInteger i = 0; i < n; i++) [self useHeap:hs[i]]; }
 - (void)updateFence:(id<MTLFence>)f {}
 - (void)waitForFence:(id<MTLFence>)f {}
 - (void)insertDebugSignpost:(NSString *)s {}

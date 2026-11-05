@@ -21,6 +21,7 @@ pub use function_constants::{parse_function_constants, FunctionConstant};
 use globals::{location_index_with_static, static_init_int_global_values};
 pub(crate) use globals::{static_init_foldable_global_values, StaticIntValue};
 pub use globals::with_function_constants_unknown;
+pub(crate) use globals::fc_values_unknown as function_constants_are_unknown;
 pub use intersections::{
     AirIntersectionFamily, AirIntersectionInstancing, AirIntersectionResultField,
 };
