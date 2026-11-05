@@ -121,7 +121,7 @@ put() { # put SRC DST: replace DST with a root-owned copy of SRC
 
 # The boot guard's "healthy" mark reaches flash from here. IntelXeFB clears intelxe-guard about a minute into each boot,
 # but on x86 macOS (AppleEFINVRAM) a value the kernel writes after boot stays in memory until a clean shutdown: after a
-# power cut the next boot read the guard as set and held acceleration (5 Nov, 0.1.3 tests). A write through nvram(8)
+# power cut the next boot read the guard as set and held acceleration (5 Nov, test builds before 0.1.2). A write through nvram(8)
 # from userspace does go to flash. Once per boot, this waits for IntelXeFB to say its guard cleared, then writes it.
 guard_install() {
     mkdir -p "$BK" /Library/LaunchDaemons

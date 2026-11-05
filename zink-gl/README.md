@@ -5,8 +5,10 @@ Minecraft Java 1.13 and later) render through Mesa's zink straight to Vulkan (th
 OpenGL → Metal → plugin → Vulkan. Apple's OpenGL, ANV and the kexts are not touched; no process loads these libraries
 unless it asks for them. It needs the driver installed and `intelxe_surfvram=2` (without it every frame is copied).
 
-Measured on the test machine (macOS 26.7.1, Minecraft 1.21.1, 2560×1440 full screen, render distance 16, the same spot):
-**zink 741 fps**, Apple's OpenGL 160 fps, the same card on Windows (Intel's OpenGL) 450–479 fps.
+Measured on the test machine (macOS 26.7.1, Minecraft 1.21.1 with Sodium and Iris, windowed, the same spot, 6 November
+2026): with the BSL shader pack (HIGH) **zink 197–205 fps**, the same card on Windows (Intel's OpenGL) 214–218 fps;
+without a shader pack zink 1400–1500 fps, Windows 700–1000. An earlier measurement without Sodium (2560×1440 full
+screen, render distance 16): zink 741 fps, Apple's OpenGL 160 fps, Windows 450–479 fps.
 
 | Command | What it does |
 |---|---|
@@ -26,9 +28,13 @@ JAVA_TOOL_OPTIONS" at each start; that is expected. To keep one application on A
 
 - Native macOS applications that use CGL/NSOpenGL directly still go through Apple's OpenGL.
 - Opaque windows rely on Core Animation's private `contentsOpaque`; a macOS update can break it.
-- Tested on macOS 26.7.1 only: in the game at the spot above, full screen, with a shader pack through Iris. Not tested:
-  scaled (HiDPI) display modes, screen recording while it runs, several windows, Minecraft 26.3, macOS 15. Setting
-  `--global on` was checked within a session; that the LaunchAgent sets it again after a restart is not checked yet.
+- Tested on macOS 26.7.1 only: in the game at the spot above, windowed and full screen, with a shader pack through
+  Iris. Not tested: scaled (HiDPI) display modes, screen recording while it runs, several windows, Minecraft 26.3,
+  macOS 15.
+- `--global on` survives restarts (the LaunchAgent sets `JAVA_TOOL_OPTIONS` at each login), but an application that
+  macOS reopens by itself at login ("Reopen windows when logging back in") can start a few seconds before the
+  LaunchAgent and then runs on Apple's OpenGL. Quit it and start it again; Java prints "Picked up JAVA_TOOL_OPTIONS"
+  when zink is on.
 
 ## Contents and sources
 
@@ -60,7 +66,9 @@ scripts and `src/glshim.c`, `src/egltri.c` MIT.
 ---
 
 **Türkçe özet:** İsteğe bağlı bir bileşen. Bağlamını GLFW/EGL ile açan uygulamalar (Minecraft gibi LWJGL 3 oyunları),
-Apple'ın OpenGL'i yerine Mesa'nın zink'iyle doğrudan Vulkan'a gidiyor; Minecraft 1.21.1'de 741 fps, Apple OpenGL'de 160
-fps. `sudo ./install.sh` kurar, `sudo ./install.sh --global on` bütün LWJGL 3 uygulamaları için açar, `--global off`
+Apple'ın OpenGL'i yerine Mesa'nın zink'iyle doğrudan Vulkan'a gidiyor; Minecraft 1.21.1'de BSL shader paketiyle zink'te
+197–205 fps, aynı kartla Windows'ta 214–218 fps; shader paketi olmadan zink'te 1400–1500, Windows'ta 700–1000 fps.
+`sudo ./install.sh` kurar, `sudo ./install.sh --global on` bütün LWJGL 3 uygulamaları için açar, `--global off`
 kapatır, `--undo` kaldırır. Sürücünün kurulu ve `intelxe_surfvram=2` ayarının açık olması gerekiyor. CGL/NSOpenGL'i
-doğrudan kullanan yerel uygulamalar yine Apple'ın OpenGL'ini kullanır.
+doğrudan kullanan yerel uygulamalar yine Apple'ın OpenGL'ini kullanır. macOS'un girişte kendiliğinden yeniden açtığı
+bir uygulama ayardan önce başlayıp Apple'ın OpenGL'inde kalabilir: kapatıp yeniden açın.

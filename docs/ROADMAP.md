@@ -45,7 +45,7 @@ The order is roughly the intended one. Every item should follow the Linux xe/i91
   (Quick Sync through VideoToolbox) needs a separate iGPU driver and is not tested with this release.
 
 ### Remaining items from the workaround audit (2026-10-29)
-- Boot guard: since IntelXeFB v10c it needs WindowServer's own framebuffer connection and sustained accelerated frames; check it over a few boots, including a deliberately failing one.
+- Boot guard: checked over power cuts and failing boots on 5–6 November 2026 (0.1.2: safe settings after two failures, held after four, the clear written by a LaunchDaemon). Open: a held boot on macOS 26 stays at the Apple logo because WindowServer has no display without the accelerator; the way out is OpenCore's Reset NVRAM.
 - Video was behind a debug gate; it is now on by default with the media GT up. Remove the ffmpeg vkshim.
 - Remove the AMFI boot-args: sign the plugin properly and use entitlements.
 - System sleep: works on the released kernel (rb7u + IntelXeFB v10m, macOS 26.7.1). Open: in the tests of 2026-10-30 the machine woke by itself about 7 s after going to sleep (USB wake source, USBW); not re-checked on the released kernel.
@@ -53,18 +53,21 @@ The order is roughly the intended one. Every item should follow the Linux xe/i91
 - Second display pipe (pipe B, DBUF/MBUS split, watermarks). The test setup has only one monitor.
 
 ### OpenGL through Zink
-- **Done (not in the release packages yet):** Mesa's Zink for applications that open their OpenGL context through
-  GLFW/EGL (LWJGL 3 games): Minecraft 1.21.1 at the bench spot 741 fps against 160 on Apple's OpenGL (Windows 450–479).
-  On the test machine it is switched on for every LWJGL 3 application.
-- Next: an installer component in the release packages; then native CGL/NSOpenGL applications (a CGL front end for
-  Zink), which is what "Zink by default for every OpenGL application" needs.
+- **Done, in the release packages from 0.1.2 (`-zink-gl.zip`):** Mesa's Zink for applications that open their OpenGL
+  context through GLFW/EGL (LWJGL 3 games). Minecraft 1.21.1 with Sodium, Iris and BSL (HIGH), windowed: 197–205 fps
+  against 214–218 on Windows; without a shader pack 1400–1500 against 700–1000.
+- Next: the remaining ~5–7% with shaders is GPU work per frame (Windows' GPU is not fully busy, ours is): measure per
+  draw (`INTEL_MEASURE=draw`), Zink's multi-draw path, the generated ISA. Then native CGL/NSOpenGL applications (a CGL
+  front end for Zink), which is what "Zink by default for every OpenGL application" needs.
+- The LaunchAgent sets `JAVA_TOOL_OPTIONS` at login, after apps that macOS reopens at login may already have started.
 
-### A companion app
-- `app/`: IntelXe Manager, a first version that is built and tested without the card and not in any release yet. It shows the
-  system and the GPU, compares the installed driver with the latest release, and runs `install.sh` (check, install, repair,
-  undo, uninstall) and Zink's script (install, on or off, remove). It never changes the EFI.
-- To do before a release: a run on the test machine; release signatures that are independent of GitHub; the boot guard
-  and VRAM sharing settings; diagnostics for a bug report.
+### IntelXe Manager (the app)
+- **Released from 0.1.2:** `app/`, shows the system and the GPU, compares the installed driver with the latest
+  release, runs `install.sh` (check, install, repair, undo, uninstall), Zink's script, and `efi.sh` for stages 2 and 4
+  in the EFI OpenCore booted from or a folder the user picks. The Windows counterpart for the EFI is
+  `windows/IntelXe-EFI.ps1`.
+- Next: release signatures that are independent of GitHub; the system-volume copy for Safari; diagnostics for a bug
+  report; a check that the EFI page's state is current after changes made outside the app.
 
 ## Other Xe2 (Battlemage) cards
 

@@ -4,8 +4,10 @@ A macOS app for what otherwise takes Terminal: see the state of the machine and 
 update it, and do stages 2 and 4 of the install guide in the OpenCore EFI. It is a front end: `install.sh` and `efi.sh` from the package
 do the work, so a change made here and one made in Terminal are the same change.
 
-Not in a release yet. The Driver page's install was used on the test machine (test packages of 0.1.3); **the EFI page has not been run
-on a real machine yet**, only against fake EFI folders on the build Mac (Apple silicon, without the card).
+Released from 0.1.2 on (`IntelXe-Manager-VERSION.zip` on the release page; the install guide's step 3.1). The Driver page's
+install was used on the test machine (the test builds before 0.1.2); the EFI page made stage 4 there on the EFI of its SSD. Not
+used yet: *Undo* on a real EFI, *Use an EFI folder...* on a USB stick that then booted, and a whole install from a
+fresh macOS.
 
 | Page | What |
 |---|---|

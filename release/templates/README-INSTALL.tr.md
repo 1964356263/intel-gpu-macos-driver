@@ -7,16 +7,19 @@
 belleği nasıl seçeceğinizi öğrenin. Yalnızca ticari olmayan kullanım içindir (`LICENSES/`).
 
 Her şey yolunda giderse elinize şunlar geçer: masaüstü B580'de Metal ile çizilir (pencere sürüklemesi monitörün yenileme
-hızında, 180 Hz'e kadar denendi), Metal uygulamaları ve oyunlar çalışır, H.264, HEVC, AV1 ve VP9 çözme ile H.264, HEVC ve
-AV1 kodlama GPU'da yapılır. DisplayPort'tan tek monitör, VRR, uyku ve uyanma da çalışır.
+hızında, 180 Hz'e kadar denendi), masaüstü widget'ları, Metal uygulamaları ve oyunlar çalışır, Safari
+GPU'da çalışır (sistem diski kopyasıyla, 3.3), H.264, HEVC, AV1 ve VP9 çözme ile H.264, HEVC ve AV1 kodlama GPU'da yapılır.
+DisplayPort'tan tek monitör, VRR, uyku ve uyanma da çalışır. İsteğe bağlı olarak Minecraft Java gibi LWJGL oyunları
+OpenGL'i Mesa'nın zink'iyle çalıştırabilir (`-zink-gl.zip`, aşağıda "İsteğe bağlı: zink ile OpenGL").
 
 Bilinen sorunlar:
 
-- Safari'nin GPU süreci, Dock'un simge çizicisi ve NotificationCenter (masaüstü widget'ları) şimdilik macOS'un yazılımsal
-  yolunda çalışıyor (`Library/GPUBundles/nvmtl-allow.txt`).
 - İlk girişten sonraki ilk saniyelerde, shader'lar çevrilirken takılmalar oluyor.
 - Yeniden başlatmadan sonra giriş ekranında açık gri bir bant görünüyor.
 - Metal'i VideoToolbox kodlamasıyla başlatan ffmpeg benzeri araçlar, ilk oturumlarında kodlayıcılarımızı görmüyor.
+- Kartın 12 GB belleğinin yalnızca 1 GB'ını işlemci görebiliyor (macOS sınırı, 2. aşama 1. madde). Sürücü bu pencereyi
+  ihtiyacı olanlara ayırıyor, arka plan süreçlerinin arabelleklerini sistem belleğine koyuyor; yine de GPU'yu yoğun
+  kullanan çok sayıda açık uygulama pencereyi doldurabilir.
 
 Bu sürücünün eski bir sürümünü kullanıyorsanız doğrudan [Yükseltme](#yükseltme) bölümüne geçin.
 
@@ -26,15 +29,17 @@ Bu sürücünün eski bir sürümünü kullanıyorsanız doğrudan [Yükseltme](
   monitör**. Dahili GPU gerekmiyor: test makinesinde macOS yalnızca B580'le kuruldu.
 - USB belleği hazırlamak ve EFI'yi düzenlemek için Windows, Linux ya da macOS çalışan herhangi bir bilgisayar. Mac şart
   değil.
-- Sürüm sayfasından iki dosya:
+- [Sürüm sayfasından](https://github.com/yusufklncc/intel-gpu-macos-driver/releases/tag/v@VER@) dosyalar:
 
   | Dosya | İçinde ne var | Nerede açılmalı |
   |---|---|---|
   | `intel-gpu-macos-driver-@VER@-efi.zip` | OpenCore parçaları: `IntelXe.kext`, `SSDT-ARCOFF.aml` ve kaynağı; Windows'ta 2. ve 4. aşamaları yapan `IntelXe-EFI.ps1` | herhangi bir sistemde |
-  | `intel-gpu-macos-driver-@VER@-@CODENAME@.zip` | geri kalan her şey ve `install.sh` | **bilgisayardaki macOS'ta** (3. aşama) |
+  | `IntelXe-Manager-@VER@.zip` | IntelXe Manager uygulaması: 3. ve 4. aşamalar (ve sonraki güncellemeler) Terminal yerine düğmelerle; sonraki dosyayı kendisi indirir | bilgisayardaki macOS'ta |
+  | `intel-gpu-macos-driver-@VER@-@CODENAME@.zip` | geri kalan her şey, `install.sh` ve `efi.sh` ile | **bilgisayardaki macOS'ta** (3. aşama) |
+  | `intel-gpu-macos-driver-@VER@-zink-gl.zip` | isteğe bağlı: LWJGL oyunları için zink ile OpenGL | bilgisayardaki macOS'ta, 4. aşamadan sonra |
 
-  İkinci dosyayı yalnızca macOS'ta açın. Windows ve çoğu Linux arşiv aracı, çalıştırma izinlerini ve kurulum betiğinin
-  kontrol ettiği kod imzalarını bozuyor.
+  macOS dosyalarını yalnızca macOS'ta açın. Windows ve çoğu Linux arşiv aracı, çalıştırma izinlerini ve kurulum betiğinin
+  kontrol ettiği kod imzalarını bozuyor. Sürüm sayfasındaki `.sha256` dosyası sağlama toplamlarını listeliyor.
 - GPU dışındaki her şey için [Dortania'nın OpenCore rehberi](https://dortania.github.io/OpenCore-Install-Guide/): anakartınıza
   uygun EFI, ACPI tabloları, SMBIOS, USB haritası.
 - Sisteminize uygun bir `config.plist` düzenleyicisi, örneğin [ProperTree](https://github.com/corpnewt/ProperTree) (Windows,
@@ -46,8 +51,8 @@ Bu sürücünün eski bir sürümünü kullanıyorsanız doğrudan [Yükseltme](
 |---|---|---|---|
 | 1 | Windows, Linux ya da macOS, sonra kurulacak bilgisayar | macOS'u sürücüsüz, düz bir OpenCore EFI'siyle kurmak | B580'in UEFI çıktısı: hızlandırma yok, yavaş |
 | 2 | `config.plist`, herhangi bir sistemden | SIP, AMFI, iki quirk ve bir çıktı ayarı | aynı |
-| 3 | Bilgisayardaki macOS | `sudo ./install.sh --apply`, **henüz yeniden başlatmadan** | aynı |
-| 4 | EFI, herhangi bir sistemden | `IntelXe.kext` ve `SSDT-ARCOFF.aml`, sonra yeniden başlatma | hızlandırmalı |
+| 3 | Bilgisayardaki macOS | uygulamada **Bu paketi kur** ya da `sudo ./install.sh --apply`; **henüz yeniden başlatmadan** | aynı |
+| 4 | EFI, bilgisayardaki macOS'tan ya da herhangi bir sistemden | `IntelXe.kext` ve `SSDT-ARCOFF.aml` (uygulamanın EFI sayfası, `efi.sh`, `IntelXe-EFI.ps1` ya da elle), sonra yeniden başlatma | hızlandırmalı |
 
 `IntelXe.kext` ve `SSDT-ARCOFF.aml`'yi 4. aşamadan önce EFI'ye koymayın. Bu tablo, kurulum ekranını gösteren genel ekran
 sürücüsünden B580'i gizliyor; 3. aşamada sürücünün kendi ekran kext'i kurulana kadar onun yerini alacak bir şey yok.
@@ -94,8 +99,10 @@ EFI bölümü küçük bir FAT32 bölümü, her sistem bağlayabilir:
 **Windows'ta** `-efi.zip`'teki `IntelXe-EFI.ps1` 1-5. maddeleri seçtiğiniz EFI klasöründe (bir USB belleğinkinde ya da
 bağlayabildiği EFI bölümünde) sizin yerinize yapar: sağ tık > PowerShell ile Çalıştır, *Settings: plan*, ardından
 *Settings: apply*. Önce EFI klasörünün tamamını yedekler, `config.plist`'in geri kalanını olduğu gibi bırakır ve
-değişikliği geri alabilir; zip'teki `README-Windows.md`'ye bakın. Henüz yazarı tarafından bir Windows bilgisayarda
-denenmedi.
+değişikliği geri alabilir; zip'teki `README-Windows.md`'ye bakın. Deneme takımı Windows'ta hatasız geçiyor; pencerenin
+kendisi henüz ardından bir bilgisayarın açıldığı bir EFI'de kullanılmadı. **Bilgisayardaki macOS'ta** IntelXe Manager
+uygulamasının EFI sayfası (*Bu ayarları değiştir*) ya da macOS paketindeki `sudo ./efi.sh --settings-apply` aynı
+değişiklikleri OpenCore'un açıldığı EFI'de yapar (bkz. 3.1).
 
 `config.plist`'te:
 
@@ -113,11 +120,48 @@ denenmedi.
    ekran sürücüsü (GOP) yeniden bağlanmadan konsolu kurmaya çalışıyor. macOS konsol ekranı olmadan açılıyor, Lilu başlatmasını
    tamamlayamıyor, VirtualSMC'nin SMC aygıtı bağlanmıyor ve `watchdogd` açılışın yaklaşık 20. saniyesinde panik veriyor.
    OpenCore'un DEBUG sürümü yavaş olduğu için bu sorunu gizliyor.
-6. Yalnızca isteğe bağlı Safari WebGL kopyası için (3. aşama, 4. madde): `Misc > Security > SecureBootModel = Disabled`.
+6. Sistem diski kopyası için (GPU'da Safari, 3.3): `Misc > Security > SecureBootModel = Disabled`.
 
 macOS'u yeniden başlatın. Ekran hâlâ UEFI çıktısında çalışır.
 
 ## 3. macOS tarafı (kurulacak bilgisayarda)
+
+### 3.1 IntelXe Manager uygulamasıyla
+
+Uygulama 3. ve 4. aşamaları bilgisayarda düğmelerle yapar ve her adımın neyi değiştireceğini parolanızı sormadan önce
+gösterir. İşi paketteki `install.sh` ve `efi.sh` yapıyor; yani 3.2'deki Terminal adımlarıyla aynı şey.
+
+1. `IntelXe-Manager-@VER@.zip`'i Terminal'den indirin ("internetten indirildi" işareti bırakmaz) ve Uygulamalar
+   klasörünüze açın:
+
+   ```sh
+   cd ~/Downloads
+   curl -LO https://github.com/yusufklncc/intel-gpu-macos-driver/releases/download/v@VER@/IntelXe-Manager-@VER@.zip
+   mkdir -p ~/Applications && ditto -x -k IntelXe-Manager-@VER@.zip ~/Applications
+   open ~/Applications/"IntelXe Manager.app"
+   ```
+
+   Uygulama bir Apple geliştirici kimliğiyle değil, ad hoc imzalı. Tarayıcıyla indirdiyseniz macOS açmayı reddeder; o
+   zaman `xattr -dr com.apple.quarantine ~/Applications/"IntelXe Manager.app"` çalıştırın ya da bir kez açmayı deneyip
+   Sistem Ayarları > Gizlilik ve Güvenlik'te izin verin (*Yine de Aç*).
+2. **Sistem** sürücünün neye ihtiyaç duyduğunu (macOS, SIP, AMFI boot-arg'ı, kart) ve neyin kurulu olduğunu gösterir.
+3. **Sürücü:** *v@VER@ sürümünü indir* macOS'unuza uygun paketi indirir ve sürümün sağlama listesiyle karşılaştırır. EFI
+   sayfası da dosyalarını bu paketten alır.
+4. 2. aşamayı henüz yapmadınız mı? Kurulum ona ihtiyaç duyuyor (SIP gevşetilmeden ve AMFI boot-arg'ı olmadan çalışmayı
+   reddediyor): **EFI (OpenCore)** sayfasında OpenCore'un açıldığı EFI bölümünü seçin (ya da *Bir EFI klasörü kullan…*),
+   "Ayarlar (2. aşama)" altında *Bu ayarları değiştir*'e basın, yeniden başlatın ve uygulamayı yeniden açın.
+5. **Sürücü:** *Bu paketi kur* (`sudo ./install.sh --apply` ile aynı). **Henüz yeniden başlatmayın.**
+6. **EFI (OpenCore):** "IntelXe.kext ve SSDT-ARCOFF (4. aşama)" altında *Bu değişiklikleri yap*; neyi değiştirdiği
+   aşağıda 4. aşamada anlatılıyor. Her EFI değişikliği önce değişiklik listesini gösterip sorar. Sonra yeniden başlatın.
+
+Uygulama ayrıca sürücüyü onarır, geri alır, kaldırır, isteğe bağlı zink paketini kurar ve sonraki sürümleri eskisinin
+üzerine kurar. Yalnızca GitHub'a bağlanır, veri göndermez. Safari için sistem diski kopyası (3.3) uygulamada yok:
+uygulamanın indirdiği paketin `system-volume` klasöründe Terminal'den iki komut (Sürücü sayfası klasörü gösteriyor).
+Sürücü sayfası test makinesinde kullanıldı; EFI sayfası da orada SSD'nin EFI'sinde kullanıldı. Gerçek bir EFI'de
+*Undo* ve temiz bir macOS'tan baştan sona uygulamayla kurulum henüz denenmedi. Arayüz sistem diline göre İngilizce ya
+da Türkçe; buradaki adlar Türkçe arayüzdeki adlar.
+
+### 3.2 Terminal'de
 
 1. Paketi Terminal'den indirip açın. `curl` ile indirilen dosyalar "internetten indirildi" işareti taşımadığı için Gatekeeper
    onlara karışmaz:
@@ -139,17 +183,27 @@ macOS'u yeniden başlatın. Ekran hâlâ UEFI çıktısında çalışır.
 
    Bu aşamada kontrol, `IntelXe.kext`'in yüklü olmadığını söyler; o 4. aşamada geliyor. `--apply`, değiştirdiği her şeyi
    `/Library/Application Support/intel-gpu-macos-driver/backup-<tarih>/` altına yedekler, kext'leri ve Metal sürücüsünü
-   `/Library`'ye kopyalar ve Yardımcı Kernel Koleksiyonu'nu yeniden oluşturur.
+   `/Library`'ye kopyalar, açılış korumasının LaunchDaemon'ını kurar (bkz. [Açılmazsa](#açılmazsa)) ve Yardımcı Kernel
+   Koleksiyonu'nu yeniden oluşturur.
 3. **Henüz yeniden başlatmayın:** önce 4. aşamayı yapın.
-4. İsteğe bağlı, Safari WebGL. Safari'nin GPU süreci yalnızca sistem diskinden kod yükleyebiliyor.
-   `system-volume/ssv-install.sh`, OpenCore Legacy Patcher'ın kök yamaları gibi Metal sürücüsünü oraya kopyalar ve yeni bir açılış
-   anlık görüntüsü oluşturur. Başka hiçbir şey buna ihtiyaç duymuyor; zaten bu sürümde Safari'nin GPU süreci sürücüyü kullanmıyor
-   (`nvmtl-allow.txt`). macOS güncellemesi bu kopyayı siler (`./ssv-install.sh --check` söyler).
 
-   ```sh
-   cd system-volume && ./ssv-install.sh          # yalnızca kontrol
-   sudo ./ssv-install.sh --apply
-   ```
+### 3.3 Safari için önerilir: sistem diski kopyası
+
+Safari'nin GPU süreci yalnızca sistem diskinden kod yükleyebiliyor. Bu kopya olmadan Safari macOS'un yazılımsal yolunda
+çalışır: daha yavaştır ve CSS renk filtresi olan bazı sayfa öğeleri çizilmez (Metal aygıtı yokken CoreGraphics'te
+görülen bir sorun; Safari > Ayarlar > Özellik Bayrakları'nda *GraphicsContext Filter Rendering* kapatılınca düzelir,
+bu sekme Gelişmiş > *Web geliştiricileri için özellikleri göster* açılınca görünür).
+`system-volume/ssv-install.sh`, OpenCore Legacy Patcher'ın kök yamaları gibi Metal sürücüsünü oraya kopyalar ve yeni bir
+açılış anlık görüntüsü oluşturur. `Misc > Security > SecureBootModel = Disabled` gerekir (2. aşama, 6. madde). Başka
+hiçbir şey buna ihtiyaç duymuyor. macOS güncellemesi bu kopyayı siler (`./ssv-install.sh --check` söyler; yeniden
+kurun). macOS 26.7.1'de denendi: Safari B580'de çalışıyor ve sayfaları filtreler dahil doğru çiziliyor. Safari'nin GPU
+süreci sandbox yüzünden çevrilmiş shader'ları açılışlar arasında saklayamıyor; bu yüzden her açılıştan sonraki ilk
+sayfalar birkaç saniye bekletir.
+
+```sh
+cd system-volume && ./ssv-install.sh          # yalnızca kontrol
+sudo ./ssv-install.sh --apply
+```
 
 ## 4. IntelXe.kext ve SSDT-ARCOFF (EFI)
 
@@ -192,6 +246,31 @@ takılı olduğu bilgisayarda çalışıyorsa yolu Aygıt Yöneticisi'nden okur)
    12 GB'lık Arc B580. Terminal'de `kmutil showloaded | grep -i intelxe` `IntelXe` ve `IntelXeFB`'yi listeler, `sysctl
    debug.nmxaccelfb` de `1` yazar.
 
+## İsteğe bağlı: zink ile OpenGL
+
+macOS'un kendi OpenGL'i Metal'in üzerinde çalışıyor ve bu sürücüde yavaş. LWJGL 3 Java oyunları (Minecraft Java 1.13 ve
+sonrası) bunun yerine Mesa'nın zink'ini kullanabilir: zink OpenGL'i doğrudan sürücünün Vulkan'ına çeviriyor. Yalnızca
+OpenGL'i GLFW/LWJGL ile açan uygulamalar kullanır; geri kalan her şey Apple'ın OpenGL'inde kalır. Sürücünün kurulu ve
+`intelxe_surfvram=2` ayarının açık olması gerekiyor (2. aşama). IntelXe Manager'ın **OpenGL (Zink)** sayfası kurar ve
+açar; ya da Terminal'de:
+
+```sh
+cd ~/Downloads
+curl -LO https://github.com/yusufklncc/intel-gpu-macos-driver/releases/download/v@VER@/intel-gpu-macos-driver-@VER@-zink-gl.zip
+ditto -x -k intel-gpu-macos-driver-@VER@-zink-gl.zip .
+cd intel-gpu-macos-driver-@VER@-zink-gl
+sudo ./install.sh                # /Library/IntelXe/GL ve Vulkan yükleyicisi; değiştirdiğini yedekler
+./install.sh --test              # B580'de zink üzerinden bir GL bağlamı
+sudo ./install.sh --global on    # bundan sonra açılan bütün LWJGL 3 uygulamaları zink kullanır
+```
+
+`--global off` geri alır, `--undo` kaldırır; ayrıntılar zip'teki `README.md`'de. Test makinesinde ölçüldü (macOS 26.7.1,
+Minecraft 1.21.1, Sodium ve Iris ile, pencereli, aynı nokta): BSL shader paketiyle zink'te 197–205 fps, aynı bilgisayarda
+Windows'ta Intel'in sürücüsüyle 214–218; shader paketi olmadan zink'te
+1400–1500 fps, Windows'ta 700–1000. macOS'un girişte kendiliğinden
+yeniden açtığı bir başlatıcı, ayar yerine oturmadan başlayıp Apple'ın OpenGL'inde kalabilir: kapatıp yeniden açın
+(zink açıkken Java "Picked up JAVA_TOOL_OPTIONS" yazar).
+
 ## Açılmazsa
 
 - **Siyah ekran ya da sürekli yeniden başlama:** Çalışan EFI'nin olduğu USB bellekten açın ya da OpenCore'da macOS seçiliyken Shift'e
@@ -210,8 +289,9 @@ takılı olduğu bilgisayarda çalışıyorsa yolu Aygıt Yöneticisi'nden okur)
   sudo nvram intelxe-accel-off=ok
   ```
 
-  (`sudo nvram -d intelxe-accel-off` macOS 26'da hata vermez ama değişkeni silmez; `=ok` her sürümde çalışır. 0.1.x kernel'inin log mesajı
-  hâlâ `nvram -d` diyor; kaynak düzeltildi, bir sonraki kernel derlemesinde yeni metin gelecek.)
+  (`sudo nvram -d intelxe-accel-off` macOS 26'da hata vermez ama değişkeni silmez; `=ok` her sürümde çalışır. 0.1.0 ve
+  0.1.1'in kernel log mesajı hâlâ `nvram -d` diyordu.) Koruma kurulmuş ama masaüstü çalışıyorsa, IntelXe Manager'ın
+  Sistem sayfasındaki *Açılış korumasını sıfırla* düğmesi de korumayı temizler.
 - **Açılışın yaklaşık 20. saniyesinde panik, `watchdogd ... exited`** (`/Library/Logs/DiagnosticReports/Kernel-*.panic` içinde `watchdogd`
   geçiyorsa): `UEFI > Output > ReconnectGraphicsOnConnect` `true` kalmıştır; `false` yapın (2. aşama, 5. madde).
 - **Her şeyi geri almak:** `sudo ./install.sh --undo`, sonra `IntelXe.kext` ve `SSDT-ARCOFF.aml` EFI'den çıkarılmış olarak yeniden başlatın.
@@ -222,11 +302,15 @@ takılı olduğu bilgisayarda çalışıyorsa yolu Aygıt Yöneticisi'nden okur)
 
 ## Yükseltme
 
-**0.1.0 ya da 0.1.1'den:** Sürücü dosyaları 0.1.0, 0.1.1 ve 0.1.2'de aynı, yeniden kurmanız gerekmiyor. `config.plist`'te `UEFI > Output >
-ReconnectGraphicsOnConnect = false` olduğunu kontrol edin (2. aşama, 5. madde), özellikle OpenCore'u RELEASE sürümüne geçirmeden önce.
-Masaüstü widget'larının yeniden çizilmesi için `/Library/GPUBundles/nvmtl-allow.txt` dosyasına `-com.apple.dock.extra` satırının altına
-`-NotificationCenter` ekleyin, sonra `killall NotificationCenter` çalıştırın. `install.sh --apply` bu dosyayı kendisi değiştirmiyor, çünkü
-paketten farklı bir izin listesini olduğu gibi bırakıyor.
+**0.1.0 ya da 0.1.1'den:** 0.1.2'de kext'ler ve Metal sürücüsü yeni; EFI'deki `IntelXe.kext` değişmedi. Paketi kurun
+(uygulamada *v@VER@ sürümünü indir*, sonra *Bu paketi kur*; ya da `sudo ./install.sh --apply`) ve yeniden başlatın.
+`--apply` açılış korumasının LaunchDaemon'ını da kurar ve 0.1.0 ile 0.1.1'in izin listesini (0.1.1 rehberinin istediği
+`-NotificationCenter` satırıyla ya da satırsız) değiştirir; böylece Safari'nin GPU süreci, Dock simgeleri ve masaüstü
+widget'ları yeniden sürücüyü kullanır. Başka bir biçimde değiştirdiğiniz izin listesi korunur: paketteki
+`Library/GPUBundles/nvmtl-allow.txt` ile karşılaştırın. Sistem diski kopyasını kurduysanız `--apply`, bu paketinkini
+(3.3) kurup `/Library/GPUBundles/NVMTLDriver.use-library` dosyasını silene kadar bütün süreçlere `/Library` kopyasını
+kullandırır. `config.plist`'te `UEFI > Output > ReconnectGraphicsOnConnect = false` olduğunu kontrol edin (2. aşama,
+5. madde), özellikle OpenCore'u RELEASE sürümüne geçirmeden önce.
 
 **0.1.0'dan önceki, B580 adlı özel derlemelerden:** Adı değişen kext'ler ve boot-arg'ların tablosu İngilizce rehberde (`README-INSTALL.md`,
 "Upgrading from an earlier build").
@@ -239,7 +323,8 @@ paketten farklı bir izin listesini olduğu gibi bırakıyor.
 | `EFI/OC/ACPI/SSDT-ARCOFF.aml`, `.dsl` | EFI, `ACPI > Add`, yolu kontrol ettikten sonra (4. aşama) |
 | `Library/Extensions/IntelXeFB.kext`, `NMXAccel.kext`, `NMXAGDC.kext` | `/Library/Extensions` (ekran, hızlandırıcı), `install.sh` ile |
 | `Library/GPUBundles/NVMTLDriverLib.bundle`, `nvmtl/`, `nvmtl-allow.txt` | `/Library/GPUBundles` (Metal sürücüsü, Mesa, codec'ler), `install.sh` ile |
-| `system-volume/` | isteğe bağlı: Metal sürücüsünün sistem diskindeki kopyası (Safari WebGL, 3. aşama, 4. madde) |
+| (`install.sh` oluşturur) | `/Library/LaunchDaemons/io.github.yusufklncc.intelxe.guard.plist`: bir açılış bir dakika çalışınca açılış korumasını temizler |
+| `system-volume/` | isteğe bağlı: Metal sürücüsünün sistem diskindeki kopyası (GPU'da Safari, 3.3) |
 | `efi.sh` | isteğe bağlı, macOS'ta: OpenCore'un açıldığı EFI'de 2. ve 4. aşamalar, yedek ve geri alma ile |
 | `SHA256SUMS`, `sigcheck` | `install.sh`'nin yaptığı kontroller |
 | `SOURCES.md`, `LICENSES/` | hangi kaynağın ve betiğin hangi dosyayı ürettiği; lisans metinleri |

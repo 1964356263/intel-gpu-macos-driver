@@ -12,9 +12,10 @@ It comes in `intel-gpu-macos-driver-VERSION-efi.zip`, next to `EFI/OC/Kexts/Inte
 `EFI/OC/ACPI/SSDT-ARCOFF.aml`. It runs in Windows PowerShell 5.1 (part of Windows 10 and 11) or PowerShell 7; nothing
 needs to be installed.
 
-**Not yet run on Windows by its author.** Its config-editing engine was checked on macOS against `efi.sh` (see
-[Testing](#testing)); the window, the EFI partition mounting and the script on a real Windows PC are untested. Keep a
-USB stick with a working EFI, and read each plan before you confirm it.
+**Tested by its test suite only.** `windows/test/Test-IntelXe-EFI.ps1` runs every step against a throwaway EFI folder
+and passes on the test PC in Windows PowerShell 5.1 (November 2026), and its config-editing engine was checked
+on macOS against `efi.sh` (see [Testing](#testing)). The window and the EFI partition mounting have not been used on an
+EFI that a PC then booted. Keep a USB stick with a working EFI, and read each plan before you confirm it.
 
 ## Starting it
 
@@ -123,9 +124,11 @@ macOS'ta `efi.sh`'in yaptığı değişikliklerin aynısıdır.
 gelir. Windows PowerShell 5.1'de (Windows 10 ve 11'de hazır gelir) ya da PowerShell 7'de çalışır; hiçbir şey kurmak
 gerekmez.
 
-**Henüz yazarı tarafından Windows'ta çalıştırılmadı.** `config.plist` düzenleyen çekirdeği macOS'ta `efi.sh`'e karşı
-denendi (bkz. [Deneme](#deneme)); pencere, EFI bölümünü bağlama ve betiğin gerçek bir Windows bilgisayardaki çalışması
-denenmedi. Çalışan bir EFI'si olan USB belleği elinizde tutun ve her planı onaylamadan önce okuyun.
+**Yalnızca deneme takımıyla denendi.** `windows/test/Test-IntelXe-EFI.ps1` her adımı geçici bir EFI klasöründe
+çalıştırıyor ve test bilgisayarında Windows PowerShell 5.1'de hatasız geçti (Kasım 2026); `config.plist`
+düzenleyen çekirdeği de macOS'ta `efi.sh`'e karşı denendi (bkz. [Deneme](#deneme)). Pencere ve EFI bölümünü bağlama,
+ardından bilgisayarın açıldığı bir EFI üzerinde henüz kullanılmadı. Çalışan bir EFI'si olan USB belleği elinizde tutun
+ve her planı onaylamadan önce okuyun.
 
 ### Başlatmak
 

@@ -50,10 +50,15 @@ rehber [`release/README-INSTALL.tr.md`](release/README-INSTALL.tr.md)'de (her pa
    Kurulum ekranı B580'in kendi UEFI çıktısıyla, hızlandırmasız gelir; dahili GPU gerekmez.
 2. `config.plist`'te SIP'i, AMFI boot-arg'ını, iki quirk'ü ve `ReconnectGraphicsOnConnect = false` ayarını yapın
    (bu ayar açık kalırsa OpenCore'un RELEASE sürümü açılışta panik veriyor).
-3. macOS'ta [Releases](../../releases) sayfasından sürümünüze uygun paketi indirip `sudo ./install.sh --apply`
-   çalıştırın. Betik önce sisteminizi kontrol eder, değiştirdiği her şeyin yedeğini alır; `--undo` ile geri alınır.
-4. EFI'ye `-efi.zip`'teki `IntelXe.kext`'i ve anakartınızın yoluna göre uyarlanmış ACPI tablosunu ekleyin, sonra
-   monitör B580'e bağlıyken yeniden başlatın.
+3. macOS'ta [Releases](../../releases) sayfasındaki **IntelXe Manager** uygulaması sürümünüze uygun paketi indirip
+   kurar; isterseniz paketteki `sudo ./install.sh --apply`'ı kendiniz çalıştırın. İkisi de önce sisteminizi kontrol
+   eder, değiştirdiği her şeyin yedeğini alır ve kurulumu geri alabilir.
+4. EFI'ye `IntelXe.kext`'i ve anakartınızın yoluna göre uyarlanmış ACPI tablosunu ekleyin, sonra monitör B580'e
+   bağlıyken yeniden başlatın. Bunu bilgisayardaki macOS'tan uygulamanın EFI sayfası ya da `efi.sh`, Windows'tan
+   `-efi.zip`'teki `IntelXe-EFI.ps1` gösterdiğiniz EFI'de yapar; hepsi önce EFI'yi yedekler ve yalnızca sürücünün
+   ihtiyacı olanı değiştirir.
+
+Sonraki sürümler uygulamanın Sürücü sayfasından eskisinin üzerine kurulur.
 
 Her şeyi kendiniz derlemek isterseniz: [Kaynaktan derleme](#kaynaktan-derleme).
 
@@ -66,19 +71,21 @@ Her şeyi kendiniz derlemek isterseniz: [Kaynaktan derleme](#kaynaktan-derleme).
   (hızlandırma yapıları, ışın sorguları, eğriler). Çevrilen shader'lar diske kaydediliyor; yeniden başlatmada ve sürücü
   güncellemesinde kaybolmuyor.
 - **OpenGL ve OpenCL:** varsayılan olarak Apple'ın Metal üzerinde çalışan GL ve OpenCL'i ile. OpenGL, bağlamını
-  GLFW/EGL ile açan uygulamalarda (Minecraft gibi LWJGL 3 oyunları) Mesa'nın Zink'iyle de çalışıyor; bu isteğe bağlı
-  bir bileşen ([`zink-gl/`](zink-gl/README.md)) ve henüz sürüm paketlerinde yok.
+  GLFW/EGL ile açan uygulamalarda (Minecraft gibi LWJGL 3 oyunları) Mesa'nın Zink'iyle de çalışıyor: isteğe bağlı
+  `-zink-gl.zip` ([`zink-gl/`](zink-gl/README.md)).
+- **Safari** isteğe bağlı sistem diski kopyasıyla GPU'da çalışıyor (Safari'nin GPU süreci yalnızca oradan kod
+  yükleyebiliyor); masaüstü widget'ları ve Dock simgeleri de GPU'da.
 - **Video:** VideoToolbox üzerinden H.264, HEVC, AV1 ve VP9 çözücüler; H.264, HEVC ve AV1 kodlayıcılar. Hepsi GPU'da;
   QuickTime, OBS, HandBrake ve ffmpeg'in `videotoolbox` kodlayıcıları bunları kullanıyor.
 - **Hatadan toparlanma:** Takılan bir iş yalnızca kendi motorunu sıfırlatıyor; masaüstü çalışmaya devam ediyor.
 
 ### Bilinen sorunlar
 
-- Safari'nin GPU süreci, Dock'un yardımcı süreci (Takvim simgesini o çiziyor) ve NotificationCenter (masaüstü
-  widget'larını o çiziyor) şimdilik macOS'un yazılımsal yolunda tutuluyor (`nvmtl-allow.txt`). Sebebi: ilk kullanımda
-  web içeriği siyah kalabiliyordu, Takvim simgesi ve widget'lar boş çiziliyordu.
-- Safari'de bazı web açılır listelerinde fareyle üstüne gelinen satır çizilmiyor (modrinth.com'da görüldü); sebebi henüz
-  bulunmadı.
+- Kartın 12 GB belleğinin yalnızca 1 GB'ını işlemci görebiliyor (macOS daha büyük bir BAR'ı eşleyemiyor). Sürücü bu
+  pencereyi ihtiyacı olanlara ayırıyor, arka plan süreçlerinin arabelleklerini sistem belleğine koyuyor; yine de GPU'yu
+  yoğun kullanan çok sayıda uygulama aynı anda pencereyi doldurabilir.
+- Sistem diski kopyası olmadan Safari macOS'un yazılımsal yolunda çalışıyor; orada CSS renk filtresi olan bazı öğeler
+  çizilmiyor (Metal aygıtı yokken CoreGraphics'te görülen bir sorun; geçici çözümü kurulum rehberinde).
 - İlk girişten sonraki ilk saniyelerde, shader'lar ilk kez çevrilirken takılmalar oluyor.
 - Yeniden başlattıktan sonra giriş ekranında, "Your password is required to log in" yazısının arkasında açık gri bir
   şerit görünüyor.
@@ -94,6 +101,8 @@ Aynı makinede aynı kart; Intel'in Windows sürücüsü ve bu sürücü ([büt�
 | Geekbench 7 GPU | Vulkan 111 056 · OpenCL 108 544 | Metal 92 898 · OpenCL 86 920 |
 | 4K'ya kadar video çözme | referans | bit bit doğru ve daha hızlı |
 | Intel QSV'ye göre kodlama kalitesi (BD-rate) | referans | HEVC ve AV1'de daha iyi; H.264'te fark %1,5'in altında |
+| Minecraft Java 1.21.1, Sodium + Iris + BSL (HIGH), pencereli, aynı nokta | 214–218 fps (Intel'in OpenGL'i) | 197–205 fps (Zink) |
+| Aynısı, shader paketi olmadan | 700–1000 fps | 1400–1500 fps (Zink) |
 
 ## Nasıl çalışıyor?
 
@@ -167,7 +176,8 @@ biçimini izliyor. Yeni bir özellik, yeni bir macOS sürümü ya da yeni bir ka
 hata düzeltmeleri üçüncüyü (0.1.1). Güncellerken elle adım gerektiren değişiklikler (EFI'de bir değişiklik, adı değişen
 boot-arg'lar) sürüm notlarında yükseltme adımlarıyla birlikte geliyor. Paketler, GitHub etiketi ve `install.sh`
 sürüm numarasını taşıyor. Kext'ler ve Metal sürücüsü ise kendilerini en son yeniden derleyen sürümün numarasını taşıyor:
-0.1.1 ve 0.1.2'de yalnızca rehber, dokümanlar ve paketleme değiştiği için ikili dosyalarda hâlâ 0.1.0 yazıyor.
+0.1.1'de yalnızca rehber, dokümanlar ve paketleme değişti; 0.1.2 `IntelXe.kext` dışında her şeyi yeniden derledi, o hâlâ
+0.1.0 diyor.
 
 ## Yaklaşımımız
 

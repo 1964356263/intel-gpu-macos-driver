@@ -50,10 +50,14 @@ You prepare everything from Windows, Linux or macOS; no Mac is needed. The full 
    The installer runs on the B580's firmware output, without acceleration; no integrated GPU is needed.
 2. In `config.plist`: SIP, the AMFI boot-arg, two quirks and `ReconnectGraphicsOnConnect = false` (otherwise
    OpenCore's RELEASE build panics the boot).
-3. On macOS: download the package for your version from [Releases](../../releases) and run `sudo ./install.sh --apply`.
-   It checks your setup first, backs up what it replaces and is undone with `--undo`.
-4. In the EFI: `IntelXe.kext` and an ACPI table with your board's path (from `-efi.zip`), then reboot with the monitor
-   on the B580.
+3. On macOS: the **IntelXe Manager** app from [Releases](../../releases) downloads the package for your version and
+   installs it, or run `sudo ./install.sh --apply` from the package yourself. Either checks your setup first, backs up
+   what it replaces and can undo the install.
+4. In the EFI: `IntelXe.kext` and an ACPI table with your board's path, then reboot with the monitor on the B580. The
+   app's EFI page or `efi.sh` does it from macOS on the PC, `IntelXe-EFI.ps1` (in `-efi.zip`) from Windows, in the
+   EFI you point it to; each backs up the EFI first and changes only what the driver needs.
+
+Later releases install over the old one from the app's Driver page.
 
 To build everything yourself, see [Building from source](#building-from-source).
 
@@ -65,18 +69,20 @@ To build everything yourself, see [Building from source](#building-from-source).
   queries, curves) through Mesa's `intel-rt`. Translated shaders are cached on disk and survive reboots and driver
   updates.
 - **OpenGL and OpenCL** through Apple's GL-over-Metal and OpenCL-over-Metal (the default). OpenGL also runs through
-  Mesa's Zink for applications that open their context with GLFW/EGL (LWJGL 3 games such as Minecraft); that is an
-  optional component ([`zink-gl/`](zink-gl/README.md)), not part of the release packages yet.
+  Mesa's Zink for applications that open their context with GLFW/EGL (LWJGL 3 games such as Minecraft): the optional
+  `-zink-gl.zip` ([`zink-gl/`](zink-gl/README.md)).
+- **Safari** on the GPU with the optional copy of the driver on the system volume (Safari's GPU
+  process may only load code from there); desktop widgets and the Dock's icons on the GPU.
 - **Video:** VideoToolbox decoders for H.264, HEVC, AV1 and VP9, and encoders for H.264, HEVC and AV1, all on the GPU,
   for QuickTime, OBS, HandBrake and ffmpeg's `videotoolbox` encoders.
 - **GPU recovery:** a hung job resets only its engine; the desktop keeps running.
 
 ### Known issues
 
-- Safari's GPU process, the Dock's helper (which draws the Calendar icon) and NotificationCenter (which draws the
-  desktop widgets) stay on macOS's software path for now (`nvmtl-allow.txt`): web content could stay black on first
-  use, and the Calendar icon and the widgets were drawn empty.
-- In Safari, a hovered row of some web drop-down lists is not drawn (seen on modrinth.com); not found yet.
+- Only 1 GB of the card's 12 GB is CPU-visible (macOS cannot map a larger BAR). The driver keeps that window for what
+  needs it and puts background processes' buffers in system memory; many GPU-heavy apps at once can still fill it.
+- Without the system-volume copy Safari runs on macOS's software path, where some elements with CSS colour filters
+  are not drawn (a CoreGraphics problem without a Metal device; the install guide has the workaround).
 - The first seconds after the first login stutter while shaders are translated for the first time.
 - After a restart, the login screen shows a light grey band behind "Your password is required to log in".
 - Command-line tools whose first Metal use is a VideoToolbox encode (ffmpeg) do not see our encoders in their first
@@ -92,6 +98,8 @@ The same card in the same machine, Intel's Windows driver against this driver
 | Geekbench 7 GPU | Vulkan 111 056 · OpenCL 108 544 | Metal 92 898 · OpenCL 86 920 |
 | Video decode up to 4K | reference | bit-exact and faster |
 | Encode quality against Intel QSV (BD-rate) | reference | better for HEVC and AV1; H.264 within 1.5% |
+| Minecraft Java 1.21.1, Sodium + Iris + BSL (HIGH), windowed, same spot | 214–218 fps (Intel's OpenGL) | 197–205 fps (Zink) |
+| The same without a shader pack | 700–1000 fps | 1400–1500 fps (Zink) |
 
 ## How it works
 
@@ -165,8 +173,8 @@ Releases follow [Semantic Versioning](https://semver.org) in its 0.x form until 
 (1.0.0): a new feature, a new macOS version or a new GPU raises the minor number (0.2.0); fixes alone raise the patch
 number (0.1.1). A change that needs manual steps when updating (an EFI change, renamed boot-args) comes with upgrade
 steps in the release notes. Packages, the GitHub tag and `install.sh` carry the release number; a kext or the Metal
-driver carries the number of the release that last rebuilt it (0.1.1 and 0.1.2 changed only the guide, the docs and
-the packaging, so their binaries still say 0.1.0).
+driver carries the number of the release that last rebuilt it (0.1.1 changed only the guide, the docs and the
+packaging; 0.1.2 rebuilt everything except `IntelXe.kext`, which still says 0.1.0).
 
 ## Philosophy
 
