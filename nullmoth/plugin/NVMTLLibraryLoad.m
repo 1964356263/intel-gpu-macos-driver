@@ -1590,7 +1590,11 @@ NSData *nvmtl_translate_fc_spec_cached(NSString *ll, NSString *stage, NSString *
     // nor in the next one while its refusal is on disk
     static NSMutableSet *refused; static NSMutableDictionary *locks; static dispatch_once_t once;
     dispatch_once(&once, ^{ refused = [NSMutableSet new]; locks = [NSMutableDictionary new]; });
-    NSString *key = path ?: [NSString stringWithFormat:@"%s|%@|%@|%@", hex, stage, name, json];
+    // No cache folder (a sandbox, e.g. WebKit's GPU process): the key has to tell the structural values apart by itself.
+    // %@ of an NSData prints only its length and a few of its bytes, so variants whose JSON has the same length shared
+    // one module: rounded boxes and gradients drew through the module of a plain fill.
+    NSString *jsonText = json ? [[NSString alloc] initWithData:json encoding:NSUTF8StringEncoding] : nil;
+    NSString *key = path ?: [NSString stringWithFormat:@"%s|%@|%@|%@", hex, stage, name, jsonText];
     id lock;
     @synchronized (locks) {
         if ([refused containsObject:key]) { if (err) *err = @"refused earlier in this process"; return nil; }
