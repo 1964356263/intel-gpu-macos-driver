@@ -114,6 +114,36 @@ class NVAccel;
 static int gNmxAuto = 0;        // this boot arms on its own
 static int gNmxAutoState = 0;   // 1 waiting for IntelXeFB, 2 arming, 3 armed, -1 held by IntelXeFB, -2 no device control, -3 arm failed, -4 no framebuffer
 static void nmxAutoArm(NVAccel *a);
+// IntelXeFB's boot guard, read here too: when it holds acceleration this boot, NMXAccel must not register at all. A
+// registered accelerator that is never armed made WindowServer open its display pipe and mark the display offline: the
+// Apple logo stayed on screen (5 Nov). Unregistered, WindowServer runs on IntelXeFB alone, as the macOS installer does on
+// the firmware's framebuffer. The rule is IntelXeFB's (guardBegin): intelxe-accel-off set and not "ok", or the previous
+// boot left intelxe-guard "accel<n>" with n >= 2. Read before or after IntelXeFB's start, one of the two says so.
+static bool nmxNvramRead(const char *key, char *out, size_t len) {
+    out[0] = 0;
+    IORegistryEntry *opt = IORegistryEntry::fromPath("/options", gIODTPlane);
+    if (!opt) return false;
+    bool ok = false;
+    if (OSObject *o = opt->copyProperty(key)) {
+        if (OSData *d = OSDynamicCast(OSData, o)) {
+            size_t n = d->getLength() < len - 1 ? d->getLength() : len - 1;
+            bcopy(d->getBytesNoCopy(), out, n); out[n] = 0; ok = true;
+        } else if (OSString *str = OSDynamicCast(OSString, o)) { strlcpy(out, str->getCStringNoCopy(), len); ok = true; }
+        o->release();
+    }
+    opt->release();
+    return ok;
+}
+static bool nmxGuardHolds(char *why, size_t len) {
+    char v[96];
+    if (nmxNvramRead("intelxe-accel-off", v, sizeof v) && v[0] && strcmp(v, "ok")) { snprintf(why, len, "intelxe-accel-off: %s", v); return true; }
+    if (nmxNvramRead("intelxe-guard", v, sizeof v) && !strncmp(v, "accel", 5)) {
+        unsigned n = 0;
+        for (const char *c = v + 5; *c >= '0' && *c <= '9' && n < 1000; c++) n = n * 10 + (unsigned)(*c - '0');
+        if (n >= 2) { snprintf(why, len, "intelxe-guard %s: %u accelerated boots in a row ended inside their first minute", v, n); return true; }
+    }
+    return false;
+}
 #endif
 // 1 once the headless check restored the plugin name without arming (no NVIDIA display head). The Metal plugin reads it:
 // a headless GPU hands frames to another GPU's WindowServer through system memory, so IOSurfaces must be copied out.
@@ -518,10 +548,13 @@ public:
                 snprintf(m, sizeof m, "held: %s", !allowed ? "IntelXeFB publishes no IntelXeFBAccelAllowed (older build)" :
                          why ? why->getCStringNoCopy() : "IntelXeFB says no");
                 me->autoNote(m);
-                me->registerOnce("acceleration held");
+                // registered at start already (the guard did not hold yet when NMXAccel started): Metal is withheld below.
+                // Not registered (held at start): it stays so.
+                if (me->fRegistered) {
 #ifdef NMX_NOMETAL_FALLBACK
-                me->nmxNoMetalFallback("acceleration held");
+                    me->nmxNoMetalFallback("acceleration held");
 #endif
+                }
             }
             return true;
         }
@@ -932,6 +965,14 @@ public:
                 return false;
             }
             ALOG("NMXGPU drives %04x:%04x - starting", pci->configRead16(0x00), pci->configRead16(0x02));
+            // IntelXeFB's boot guard holds acceleration: not started at all. Even unregistered, IOGraphicsAccelerator2::
+            // start ties the framebuffer to this accelerator (IOAccelTypes on IntelXeFramebuffer), WindowServer then looks
+            // for a display pipe that is never armed and marks the display offline: the Apple logo stayed (5 Nov).
+            char heldWhy[160];
+            if (pci->configRead16(0x00) == 0x8086 && nmxGuardHolds(heldWhy, sizeof heldWhy)) {
+                ALOG("boot guard holds acceleration (%s): NOT starting; WindowServer runs on IntelXeFB alone", heldWhy);
+                return false;
+            }
         }
 #else
         uint32_t gate = 0;
@@ -976,7 +1017,12 @@ public:
                     fRegDeadline = thread_call_allocate(&NVAccel::regDeadlineFire, this);
                     if (!fAutoCall || !fRegDeadline) gNmxAuto = 0;
                 }
-                if (gNmxAuto) {
+                char heldWhy[160];
+                if (gNmxAuto && nmxGuardHolds(heldWhy, sizeof heldWhy)) {
+                    gNmxAutoState = -1;
+                    char m[200]; snprintf(m, sizeof m, "held at start, NOT registered (WindowServer runs on IntelXeFB alone): %s", heldWhy);
+                    autoNote(m);
+                } else if (gNmxAuto) {
                     gNmxAutoState = 1;
                     uint64_t when = 0;
                     clock_interval_to_deadline(30, kSecondScale, &when);
@@ -1141,7 +1187,8 @@ public:
         // shutdown breadcrumb for the kernel agent (read with `nvram nmxaccel-shutdown`; nothing clears it but the next stop)
         if (IORegistryEntry *o = IORegistryEntry::fromPath("/options", gIODTPlane)) {
             if (OSString *v = OSString::withCString("1 NMXAccel stop")) { o->setProperty("nmxaccel-shutdown", v); v->release(); }
-            o->setProperty(kIONVRAMSyncNowPropertyKey, kOSBooleanTrue);
+            // no SYNCNOW key: x86's AppleEFINVRAM stored it as a variable (IONVRAM-SYNCNOW-PROPERTY) and synced nothing; a
+            // clean shutdown writes NVRAM anyway
             o->release();
         }
         if (fRegDeadline) thread_call_cancel(fRegDeadline);
