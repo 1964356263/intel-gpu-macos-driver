@@ -56,7 +56,7 @@ static bool nvramRead(const char *key, char *out, size_t len)
 	return ok;
 }
 static bool nvramRead(const char *key, char *out, size_t len);
-// val nullptr: delete. The IONVRAM-DELETE-PROPERTY request did not delete (boot1, 03:40: "intelxe-guard cleared" logged,
+// val nullptr: clear (written as "ok", see below). The IONVRAM-DELETE-PROPERTY request did not delete (boot1, 03:40: "intelxe-guard cleared" logged,
 // `nvram intelxe-guard` still fb1), so a delete is removeProperty() checked by a read-back, and "ok" written if the key
 // survives it; every reader treats "ok" as absent.
 static void nvramWrite(const char *key, const char *val)
@@ -65,11 +65,11 @@ static void nvramWrite(const char *key, const char *val)
 	if (!opt) return;
 	if (val) {
 		if (OSString *v = OSString::withCString(val)) { opt->setProperty(key, v); v->release(); }
-	} else {
-		opt->removeProperty(key);
-		char c[8];
-		if (nvramRead(key, c, sizeof c) && strcmp(c, "ok"))
-			if (OSString *v = OSString::withCString("ok")) { opt->setProperty(key, v); v->release(); }
+	} else if (OSString *v = OSString::withCString("ok")) {
+		// "ok", never a delete: removeProperty() reads back as gone but does not reach flash (5 Nov: a guard cleared at
+		// 20:21:47 was read as accel1 after a power cut at 20:23). Every reader treats "ok" as absent.
+		opt->setProperty(key, v);
+		v->release();
 	}
 	// To flash now: without it the value lives in memory until a clean shutdown, and after a power cut the next boot reads
 	// a stale "accel" from long ago. XNU acts on this key only with an OSString value (a boolean is refused without a
