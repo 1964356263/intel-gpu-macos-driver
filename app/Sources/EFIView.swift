@@ -70,18 +70,27 @@ struct EFIView: View {
 
     var partition: some View {
         Section2(title: "EFI partition") {
-            Text("For a Mac installed with a plain OpenCore EFI (stage 1 of the install guide): this page does stages 2 and 4 on the EFI that OpenCore booted from.")
+            Text("For a Mac installed with a plain OpenCore EFI (stage 1 of the install guide): this page does stages 2 and 4 on the EFI that OpenCore booted from, or on an EFI folder you choose, such as a USB stick's.")
                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            HStack {
+                if manager.efiFolder != nil {
+                    Button("Use the EFI partition instead") { manager.useEFIPartition() }
+                }
+                Spacer()
+                Button("Use an EFI folder…") { manager.pickEFIFolder() }
+            }
             if !efi.known {
                 Text(manager.probing ? String(localized: "Checking…") : "–").foregroundStyle(.secondary)
             } else {
                 if efi.found {
-                    LabeledContent("Disk") { Text(diskText).textSelection(.enabled).multilineTextAlignment(.trailing) }
+                    LabeledContent(LocalizedStringKey(efi["efi_source"] == "folder" ? "Folder" : "Disk")) { Text(diskText).textSelection(.enabled).multilineTextAlignment(.trailing) }
                     if !efi["efi_device"].isEmpty {
                         LabeledContent("Partition") { Text("\(efi["efi_device"]) · \(efi["efi_partition"])").textSelection(.enabled) }
                     }
                     LabeledContent("Found through") { Text(sourceText) }
-                    LabeledContent("Mounted") { Text(efi.mounted ? efi["efi_mount_point"] : String(localized: "No")).textSelection(.enabled) }
+                    if efi["efi_source"] != "folder" {
+                        LabeledContent("Mounted") { Text(efi.mounted ? efi["efi_mount_point"] : String(localized: "No")).textSelection(.enabled) }
+                    }
                     LabeledContent("OpenCore") { Text(openCoreText) }
                     if !efi.mounted {
                         Button(EFIAction.mount.title + "…") { page.confirming = .mount }
@@ -156,7 +165,7 @@ struct EFIView: View {
     }
 
     var diskText: String {
-        if efi["efi_source"] == "folder" { return efi["efi_mount_point"] }
+        if efi["efi_source"] == "folder" { return (efi["efi_mount_point"] as NSString).appendingPathComponent("EFI") }
         var parts = [efi["efi_disk"].isEmpty ? String(localized: "Unknown disk") : efi["efi_disk"]]
         switch efi["efi_disk_location"] {
         case "internal": parts.append(String(localized: "internal"))
@@ -171,7 +180,7 @@ struct EFIView: View {
         switch efi["efi_source"] {
         case "boot-path": return String(localized: "OpenCore's record of this boot")
         case "chosen": return String(localized: "Your choice")
-        case "folder": return String(localized: "A folder (test)")
+        case "folder": return String(localized: "A folder you chose")
         default: return "–"
         }
     }

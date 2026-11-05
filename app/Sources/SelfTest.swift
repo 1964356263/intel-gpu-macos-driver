@@ -79,6 +79,10 @@ func efiSelfTest(package: Package, expect: (Bool, String) -> Void) {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("intelxe-manager-efi-\(getpid())")
     let folder = root.appendingPathComponent("efi")
     do { try makeFakeEFI(in: folder) } catch { expect(false, "fake EFI: \(error)"); return }
+    let want = folder.standardizedFileURL.path
+    expect(efiFolderRoot(for: folder) == want && efiFolderRoot(for: folder.appendingPathComponent("EFI")) == want
+           && efiFolderRoot(for: folder.appendingPathComponent("EFI/OC")) == nil && efiFolderRoot(for: root) == nil,
+           "a picked EFI folder, or the folder holding it, is the folder for efi.sh --efi; other folders are refused")
     setenv("INTELXE_STATE_DIR", root.appendingPathComponent("state").path, 1)
     setenv("INTELXE_BOOT_PATH", "", 1)
     setenv("INTELXE_CARD_ACPI_PATH", "\\_SB.PC00.PEG1.PEGP", 1)

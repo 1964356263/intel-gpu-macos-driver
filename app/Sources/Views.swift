@@ -21,6 +21,8 @@ final class Manager: ObservableObject {
     @Published var efiTarget = EFITarget.recorded
     @Published var efiPlans: [EFIAction: EFIPlan] = [:]
     @Published var efiChoice: String? = UserDefaults.standard.string(forKey: "efiPartition")
+    /// A folder holding EFI/OC that the user chose instead of the partition (for this session only).
+    @Published var efiFolder: String?
     @Published var requestedSection: Section?
     private var logTimer: Timer?
 
@@ -43,12 +45,12 @@ final class Manager: ObservableObject {
         probing = false
     }
 
-    /// efi.sh --status, and its plans when the EFI can be read. The EFI is the one OpenCore recorded; when it recorded
-    /// none, the partition chosen on the EFI page (by UUID).
+    /// efi.sh --status, and its plans when the EFI can be read. The EFI is a folder the user chose, else the one OpenCore
+    /// recorded; when it recorded none, the partition chosen on the EFI page (by UUID).
     func refreshEFI() async {
         guard let package, let script = efiScript(for: package) else { efi = EFIStatus(); efiPlans = [:]; return }
         let choice = efiChoice
-        let test = ProcessInfo.processInfo.environment["INTELXE_MANAGER_TEST_EFI"]
+        let test = ProcessInfo.processInfo.environment["INTELXE_MANAGER_TEST_EFI"] ?? efiFolder
         let (status, target, plans) = await Task.detached { () -> (EFIStatus, EFITarget, [EFIAction: EFIPlan]) in
             var target = test.map { EFITarget.folder($0) } ?? .recorded
             var status = efiStatus(script: script, package: package, target: target)
@@ -73,7 +75,28 @@ final class Manager: ObservableObject {
 
     func chooseEFIPartition(_ uuid: String) {
         efiChoice = uuid
+        efiFolder = nil
         UserDefaults.standard.set(uuid, forKey: "efiPartition")
+        Task { await refreshEFI() }
+    }
+
+    /// An EFI folder instead of the partition, such as a USB stick's: efi.sh --efi with the folder that holds EFI/OC.
+    func pickEFIFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.message = String(localized: "Choose the EFI folder of an OpenCore EFI (the one that holds OC and BOOT), for example on a USB stick.")
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard let root = efiFolderRoot(for: url) else {
+            lastResult = String(localized: "That folder is not an OpenCore EFI: choose the EFI folder, the one with OC inside.")
+            return
+        }
+        efiFolder = root
+        Task { await refreshEFI() }
+    }
+
+    func useEFIPartition() {
+        efiFolder = nil
         Task { await refreshEFI() }
     }
 

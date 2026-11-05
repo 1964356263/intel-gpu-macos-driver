@@ -5,7 +5,8 @@
 import CryptoKit
 import Foundation
 
-/// Which EFI efi.sh works on: the one OpenCore recorded in NVRAM, a partition chosen by its UUID, or (tests) a folder.
+/// Which EFI efi.sh works on: the one OpenCore recorded in NVRAM, a partition chosen by its UUID, or a folder that holds
+/// EFI/OC (one the user chose, such as a USB stick's; the tests' fake EFI).
 enum EFITarget: Hashable {
     case recorded
     case partition(String)
@@ -17,6 +18,19 @@ enum EFITarget: Hashable {
         case .folder(let path): return ["--efi", path]
         }
     }
+}
+
+/// The folder to give efi.sh --efi for a folder the user picked: the picked folder when it holds EFI/OC (a USB stick, a
+/// mounted partition), its parent when it is the EFI folder itself (it holds OC); nil for anything else.
+func efiFolderRoot(for picked: URL) -> String? {
+    let fm = FileManager.default
+    var isDir: ObjCBool = false
+    func dir(_ url: URL) -> Bool { fm.fileExists(atPath: url.path, isDirectory: &isDir) && isDir.boolValue }
+    let url = picked.standardizedFileURL
+    if dir(url.appendingPathComponent("EFI/OC")) { return url.path }
+    let parent = url.deletingLastPathComponent()
+    if dir(url.appendingPathComponent("OC")) && dir(parent.appendingPathComponent("EFI/OC")) { return parent.path }
+    return nil
 }
 
 /// An EFI partition efi.sh found: "candidate=UUID|device|disk|size|mount point|OpenCore".
