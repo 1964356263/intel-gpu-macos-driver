@@ -57,9 +57,15 @@ fresh install.
      recovery with `macrecovery.py`, and recovery downloads macOS during the install, so the PC needs a network
      connection that works in recovery (Ethernet with the right kext, or a Wi-Fi kext);
    - [on macOS](https://dortania.github.io/OpenCore-Install-Guide/installer-guide/mac-install.html): the full installer.
-3. **EFI:** build it as Dortania describes for your CPU and board. For a Z790 / Raptor Lake PC like the test machine,
-   `efi/sample-z790/` in the repository is its configuration without serial numbers, with the SSDT sources and the kext
-   list; it shows every setting this guide mentions. Nothing GPU-specific for the B580 yet: no
+3. **EFI:** build it as Dortania describes for your CPU and board. Dortania's newest desktop page is
+   [Comet Lake](https://dortania.github.io/OpenCore-Install-Guide/config.plist/comet-lake.html); for Alder Lake and
+   Raptor Lake (12th to 14th generation) it has none, so use that page plus the
+   [sample of the test machine](https://github.com/yusufklncc/intel-gpu-macos-driver/tree/main/efi/sample-z790) (Z790,
+   i7-14700K): its config without serial numbers, the SSDT sources, the kext list with versions, and what it changes
+   for the installer. The tools run on Windows too:
+   [SSDTTime](https://github.com/corpnewt/SSDTTime) (the SSDTs from your board's DSDT; Windows and Linux can dump the
+   DSDT), [USBToolBox](https://github.com/USBToolBox/tool) (USB map, on Windows) and
+   [GenSMBIOS](https://github.com/corpnewt/GenSMBIOS) (serial numbers). Nothing GPU-specific for the B580 yet: no
    `DeviceProperties` and no WhateverGreen settings for it. Keep `UEFI > Output > ReconnectGraphicsOnConnect = false`
    (Dortania's sample has it so); see stage 2.
 4. Install macOS and finish the setup assistant. The screen runs on the B580's firmware output (UEFI GOP) through

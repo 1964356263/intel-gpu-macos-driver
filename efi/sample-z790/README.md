@@ -61,21 +61,30 @@ for anything that differs on your machine.
 4. **Serial numbers:** generate a `MacBookPro16,2` identity with [GenSMBIOS](https://github.com/corpnewt/GenSMBIOS)
    and put it in `PlatformInfo > Generic`: `SystemSerialNumber`, `MLB`, `SystemUUID`; `ROM` is the MAC address of your
    Ethernet port (6 bytes).
-5. **For the macOS installer (stage 1 of the install guide):** keep `IntelXe.kext` and `SSDT-ARCOFF.aml` disabled. The
-   config already has the stage 2 values (`csr-active-config` `03080000`, `amfi_get_out_of_my_way=0x1`); the test
-   machine installed macOS with SIP on and without the AMFI boot-arg, so for the installer set `csr-active-config` to
-   `00000000` and remove `amfi_get_out_of_my_way=0x1`, then put them back in stage 2.
+5. **For the macOS installer (stage 1 of the install guide):** this config is the finished state, so turn it back first.
+   The test machine's installer EFI differed from it as follows; put each back after the setup assistant:
+   - `IntelXe.kext` and `SSDT-ARCOFF.aml` disabled (they already are here; they come in stage 4);
+   - `CpuTopologyRebuild.kext`, `AirportItlwm.kext` and `HybridPM.kext` disabled, and `ctrsmt=off`, `itlwm_he=1`
+     removed from the boot-args. So the install needs Ethernet (AppleIGC here);
+   - `csr-active-config` = `00000000` and no `amfi_get_out_of_my_way=0x1`, `intelxe_surfvram=2` (stage 2 adds them);
+   - `-v` added to the boot-args, to see where it stops. Remove it afterwards: CpuTopologyRebuild warns of random boot
+     failures with verbose boot, and the test machine saw that too.
 
 ## Settings worth knowing
 
 - **`UEFI > Output > ReconnectGraphicsOnConnect = false`.** With `true`, OpenCore's RELEASE build panics the boot
   (`watchdogd`); see `efi/README.md`.
-- **CPU:** `Kernel > Emulate > Cpuid1Data` `55060A00 00000080 00000000 00000000` with mask
-  `FFFFFFFF 0000FF00 00000000 00000000` (Raptor Lake reported as Comet Lake), `ProvideCurrentCpuInfo`,
-  `AppleXcpmCfgLock` (for a locked CFG register; drop it if your BIOS unlocks it), CpuTopologyRebuild with `ctrsmt=off`. Dortania's
-  [Alder Lake / Raptor Lake notes](https://dortania.github.io/OpenCore-Install-Guide/) explain the alternatives.
-- **Booter:** the quirks of Dortania's Alder Lake / Raptor Lake section, plus `ResizeAppleGpuBars = 10` for the B580's
-  BAR.
+- **CPU:** Dortania's guide stops at Comet Lake; it has no Alder Lake or Raptor Lake page, so these come from this
+  machine, not from the guide. `Kernel > Emulate > Cpuid1Data` `55060A00 00000080 00000000 00000000` with mask
+  `FFFFFFFF 0000FF00 00000000 00000000` (Comet Lake's CPUID, plus leaf 1 EBX[23:16] = 0x80, used on macOS 26). On
+  macOS 15 this machine hung during multi-CPU start-up with that EBX part and used EAX only: `55060A00 00000000 ...`,
+  mask `FFFFFFFF 00000000 ...`. Neither was proven necessary beyond that one machine. Also `ProvideCurrentCpuInfo`,
+  `AppleXcpmCfgLock` (for a locked CFG register; drop it if your BIOS unlocks it), CpuTopologyRebuild with `ctrsmt=off`.
+- **Booter:** start from [Dortania's Comet Lake page](https://dortania.github.io/OpenCore-Install-Guide/config.plist/comet-lake.html).
+  Differences here: `SetupVirtualMap = true` (added on this machine with its macOS 26 boot-hang fixes) and
+  `ResizeAppleGpuBars = 10` for the B580's BAR.
+- **SMBIOS:** `MacBookPro16,2` is what was tested. It dates from when this machine's display was on the iGPU, where
+  `iMac20,1` did not work; Dortania's Comet Lake page suggests `iMac20,1`/`iMac20,2`, not tried with the B580.
 - **Boot-args:** `keepsyms=1 debug=0x100` (readable panics, no automatic reboot), `darkwake=0`, `-btlfxboardid`
   (Bluetooth firmware on this SMBIOS), `revcpu=1`, `amfi_get_out_of_my_way=0x1`, `intelxe_surfvram=2`, `ctrsmt=off`,
   `itlwm_he=1` (AirportItlwm option of the patched BE202 build; leave it out with the official one).
