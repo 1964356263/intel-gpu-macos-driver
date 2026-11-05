@@ -872,26 +872,36 @@ static void nvmtl_gsub_census(void) {
    the set's rehash, adds, -allObjects and dealloc were ~2.6% of the render thread). Two calls at once on different threads
    can only list a buffer twice, never miss it: a repeated copy of the same bytes. */
 static _Atomic uint64_t gCopyStamp;
+// One resource's host-copy backing into copies (once per call, by the call's stamp on the buffer).
+static void nvmtl_submission_copy_one(__unsafe_unretained id resource, BOOL writtenOnly, uint64_t stamp, Class kBuf, Class kTex,
+                                      NSMutableArray<NVMTLBuffer *> *__strong *copies) {
+    __unsafe_unretained NVMTLBuffer *buffer = nil;
+    const Class k = object_getClass(resource);
+    if (k == kBuf || (k != kTex && [resource isKindOfClass:kBuf])) buffer = resource;
+    else if (k == kTex || [resource isKindOfClass:kTex]) {
+        NVMTLTexture *texture = resource;
+        if (writtenOnly && texture->_usage != MTLTextureUsageUnknown &&
+            !(texture->_usage & (MTLTextureUsageShaderWrite | MTLTextureUsageRenderTarget))) return;
+        buffer = texture->_backBuf ?: (texture->_parent ? texture->_parent->_backBuf : nil);
+    }
+    if (!buffer || (!buffer->_hostPtr && !buffer->_shadow.map)) return;
+    if (__atomic_load_n(&buffer->_cpStamp, __ATOMIC_RELAXED) == stamp) return;
+    __atomic_store_n(&buffer->_cpStamp, stamp, __ATOMIC_RELAXED);
+    if (!*copies) *copies = [NSMutableArray new];
+    [*copies addObject:buffer];
+}
 static NSArray<NVMTLBuffer *> *nvmtl_submission_copies(NSSet *resources, BOOL writtenOnly) {
     NSMutableArray<NVMTLBuffer *> *copies = nil;
     const uint64_t stamp = atomic_fetch_add_explicit(&gCopyStamp, 1, memory_order_relaxed) + 1;
-    static Class kBuf, kTex; static dispatch_once_t once;
-    dispatch_once(&once, ^{ kBuf = [NVMTLBuffer class]; kTex = [NVMTLTexture class]; });
+    static Class kBuf, kTex, kPin; static dispatch_once_t once;
+    dispatch_once(&once, ^{ kBuf = [NVMTLBuffer class]; kTex = [NVMTLTexture class]; kPin = [NVMTLHeapPin class]; });
     for (__unsafe_unretained id resource in resources) {
-        __unsafe_unretained NVMTLBuffer *buffer = nil;
-        const Class k = object_getClass(resource);
-        if (k == kBuf || (k != kTex && [resource isKindOfClass:kBuf])) buffer = resource;
-        else if (k == kTex || [resource isKindOfClass:kTex]) {
-            NVMTLTexture *texture = resource;
-            if (writtenOnly && texture->_usage != MTLTextureUsageUnknown &&
-                !(texture->_usage & (MTLTextureUsageShaderWrite | MTLTextureUsageRenderTarget))) continue;
-            buffer = texture->_backBuf ?: (texture->_parent ? texture->_parent->_backBuf : nil);
+        if (object_getClass(resource) == kPin) {   // 0aacf15: a used heap - its members with a host copy
+            for (__unsafe_unretained id member in [(NVMTLHeapPin *)resource allCopyCandidates])
+                nvmtl_submission_copy_one(member, writtenOnly, stamp, kBuf, kTex, &copies);
+            continue;
         }
-        if (!buffer || (!buffer->_hostPtr && !buffer->_shadow.map)) continue;
-        if (__atomic_load_n(&buffer->_cpStamp, __ATOMIC_RELAXED) == stamp) continue;
-        __atomic_store_n(&buffer->_cpStamp, stamp, __ATOMIC_RELAXED);
-        if (!copies) copies = [NSMutableArray new];
-        [copies addObject:buffer];
+        nvmtl_submission_copy_one(resource, writtenOnly, stamp, kBuf, kTex, &copies);
     }
     return copies;
 }

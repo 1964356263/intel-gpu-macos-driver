@@ -23,6 +23,7 @@
 #include "nvmtl_sample_positions.h"
 #include "nvmtl_log_failure.h"
 #include "nvmtl_glcpu4.h"
+#include "nvmtl_env_knobs.h"
 #include <sys/sysctl.h>
 #ifndef NVMTL_RELEASE
 #define NVMTL_RELEASE 0
@@ -143,7 +144,8 @@ static bool nvmtl_log_tmp_unusable(const char *path) {
 }
 const char *nvmtl_log_path(void) {
 #if NVMTL_RELEASE
-    return "/private/tmp/nvmtl-off.log";
+    // A release plugin writes no log unless this process opted into its own knobs (NVMTL_PROCESS_ENV=1).
+    if (!nvmtl_process_env_on()) return "/private/tmp/nvmtl-off.log";
 #endif
     // A diagnostic probe needs its own file even when the system log is writable.
     // Otherwise the per-run fault watcher reads an empty file and misses GPU faults.
@@ -173,11 +175,12 @@ void nvlog(const char *fmt, ...) {
     else     snprintf(t, sizeof t, "%s", b);
 #if NVMTL_RELEASE
     if (nvmtl_log_failure(t)) syslog(LOG_ERR, "NullMoth: %s", t);
+    if (!nvmtl_process_env_on()) return;   // the file below is written only for a process that opted in
 #else
     syslog(LOG_NOTICE, "NVMTL: %s", t);
+#endif
     { const int fd = nvmtl_diag_open(nvmtl_log_path(), 1);
       if (fd >= 0) { dprintf(fd, "pid %d NVMTL: %s\n", getpid(), t); close(fd); } }
-#endif
 }
 // nvlog without the per-site limit (NVLOG_VERBATIM lines, then one in NVLOG_EVERY): measurement lines that repeat by
 // design (HITCH, HITCH-SUM, KTIME). Through the limit, a session kept its first 8 hitches and dropped the rest.
@@ -185,9 +188,9 @@ void nvlog_keep(const char *fmt, ...) {
     char b[2048]; va_list a; va_start(a, fmt); vsnprintf(b, sizeof b, fmt, a); va_end(a);
 #if NVMTL_RELEASE
     if (nvmtl_log_failure(b)) syslog(LOG_ERR, "NullMoth: %s", b);
-#else
-    FILE *f = fopen(nvmtl_log_path(), "a"); if (f) { fprintf(f, "pid %d NVMTL: %s\n", getpid(), b); fclose(f); }
+    if (!nvmtl_process_env_on()) return;   // the file below is written only for a process that opted in
 #endif
+    FILE *f = fopen(nvmtl_log_path(), "a"); if (f) { fprintf(f, "pid %d NVMTL: %s\n", getpid(), b); fclose(f); }
 }
 
 #define NVMTL_OOM_STREAK      32
@@ -1277,7 +1280,7 @@ static BOOL nvmtl_desc_fbo(MTLTextureDescriptor *d) {
     if (nvmtl_vk_image_create_typed((uint32_t)d.width, (uint32_t)d.height, vkf, bpp, a8, (uint32_t)d.mipmapLevelCount, wantStex, (uint32_t)d.textureType, nvmtl_vk_layers_for_desc((uint32_t)d.textureType, (uint32_t)d.arrayLength, (uint32_t)d.depth), &t->_i)) { nvmtl_alloc_failed("newTextureWithDescriptor"); nvlog("newTextureWithDescriptor: FAILED"); return nil; }
     nvmtl_alloc_ok();
     t->_q = nvmtl_device_queue();
-    t->_stex = t->_i.storage != 0;
+    t->_stex = t->_i.storage == 1;
     t->_usage = d.usage;
     if (wantStex && !t->_stex) { static unsigned long lost; lost++;
         if (!(lost & (lost - 1))) nvlog("newTextureWithDescriptor: pixel format %lu asked for ShaderWrite and NVK cannot make it a storage image — shader writes to it will be LOST (%lu texture(s) so far in this process)", (unsigned long)d.pixelFormat, lost); }
@@ -1451,7 +1454,7 @@ static char nvmtl_surface_cache_key;
     t->_surf = surf; if (surf) { CFRetain(surf); t->_surfOwned = YES; }
     t->_plane = plane;
     t->_fmt = d.pixelFormat;
-    t->_stex = t->_i.storage != 0;
+    t->_stex = t->_i.storage == 1;
     t->_usage = nvmtl_surface_usage(d.usage, t->_fbo, t->_stex);
     nvmtl_texture_desc_swizzle(t, d);
     if (key && !t->_vramOn) [cache setObject:t forKey:key];
@@ -2368,7 +2371,15 @@ static void nvmtl_log_compute_descriptor(MTLComputePipelineDescriptor *d) {
     NVMTLAccelerationStructure *a = [NVMTLAccelerationStructure new];
     a->_storage = MTLStorageModePrivate;
     // the Metal header goes before the Vulkan structure: Metal-visible sizes stay the Vulkan ones
-    if (nvmtl_vk_buffer_create((size < 256 ? 256 : size) + NVMTL_AS_HEADER, 0, &a->_b)) { nvlog("newAccelerationStructureWithSize: FAILED"); return nil; }
+    // 78cd991: every other resource falls back to system memory when VRAM refuses it; this one returned nil, and an app
+    // that keeps the nil hands it back at build time while its instance descriptors still name the structure never built.
+    if (nvmtl_vk_buffer_create((size < 256 ? 256 : size) + NVMTL_AS_HEADER, 0, &a->_b)) {
+        nvlog("newAccelerationStructureWithSize:%lu: VRAM refused - placing it in system memory", (unsigned long)size);
+        if (nvmtl_vk_buffer_create((size < 256 ? 256 : size) + NVMTL_AS_HEADER, 1, &a->_b)) {
+            nvmtl_alloc_failed("newAccelerationStructureWithSize");
+            nvlog("newAccelerationStructureWithSize: FAILED in system memory too"); return nil; }
+    }
+    nvmtl_alloc_ok();
     nvlog("newAccelerationStructureWithSize:%lu -> %p", (unsigned long)size, (__bridge void *)a); return a;
 }
 - (id<MTLAccelerationStructure>)newAccelerationStructureWithDescriptor:(MTLAccelerationStructureDescriptor *)desc {
@@ -2447,6 +2458,7 @@ static void nvmtl_log_compute_descriptor(MTLComputePipelineDescriptor *d) {
     h->_hazard = hd.hazardTrackingMode;
     if (hd.type == MTLHeapTypePlacement) {
         if (nvmtl_vk_heap_create(hd.size, hd.storageMode == MTLStorageModeShared, &h->_hm)) { nvlog("newHeapWithDescriptor: PLACEMENT %lu bytes FAILED", (unsigned long)hd.size); return nil; }
+        nvmtl_vk_heap_zero(&h->_hm, "placement");   // 5fcf1ad (nm271: placement heaps too - a fresh MTLHeap reads as zero either way)
         nvlog("newHeapWithDescriptor: PLACEMENT %lu bytes (%s) -> %p", (unsigned long)hd.size, hd.storageMode == MTLStorageModeShared ? "shared" : "private", (__bridge void *)h);
         return h;
     }
@@ -2510,7 +2522,7 @@ static void nvmtl_log_compute_descriptor(MTLComputePipelineDescriptor *d) {
 }
 - (NSUInteger)currentAllocatedSize { return (NSUInteger)nvmtl_vk_allocated_bytes(); }
 - (uint64_t)recommendedMaxWorkingSetSize {
-    uint64_t ws = nvmtl_vk_working_set();
+    uint64_t ws = nvmtl_vk_recommended_working_set();
     nvlog("recommendedMaxWorkingSetSize -> %llu MB", (unsigned long long)(ws >> 20));
     return ws;
 }
