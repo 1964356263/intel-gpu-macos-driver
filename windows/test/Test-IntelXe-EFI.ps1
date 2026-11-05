@@ -1,0 +1,332 @@
+# SPDX-License-Identifier: MIT
+<#
+.SYNOPSIS
+Test-IntelXe-EFI.ps1 [-RealPackage DIR]: runs windows\IntelXe-EFI.ps1 on Windows against a throwaway EFI folder made
+from efi\sample-z790\config.plist as stage 1 leaves it (windows\test\stage1\config.plist), the same steps as
+release/test-efi-flow.sh runs with efi.sh on macOS. No administrator rights, no EFI partition: everything happens in
+a folder under %TEMP%, removed afterwards.
+
+.DESCRIPTION
+Each config.plist the tool writes is compared twice:
+ - with expected\efi-sh\: what efi.sh writes on macOS for the same step (the same keys and values);
+ - with expected\engine\: what the tool's engine writes on macOS (make-expected.sh), byte for byte apart from line
+   ends: the layout of the file is kept, only the changed values and the added entries differ.
+Plans are compared with efi.sh's line by line (notes aside). Without -RealPackage the package's IntelXe.kext and
+SSDT-ARCOFF.aml are stand-ins.
+
+  powershell -ExecutionPolicy Bypass -File windows\test\Test-IntelXe-EFI.ps1      (Windows PowerShell 5.1)
+  pwsh -File windows\test\Test-IntelXe-EFI.ps1                                    (PowerShell 7)
+#>
+param([string]$RealPackage = '')
+
+$Here = $PSScriptRoot
+$ToolPath = Join-Path (Split-Path -Parent $Here) 'IntelXe-EFI.ps1'
+$Stage1 = Join-Path $Here 'stage1\config.plist'
+$NoEntries = Join-Path $Here 'stage1\config-noentries.plist'
+$Xp = Join-Path $Here 'expected'
+$Exe = (Get-Process -Id $PID).Path
+
+# Dot-sourcing defines the tool's parameters here too ($Plan, $Efi, $Package, ...: typed and validated), so this
+# script uses none of those names.
+. $ToolPath   # the engine's types and the tool's functions; dot-sourced, its command line does not run
+$ErrorActionPreference = 'Stop'
+
+$script:fails = 0
+$script:code = 0
+function Check([bool]$ok, [string]$what) {
+    if ($ok) { Write-Host "ok    $what" } else { Write-Host "FAIL  $what"; $script:fails++ }
+}
+
+# a work folder with an ASCII path: the tool's output is read back through the console's code page
+$Tmp = [IO.Path]::GetTempPath()
+if ($Tmp -match '[^\x20-\x7e]') { $Tmp = "$env:SystemDrive\" }
+$Root = Join-Path $Tmp ('ixeefi-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+$F = Join-Path $Root 'efi'
+$Pk = Join-Path $Root 'pkg'
+$Bk = Join-Path $Root 'backups'
+$Cfg = Join-Path $F 'EFI\OC\config.plist'
+function Oc([string]$rel) { return Join-Path (Join-Path $F 'EFI\OC') $rel }
+
+# the tool in its own process, as a user runs it: its lines, and its exit code in $script:code
+function Invoke-Tool([string[]]$words) {
+    $old = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { $lines = @(& $Exe -NoProfile -ExecutionPolicy Bypass -File $ToolPath @words 2>&1 | ForEach-Object { "$_" }) }
+    finally { $ErrorActionPreference = $old }
+    $script:code = $LASTEXITCODE
+    return , $lines
+}
+function Get-Status([string[]]$more) {
+    $s = @{}
+    foreach ($l in (Invoke-Tool (@('-Status', '-Efi', $F, '-Package', $Pk, '-BackupDir', $Bk) + $more))) {
+        $i = $l.IndexOf('=')
+        if ($i -gt 0) { $s[$l.Substring(0, $i)] = $l.Substring($i + 1) }
+    }
+    return $s
+}
+function Expect-Status([string]$what, [string]$key, [string]$value) {
+    $got = (Get-Status @())[$key]
+    Check ($got -eq $value) "$($what): $key=$got$(if ($got -ne $value) { ", expected $value" })"
+}
+# -Plan KIND: the lines, and the hash in $script:hash
+function Get-Plan([string]$kind, [string[]]$more) {
+    $lines = Invoke-Tool (@('-Plan', $kind, '-Efi', $F, '-Package', $Pk, '-BackupDir', $Bk) + $more)
+    $script:hash = ''
+    foreach ($l in $lines) { if ($l -like '== plan SHA-256: *') { $script:hash = $l.Substring(17).Trim() } }
+    return , $lines
+}
+function Invoke-Apply([string]$kind, [string[]]$more) {
+    $null = Get-Plan $kind $more
+    if ($kind -eq 'undo') { $words = @('-Undo') } else { $words = @('-Apply', $kind) }
+    $out = Invoke-Tool ($words + @('-Efi', $F, '-Package', $Pk, '-BackupDir', $Bk, '-Expect', $script:hash) + $more)
+    if ($script:code -ne 0) { Write-Host ('      ' + ($out -join "`n      ")) }
+    return , $out
+}
+function Get-Actions([string[]]$lines, [bool]$fromEfiSh) {
+    $list = @()
+    foreach ($l in $lines) {
+        if ($l -eq '' -or $l -like 'EFI: *' -or $l -like 'note *' -or $l -like '== *' -or $l -like 'to make these changes:*' -or $l -like 'to put it back:*' -or $l -like 'warning:*') { continue }
+        if ($fromEfiSh) {
+            $l = $l.Replace('for this script)', 'for efi.sh on macOS)')
+            if ($script:version -ne '') { $l = $l.Replace('(version 9.9.9)', "(version $script:version)") }
+        }
+        $list += $l
+    }
+    return , $list
+}
+function Compare-Plan([string[]]$lines, [string]$name) {
+    $want = Get-Actions ([IO.File]::ReadAllText((Join-Path $Xp "efi-sh\$name.plan")).Replace("`r`n", "`n").Split("`n")) $true
+    $got = Get-Actions $lines $false
+    $same = ($want -join "`n") -ceq ($got -join "`n")
+    Check $same "plan $($name): the same $($want.Count) lines as efi.sh's"
+    if (-not $same) { Write-Host "      efi.sh:`n        $($want -join "`n        ")`n      this tool:`n        $($got -join "`n        ")" }
+}
+function Compare-Config([string]$name, [string]$source) {
+    $got = [IntelXeEfi.Plist]::Load($Cfg)
+    $want = [IntelXeEfi.Plist]::Load((Join-Path $Xp "efi-sh\$name.plist"))
+    $d = [IntelXeEfi.Plist]::Difference($want.Root, $got.Root, 'config.plist')
+    Check ($null -eq $d) "$($name): the keys and values of efi.sh's$(if ($null -ne $d) { ": $d" })"
+    $text = [IO.File]::ReadAllText($Cfg).Replace("`r`n", "`n")
+    $engine = [IO.File]::ReadAllText((Join-Path $Xp "engine\$name.plist")).Replace("`r`n", "`n")
+    Check ($text -ceq $engine) "$($name): the same text as the engine's output on macOS (layout kept)"
+    $before = [IntelXeEfi.Plist]::KeyPaths([IntelXeEfi.Plist]::Load($source).Root, '', $null)
+    $after = [IntelXeEfi.Plist]::KeyPaths($got.Root, '', $null)
+    Check ([IntelXeEfi.Plist]::IsSubsequence($before, $after)) "$($name): the keys it had, in their order"
+    Write-Host "      $([IntelXeEfi.Util]::ChangedLines([IO.File]::ReadAllText($source), [IO.File]::ReadAllText($Cfg))) lines differ from the input"
+}
+function Get-Bytes([string]$path) { return , [IO.File]::ReadAllBytes($path) }
+function Test-SameBytes([byte[]]$a, [byte[]]$b) {
+    if ($a.Length -ne $b.Length) { return $false }
+    for ($i = 0; $i -lt $a.Length; $i++) { if ($a[$i] -ne $b[$i]) { return $false } }
+    return $true
+}
+function Test-Has([string[]]$lines, [string]$text) { return @($lines | Where-Object { $_.Contains($text) }).Count -gt 0 }
+function Edit-Config([scriptblock]$change) {
+    $pl = [IntelXeEfi.Plist]::Load($Cfg)
+    & $change $pl
+    [IO.File]::WriteAllBytes($Cfg, $pl.ToBytes())
+}
+function New-Efi([string]$config) {
+    if (Test-Path -LiteralPath $F) { Remove-Item -LiteralPath $F -Recurse -Force }
+    if (Test-Path -LiteralPath $Bk) { Remove-Item -LiteralPath $Bk -Recurse -Force }
+    foreach ($d in 'EFI\OC\Kexts', 'EFI\OC\ACPI', 'EFI\BOOT') { $null = New-Item -ItemType Directory -Path (Join-Path $F $d) -Force }
+    [IO.File]::WriteAllBytes((Oc 'OpenCore.efi'), [byte[]]@())
+    Copy-Item -LiteralPath $config -Destination $Cfg -Force
+}
+function Write-Sums {
+    $lines = @()
+    foreach ($f in @(Get-ChildItem -LiteralPath (Join-Path $Pk 'EFI') -Recurse -File -Force | Sort-Object FullName)) {
+        $rel = $f.FullName.Substring($Pk.Length + 1).Replace('\', '/')
+        $lines += (Get-FileHash -Algorithm SHA256 -LiteralPath $f.FullName).Hash.ToLowerInvariant() + '  ' + $rel
+    }
+    [IO.File]::WriteAllText((Join-Path $Pk 'SHA256SUMS'), ($lines -join "`n") + "`n")
+}
+
+try {
+    $null = New-Item -ItemType Directory -Path $Root -Force
+    Write-Host "== $($PSVersionTable.PSEdition) PowerShell $($PSVersionTable.PSVersion), $Exe; work folder $Root"
+
+    # ---- the engine in this PowerShell ----
+    foreach ($f in $Stage1, $NoEntries) {
+        Check (Test-SameBytes ([IntelXeEfi.Plist]::Load($f).ToBytes()) (Get-Bytes $f)) "$([IO.Path]::GetFileName($f)) read and written back: the same bytes"
+    }
+    Check ([IntelXeEfi.EfiFolder]::ConvertLocationPath('ACPI(_SB_)#ACPI(PC00)#ACPI(PEG1)#ACPI(PEGP)#PCI(0100)#PCI(0000)') -eq '\_SB.PC00.PEG1.PEGP') 'Location path: the shipped table''s port'
+    Check ([IntelXeEfi.EfiFolder]::ConvertLocationPath('ACPI(_SB_)#ACPI(PC00)#ACPI(PEG1)#PCI(0000)#PCI(0100)#PCI(0000)') -eq 'none') 'Location path with three PCI parts: none'
+    Check ((Test-Admin) -is [bool]) 'Test-Admin runs'
+    $loc = Get-CardLocation
+    Write-Host "      this PC's B580 Location path: $(if ($loc -eq '') { 'none found' } else { $loc })"
+
+    # ---- the package ----
+    $script:version = ''
+    if ($RealPackage -ne '') {
+        Copy-Item -LiteralPath (Join-Path $RealPackage 'EFI') -Destination (Join-Path $Pk 'EFI') -Recurse
+        Copy-Item -LiteralPath (Join-Path $RealPackage 'SHA256SUMS') -Destination (Join-Path $Pk 'SHA256SUMS')
+        $script:version = [IntelXeEfi.EfiFolder]::KextVersion((Join-Path $Pk 'EFI\OC\Kexts\IntelXe.kext'))
+    } else {
+        $k = Join-Path $Pk 'EFI\OC\Kexts\IntelXe.kext\Contents'
+        $null = New-Item -ItemType Directory -Path (Join-Path $k 'MacOS') -Force
+        $null = New-Item -ItemType Directory -Path (Join-Path $Pk 'EFI\OC\ACPI') -Force
+        [IO.File]::WriteAllText((Join-Path $k 'MacOS\IntelXe'), "stand-in IntelXe executable`n")
+        [IO.File]::WriteAllText((Join-Path $k 'Info.plist'), "<?xml version=`"1.0`" encoding=`"UTF-8`"?>`n<plist version=`"1.0`">`n<dict>`n`t<key>CFBundleVersion</key>`n`t<string>9.9.9</string>`n</dict>`n</plist>`n")
+        $aml = [Text.Encoding]::ASCII.GetBytes("SSDT") + [byte[]](0x2f, 0x04) + [Text.Encoding]::ASCII.GetBytes('_SB_PC00PEG1PEGP stand-in')
+        [IO.File]::WriteAllBytes((Join-Path $Pk 'EFI\OC\ACPI\SSDT-ARCOFF.aml'), [byte[]]$aml)
+        Write-Sums
+    }
+    $stage1Bytes = Get-Bytes $Stage1
+
+    # ---- stage 1 -> settings -> driver, undo ----
+    New-Efi $Stage1
+    $st = Get-Status @()
+    foreach ($kv in @(@('opencore', 'yes'), @('kext_file', 'absent'), @('kext_entry', 'disabled'), @('ssdt_file', 'absent'), @('ssdt_entry', 'disabled'),
+            @('package_checksums', 'ok'), @('settings_changes', '6'), @('plan_changes', '3'), @('backup', 'none'))) {
+        Check ($st[$kv[0]] -eq $kv[1]) "stage 1: $($kv[0])=$($st[$kv[0]])$(if ($st[$kv[0]] -ne $kv[1]) { ", expected $($kv[1])" })"
+    }
+    $pp = Get-Plan 'settings' @()
+    Compare-Plan $pp 'settings'
+    Check ($script:hash -match '^[0-9a-f]{64}$') 'the plan ends with its SHA-256'
+    $out = Invoke-Tool @('-Apply', 'settings', '-Efi', $F, '-Package', $Pk, '-BackupDir', $Bk, '-Expect', ('0' * 64))
+    Check ($script:code -ne 0 -and (Test-Has $out 'changed since the plan was shown')) 'apply with another plan''s hash refuses'
+    $out = Invoke-Tool @('-Apply', 'settings', '-Efi', $F, '-Package', $Pk, '-BackupDir', $Bk)
+    Check ($script:code -ne 0 -and (Test-Has $out 'give the SHA-256')) 'apply without -Expect refuses'
+    Check ((Test-SameBytes (Get-Bytes $Cfg) $stage1Bytes) -and -not (Test-Path -LiteralPath $Bk)) '... and nothing changed, no backup made'
+    $out = Invoke-Apply 'settings' @()
+    Check ($script:code -eq 0 -and (Test-Has $out '== backup of the whole EFI folder: ')) 'apply settings: backed up, done'
+    Compare-Config 'after-settings' $Stage1
+    Expect-Status 'after settings' 'settings_changes' '0'
+    Expect-Status 'after settings' 'backup_kind' 'settings'
+    $afterSettings = Get-Bytes $Cfg
+    $b1 = (Get-Status @())['backup']
+    Check ((Test-SameBytes (Get-Bytes (Join-Path $b1 'EFI\OC\config.plist')) $stage1Bytes) -and (Test-Path -LiteralPath (Join-Path $b1 'EFI\OC\OpenCore.efi'))) 'the backup holds the whole EFI folder as it was'
+
+    $pp = Get-Plan 'driver' @()
+    Compare-Plan $pp 'driver-nossdt'
+    Check (Test-Has $pp 'note     not added: SSDT-ARCOFF.aml. Add it only after macOS is installed') 'without -CardAcpiPath SSDT-ARCOFF is left out, and the note says why'
+    $null = Invoke-Apply 'driver' @()
+    Compare-Config 'after-settings-driver-nossdt' $Stage1
+    Check ([IntelXeEfi.Util]::SameFile((Oc 'Kexts\IntelXe.kext\Contents\MacOS\IntelXe'), (Join-Path $Pk 'EFI\OC\Kexts\IntelXe.kext\Contents\MacOS\IntelXe')) -and -not (Test-Path -LiteralPath (Oc 'ACPI\SSDT-ARCOFF.aml'))) 'IntelXe.kext copied, no SSDT-ARCOFF.aml'
+    Expect-Status 'after driver' 'plan_changes' '0'
+    Expect-Status 'after driver' 'kext_file' 'same'
+
+    $pp = Get-Plan 'undo' @()
+    Check ((Test-Has $pp 'restore  EFI/OC/config.plist') -and (Test-Has $pp 'remove   EFI/OC/Kexts/IntelXe.kext (it was not there before)')) 'undo plan: config.plist back, the kext removed'
+    $null = Invoke-Apply 'undo' @()
+    Check ((Test-SameBytes (Get-Bytes $Cfg) $afterSettings) -and -not (Test-Path -LiteralPath (Oc 'Kexts\IntelXe.kext'))) 'undo: as after settings'
+    $null = Invoke-Apply 'undo' @()
+    Check (Test-SameBytes (Get-Bytes $Cfg) $stage1Bytes) 'second undo: config.plist byte for byte as in stage 1'
+    $out = Invoke-Apply 'undo' @()
+    Check ($script:code -ne 0 -and (Test-Has $out 'no backup to put back')) 'nothing left to undo'
+
+    # ---- with the card's path confirmed ----
+    $null = Invoke-Apply 'settings' @()
+    Check (Test-SameBytes (Get-Bytes $Cfg) $afterSettings) 'settings again: the same bytes'
+    $pp = Get-Plan 'driver' @('-CardAcpiPath', '\_SB.PC00.PEG1.PEGP')
+    Compare-Plan $pp 'driver-ssdt'
+    Check (Test-Has $pp 'warning: SSDT-ARCOFF.aml hides the B580') 'the plan warns about SSDT-ARCOFF'
+    $h1 = $script:hash
+    $null = Get-Plan 'driver' @('-CardAcpiPath', 'ACPI(_SB_)#ACPI(PC00)#ACPI(PEG1)#ACPI(PEGP)#PCI(0100)#PCI(0000)')
+    Check ($script:hash -eq $h1) 'a Location paths line gives the same plan'
+    $null = Invoke-Apply 'driver' @('-CardAcpiPath', '\_SB.PC00.PEG1.PEGP')
+    Compare-Config 'after-settings-driver-ssdt' $Stage1
+    Check ([IntelXeEfi.Util]::SameFile((Oc 'ACPI\SSDT-ARCOFF.aml'), (Join-Path $Pk 'EFI\OC\ACPI\SSDT-ARCOFF.aml'))) 'SSDT-ARCOFF.aml copied'
+    Edit-Config { param($pl) $pl.Set([string[]]@('Misc', 'Boot', 'Timeout'), [IntelXeEfi.PValue]::Int(9)) }
+    $pp = Get-Plan 'undo' @()
+    Check (Test-Has $pp 'note     config.plist was changed after that change') 'undo plan warns about a later edit'
+    $null = Invoke-Apply 'undo' @()
+    Check (Test-SameBytes (Get-Bytes $Cfg) $afterSettings) 'undo: as after settings (the later edit is gone, as warned)'
+    $null = Invoke-Apply 'undo' @()
+    Check (Test-SameBytes (Get-Bytes $Cfg) $stage1Bytes) 'undo: stage 1'
+
+    # ---- the package ----
+    $amlPath = Join-Path $Pk 'EFI\OC\ACPI\SSDT-ARCOFF.aml'
+    $amlBytes = Get-Bytes $amlPath
+    [IO.File]::WriteAllBytes($amlPath, [byte[]]($amlBytes + [byte]0x78))
+    $out = Invoke-Apply 'driver' @('-CardAcpiPath', '\_SB.PC00.PEG1.PEGP')
+    Check ($script:code -ne 0 -and (Test-Has $out 'differ from its SHA256SUMS')) 'a damaged package is refused'
+    Check ((Test-SameBytes (Get-Bytes $Cfg) $stage1Bytes) -and -not (Test-Path -LiteralPath (Oc 'Kexts\IntelXe.kext'))) '... and nothing changed'
+    [IO.File]::WriteAllBytes($amlPath, $amlBytes)
+
+    # ---- driver before settings; a different kext ----
+    $pp = Get-Plan 'driver' @()
+    Compare-Plan $pp 'driver-stage1'
+    $null = Invoke-Apply 'driver' @()
+    Compare-Config 'after-driver-nossdt' $Stage1
+    [IO.File]::AppendAllText((Oc 'Kexts\IntelXe.kext\Contents\MacOS\IntelXe'), "older build`n")
+    Expect-Status 'an older kext in the EFI' 'kext_file' 'different'
+    Check (Test-Has (Get-Plan 'driver' @()) 'replace  EFI/OC/Kexts/IntelXe.kext') 'plan replaces it'
+    $null = Invoke-Apply 'driver' @()
+    Expect-Status 'after apply' 'kext_file' 'same'
+    $null = Invoke-Apply 'undo' @()
+    Expect-Status 'undo puts the older one back' 'kext_file' 'different'
+    $null = Invoke-Apply 'undo' @()
+    Check ((Test-SameBytes (Get-Bytes $Cfg) $stage1Bytes) -and -not (Test-Path -LiteralPath (Oc 'Kexts\IntelXe.kext'))) 'undo: stage 1'
+
+    # ---- SSDT-ARCOFF: the port ----
+    $pp = Get-Plan 'driver' @('-CardAcpiPath', '\_SB.PC00.PEG0.PEGP')
+    Check (-not (Test-Has $pp 'EFI/OC/ACPI/SSDT-ARCOFF.aml (names') -and (Test-Has $pp 'the card''s port here is \_SB.PC00.PEG0.PEGP')) 'another port: the table is not copied, and the note says why'
+    Check (Test-Has (Get-Plan 'driver' @('-CardAcpiPath', 'ACPI(_SB_)#ACPI(PC00)#ACPI(PEG1)#PCI(0000)#PCI(0100)#PCI(0000)')) 'has no ACPI name') 'a port without an ACPI name: says so'
+    $out = Get-Plan 'driver' @('-CardAcpiPath', 'PEG1 slot')
+    Check ($script:code -ne 0 -and (Test-Has $out 'is not an ACPI path')) 'a wrong path is refused'
+    [IO.File]::WriteAllBytes((Oc 'ACPI\SSDT-ARCOFF.aml'), [byte[]]([Text.Encoding]::ASCII.GetBytes('SSDT') + [byte[]](0x2f, 0x04) + [Text.Encoding]::ASCII.GetBytes('_SB_PC00PEG0PEGP my own build')))
+    $pp = Get-Plan 'driver' @('-CardAcpiPath', '\_SB.PC00.PEG0.PEGP')
+    Check ((Test-Has $pp 'kept: EFI/OC/ACPI/SSDT-ARCOFF.aml differs') -and (Test-Has $pp 'ACPI > Add, item 5 (SSDT-ARCOFF.aml): Enabled false -> true')) 'your own table for that port is kept, its entry enabled'
+    Remove-Item -LiteralPath (Oc 'ACPI\SSDT-ARCOFF.aml')
+
+    # ---- an earlier B580.kext entry; a wider SIP value ----
+    Edit-Config { param($pl) $pl.Append([string[]]@('Kernel', 'Add'), [IntelXeEfi.PValue]::Dict('BundlePath', 'B580.kext', 'Enabled', $true, 'ExecutablePath', 'Contents/MacOS/B580', 'PlistPath', 'Contents/Info.plist')) }
+    Check (Test-Has (Get-Plan 'driver' @()) 'item 16 (B580.kext, the earlier name of IntelXe.kext): Enabled true -> false') 'an earlier B580.kext entry is turned off'
+    [IO.File]::WriteAllBytes($Cfg, $stage1Bytes)
+    $null = Invoke-Apply 'settings' @()
+    Edit-Config { param($pl) $pl.Set([string[]]@('NVRAM', 'Add', [IntelXeEfi.EfiFolder]::Apple, 'csr-active-config'), [IntelXeEfi.PValue]::Data([IntelXeEfi.EfiFolder]::CsrBytes(0xfef))) }
+    Check (Test-Has (Get-Plan 'settings' @()) 'nothing to change') 'a wider SIP value (0xfef) is kept'
+    $null = Invoke-Apply 'undo' @()
+    Check (Test-SameBytes (Get-Bytes $Cfg) $stage1Bytes) 'undo: stage 1'
+
+    # ---- adding the entries ----
+    New-Efi $NoEntries
+    Compare-Plan (Get-Plan 'driver' @('-CardAcpiPath', '\_SB.PC00.PEG1.PEGP')) 'noentries-driver-ssdt'
+    $null = Invoke-Apply 'driver' @('-CardAcpiPath', '\_SB.PC00.PEG1.PEGP')
+    Compare-Config 'after-noentries-driver-ssdt' $NoEntries
+    $null = Invoke-Apply 'undo' @()
+    Check (Test-SameBytes (Get-Bytes $Cfg) (Get-Bytes $NoEntries)) 'undo: as before'
+
+    # ---- the folder, the default backup place ----
+    New-Efi $Stage1
+    $a = Invoke-Tool @('-Status', '-Efi', $F, '-Package', $Pk, '-BackupDir', $Bk)
+    $b = Invoke-Tool @('-Status', '-Efi', (Join-Path $F 'EFI'), '-Package', $Pk, '-BackupDir', $Bk)
+    Check ((Test-Has $a "efi_folder=$(Join-Path $F 'EFI')") -and ($a -join "`n") -eq ($b -join "`n")) 'the EFI folder or the folder holding it: the same'
+    $out = Invoke-Tool @('-Plan', 'settings', '-Efi', $Root)
+    Check ($script:code -ne 0 -and (Test-Has $out 'no OC folder')) 'a folder without OC is refused'
+    $out = Invoke-Tool @('-Plan', 'settings', '-Efi', $F, '-BackupDir', (Join-Path $F 'EFI\backups'))
+    Check ($script:code -ne 0 -and (Test-Has $out 'inside the EFI folder')) 'backups inside the EFI folder are refused'
+    $out = Invoke-Tool @('-Plan', 'settings', '-Efi', $F)
+    Check ($script:code -eq 0 -and (Test-Has $out 'Booter > Quirks > ResizeAppleGpuBars')) 'stage 2 needs no -Package'
+    $st = @{}
+    foreach ($l in (Invoke-Tool @('-Status', '-Efi', $F, '-Package', $Pk))) { $i = $l.IndexOf('='); if ($i -gt 0) { $st[$l.Substring(0, $i)] = $l.Substring($i + 1) } }
+    Check ($st['backup_root'] -like "$Root*IntelXe-EFI-backups*" -or $st['backup_root'] -like "$env:LOCALAPPDATA*") "default backup place: $($st['backup_root'])"
+    if ($st['backup_root'] -like "$Root*") {
+        $lines = Invoke-Tool @('-Plan', 'settings', '-Efi', $F, '-Package', $Pk)
+        $h = ''
+        foreach ($l in $lines) { if ($l -like '== plan SHA-256: *') { $h = $l.Substring(17).Trim() } }
+        $out = Invoke-Tool @('-Apply', 'settings', '-Efi', $F, '-Package', $Pk, '-Expect', $h)
+        Check ($script:code -eq 0 -and (Test-Path -LiteralPath (Join-Path $Root 'efi\IntelXe-EFI-backups'))) 'without -BackupDir: the backup next to the EFI folder'
+        $lines = Invoke-Tool @('-Plan', 'undo', '-Efi', $F)
+        foreach ($l in $lines) { if ($l -like '== plan SHA-256: *') { $h = $l.Substring(17).Trim() } }
+        $out = Invoke-Tool @('-Undo', '-Efi', $F, '-Expect', $h)
+        Check ($script:code -eq 0 -and (Test-SameBytes (Get-Bytes $Cfg) $stage1Bytes)) '... and undo finds it there'
+    }
+    $out = Invoke-Tool @('-Status')
+    Check ($script:code -eq 2 -and (Test-Has $out 'give the EFI folder')) '-Status without -Efi says what is missing'
+    $null = Invoke-Tool @('-Help')
+    Check ($script:code -eq 0) '-Help'
+    Remove-Item -LiteralPath (Oc 'OpenCore.efi')
+    $out = Invoke-Tool @('-Plan', 'settings', '-Efi', $F)
+    Check ($script:code -ne 0 -and (Test-Has $out 'not an OpenCore EFI')) 'without OpenCore.efi: not an OpenCore EFI'
+} catch {
+    Write-Host "FAIL  the test stopped: $(Get-ErrorText $_)"
+    Write-Host $_.ScriptStackTrace
+    $script:fails++
+} finally {
+    if (Test-Path -LiteralPath $Root) { Remove-Item -LiteralPath $Root -Recurse -Force }
+}
+Write-Host "== $($script:fails) failure(s)"
+exit $script:fails

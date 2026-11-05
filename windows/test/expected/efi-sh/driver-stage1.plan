@@ -1,0 +1,4 @@
+copy     EFI/OC/Kexts/IntelXe.kext (version 9.9.9)
+config   Kernel > Add, item 15 (IntelXe.kext): Enabled false -> true
+config   Misc > Security > ExposeSensitiveData: 6 -> 7 (OpenCore then records which EFI it booted from, for this script)
+note     not added: SSDT-ARCOFF.aml. No Arc B580 found on this machine, so its ACPI path cannot be checked (stage 4, step 2 of README-INSTALL.md)

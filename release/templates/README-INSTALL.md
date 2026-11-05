@@ -25,7 +25,7 @@ Already running an earlier build of this driver? Go to [Upgrading](#upgrading-fr
 
   | File | What | Unpack it on |
   |---|---|---|
-  | `intel-gpu-macos-driver-@VER@-efi.zip` | the OpenCore pieces: `IntelXe.kext`, `SSDT-ARCOFF.aml` and its source | any system |
+  | `intel-gpu-macos-driver-@VER@-efi.zip` | the OpenCore pieces: `IntelXe.kext`, `SSDT-ARCOFF.aml` and its source; `IntelXe-EFI.ps1`, which makes stages 2 and 4 on Windows | any system |
   | `intel-gpu-macos-driver-@VER@-@CODENAME@.zip` | everything else, with `install.sh` | **macOS on the PC** (stage 3) |
 
   Unpack the second one on macOS only: Windows and most Linux unzip tools drop the executable bits and the code
@@ -83,6 +83,11 @@ The EFI partition is a small FAT32 partition, which every system can mount:
 | Windows | in an administrator Command Prompt: `mountvol S: /S`, then start ProperTree from the same prompt and open `S:\EFI\OC\config.plist`; `mountvol S: /D` when done |
 | Linux | `lsblk -o NAME,FSTYPE,PARTTYPENAME` shows it (`vfat`, type "EFI System"), then `sudo mount /dev/nvme0n1p1 /mnt` with your partition |
 | macOS | `diskutil list` shows it (`EFI` on the disk you boot from), then `sudo diskutil mount disk0s1` with your partition |
+
+**On Windows**, `IntelXe-EFI.ps1` in the `-efi.zip` makes items 1 to 5 for you in an EFI folder you choose (a USB
+stick's, or the EFI partition, which it can mount): right-click > Run with PowerShell, *Settings: plan*, then
+*Settings: apply*. It backs up the whole EFI folder first, keeps the rest of `config.plist` as it is, and can undo the
+change; see `README-Windows.md` in the zip. Not yet tested on a Windows PC by its author.
 
 In `config.plist`:
 
@@ -148,6 +153,11 @@ OpenCore booted from, backs up the whole EFI folder, copies the files, enables t
 `SSDT-ARCOFF.aml` only when its ACPI path is your card's. `./efi.sh --plan` shows the changes, `sudo ./efi.sh --apply`
 makes them, `sudo ./efi.sh --undo` takes them back; `--settings-plan` / `--settings-apply` do stage 2. `./efi.sh` alone
 lists every option. The IntelXe Manager app has the same on its EFI page.
+
+**On Windows**, `IntelXe-EFI.ps1` in the `-efi.zip` does steps 1 and 3 (*Driver: plan*, *Driver: apply*) in the EFI
+folder you choose, with a backup and an undo. Windows cannot check the ACPI path the way `efi.sh` does on macOS, so it
+adds `SSDT-ARCOFF.aml` only when you tick its box and give your card's path from step 2 (it reads it from Device
+Manager when Windows runs on the PC with the card). See `README-Windows.md` in the zip.
 
 1. Copy `IntelXe.kext` to `EFI/OC/Kexts/` and add it under `Kernel > Add`: `BundlePath IntelXe.kext`,
    `ExecutablePath Contents/MacOS/IntelXe`, `PlistPath Contents/Info.plist`, `Enabled true`. This is the GPU driver

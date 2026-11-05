@@ -27,6 +27,8 @@ partition UUID; disk numbers are never used, they change between boots. OpenCore
 `Misc > Security > ExposeSensitiveData` includes 1 (`efi/sample-z790` has 6, without it): then the page lists the EFI
 partitions with their disk's name and size to choose from, remembers the choice by UUID, and the stage-4 change adds 1
 to `ExposeSensitiveData` so that the next boot records it.
+**Use an EFI folder...** works on a folder you pick instead (a USB stick's `EFI` folder, or the folder holding it):
+`efi.sh --efi`, with backups under `efi-backups/folder-<hash of the path>/`; on Windows, `windows/IntelXe-EFI.ps1` does the same.
 
 **Every write** shows the disk (name, internal or external, size, device, partition UUID) and efi.sh's plan, line by
 line, then asks; the password dialog follows. The app passes the plan's SHA-256 with the command, and efi.sh writes

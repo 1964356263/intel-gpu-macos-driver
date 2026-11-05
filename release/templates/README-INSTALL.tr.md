@@ -30,7 +30,7 @@ Bu sürücünün eski bir sürümünü kullanıyorsanız doğrudan [Yükseltme](
 
   | Dosya | İçinde ne var | Nerede açılmalı |
   |---|---|---|
-  | `intel-gpu-macos-driver-@VER@-efi.zip` | OpenCore parçaları: `IntelXe.kext`, `SSDT-ARCOFF.aml` ve kaynağı | herhangi bir sistemde |
+  | `intel-gpu-macos-driver-@VER@-efi.zip` | OpenCore parçaları: `IntelXe.kext`, `SSDT-ARCOFF.aml` ve kaynağı; Windows'ta 2. ve 4. aşamaları yapan `IntelXe-EFI.ps1` | herhangi bir sistemde |
   | `intel-gpu-macos-driver-@VER@-@CODENAME@.zip` | geri kalan her şey ve `install.sh` | **bilgisayardaki macOS'ta** (3. aşama) |
 
   İkinci dosyayı yalnızca macOS'ta açın. Windows ve çoğu Linux arşiv aracı, çalıştırma izinlerini ve kurulum betiğinin
@@ -90,6 +90,12 @@ EFI bölümü küçük bir FAT32 bölümü, her sistem bağlayabilir:
 | Windows | Yönetici olarak açılmış Komut İstemi'nde `mountvol S: /S`, ardından aynı pencereden ProperTree'yi başlatıp `S:\EFI\OC\config.plist` dosyasını açın; bitince `mountvol S: /D` |
 | Linux | `lsblk -o NAME,FSTYPE,PARTTYPENAME` bölümü gösterir (`vfat`, tür "EFI System"), sonra kendi bölümünüzle `sudo mount /dev/nvme0n1p1 /mnt` |
 | macOS | `diskutil list` bölümü gösterir (açılış diskinizdeki `EFI`), sonra kendi bölümünüzle `sudo diskutil mount disk0s1` |
+
+**Windows'ta** `-efi.zip`'teki `IntelXe-EFI.ps1` 1-5. maddeleri seçtiğiniz EFI klasöründe (bir USB belleğinkinde ya da
+bağlayabildiği EFI bölümünde) sizin yerinize yapar: sağ tık > PowerShell ile Çalıştır, *Settings: plan*, ardından
+*Settings: apply*. Önce EFI klasörünün tamamını yedekler, `config.plist`'in geri kalanını olduğu gibi bırakır ve
+değişikliği geri alabilir; zip'teki `README-Windows.md`'ye bakın. Henüz yazarı tarafından bir Windows bilgisayarda
+denenmedi.
 
 `config.plist`'te:
 
@@ -155,6 +161,11 @@ yapar: OpenCore'un açıldığı EFI'yi bulur, EFI klasörünün tamamını yede
 açar; `SSDT-ARCOFF.aml`'ı yalnızca ACPI yolu kartınızınkiyle aynıysa ekler. `./efi.sh --plan` değişiklikleri gösterir,
 `sudo ./efi.sh --apply` yapar, `sudo ./efi.sh --undo` geri alır; `--settings-plan` / `--settings-apply` 2. aşamayı yapar.
 Bütün seçenekler için yalnızca `./efi.sh`. IntelXe Manager uygulamasının EFI sayfası da aynısını yapar.
+
+**Windows'ta** `-efi.zip`'teki `IntelXe-EFI.ps1` 1. ve 3. maddeleri (*Driver: plan*, *Driver: apply*) seçtiğiniz EFI
+klasöründe, yedek ve geri alma ile yapar. Windows, ACPI yolunu `efi.sh`'in macOS'ta yaptığı gibi denetleyemez; bu
+yüzden `SSDT-ARCOFF.aml`'ı yalnızca kutusunu işaretleyip 2. maddedeki kart yolunuzu yazdığınızda ekler (Windows kartın
+takılı olduğu bilgisayarda çalışıyorsa yolu Aygıt Yöneticisi'nden okur). Zip'teki `README-Windows.md`'ye bakın.
 
 1. `IntelXe.kext`'i `EFI/OC/Kexts/` klasörüne kopyalayın ve `Kernel > Add` altına ekleyin: `BundlePath IntelXe.kext`,
    `ExecutablePath Contents/MacOS/IntelXe`, `PlistPath Contents/Info.plist`, `Enabled true`. GPU sürücüsü bu (GuC/HuC yazılımları

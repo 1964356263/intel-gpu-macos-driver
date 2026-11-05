@@ -95,7 +95,7 @@
 /* EFI page */
 "EFI (OpenCore)" = "EFI (OpenCore)";
 "EFI partition" = "EFI bölümü";
-"For a Mac installed with a plain OpenCore EFI (stage 1 of the install guide): this page does stages 2 and 4 on the EFI that OpenCore booted from." = "Sade bir OpenCore EFI ile kurulmuş Mac'ler için (kurulum rehberinin 1. aşaması): Bu sayfa, OpenCore'un açıldığı EFI üzerinde 2. ve 4. aşamaları yapar.";
+"For a Mac installed with a plain OpenCore EFI (stage 1 of the install guide): this page does stages 2 and 4 on the EFI that OpenCore booted from, or on an EFI folder you choose, such as a USB stick's." = "Sade bir OpenCore EFI ile kurulmuş Mac'ler için (kurulum rehberinin 1. aşaması): Bu sayfa, OpenCore'un açıldığı EFI üzerinde ya da seçtiğiniz bir EFI klasöründe (örneğin bir USB belleğinkinde) 2. ve 4. aşamaları yapar.";
 "Choose a package on the Driver page first: IntelXe.kext and SSDT-ARCOFF.aml come from it." = "Önce Sürücü sayfasında bir paket seçin: IntelXe.kext ve SSDT-ARCOFF.aml oradan alınır.";
 "Open the Driver page" = "Sürücü sayfasını aç";
 "Open the EFI page" = "EFI sayfasını aç";
@@ -106,7 +106,7 @@
 "OpenCore" = "OpenCore";
 "OpenCore's record of this boot" = "OpenCore'un bu açılış kaydı";
 "Your choice" = "Sizin seçiminiz";
-"A folder (test)" = "Bir klasör (deneme)";
+"A folder you chose" = "Seçtiğiniz bir klasör";
 "No OpenCore here" = "Burada OpenCore yok";
 "Not checked" = "Denetlenmedi";
 "Unknown disk" = "Bilinmeyen disk";
@@ -153,3 +153,7 @@
 "Your EFI has no IntelXe.kext, or its config.plist entry is off. Add it on the EFI page before you restart." = "EFI'nizde IntelXe.kext yok ya da config.plist kaydı kapalı. Yeniden başlatmadan önce EFI sayfasından ekleyin.";
 "The IntelXe.kext in your EFI could not be checked: the EFI partition is not mounted or was not found. Check it on the EFI page before you restart." = "EFI'nizdeki IntelXe.kext denetlenemedi: EFI bölümü bağlı değil ya da bulunamadı. Yeniden başlatmadan önce EFI sayfasından denetleyin.";
 "Remove IntelXe.kext from your EFI before you restart, or macOS comes up without the driver. The EFI page can undo its last change." = "Yeniden başlatmadan önce IntelXe.kext'i EFI'nizden çıkarın, yoksa macOS sürücüsüz açılır. EFI sayfası son değişikliğini geri alabilir.";
+"Use an EFI folder…" = "Bir EFI klasörü kullan…";
+"Use the EFI partition instead" = "Bunun yerine EFI bölümünü kullan";
+"Choose the EFI folder of an OpenCore EFI (the one that holds OC and BOOT), for example on a USB stick." = "Bir OpenCore EFI'nin EFI klasörünü seçin (içinde OC ve BOOT olan), örneğin bir USB bellekte.";
+"That folder is not an OpenCore EFI: choose the EFI folder, the one with OC inside." = "Bu klasör bir OpenCore EFI değil: içinde OC olan EFI klasörünü seçin.";
