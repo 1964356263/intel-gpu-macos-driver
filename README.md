@@ -174,7 +174,7 @@ Releases follow [Semantic Versioning](https://semver.org) in its 0.x form until 
 number (0.1.1). A change that needs manual steps when updating (an EFI change, renamed boot-args) comes with upgrade
 steps in the release notes. Packages, the GitHub tag and `install.sh` carry the release number; a kext or the Metal
 driver carries the number of the release that last rebuilt it (0.1.1 changed only the guide, the docs and the
-packaging; 0.1.2 rebuilt everything except `IntelXe.kext`, which still says 0.1.0).
+packaging; 0.1.2 rebuilt everything).
 
 ## Philosophy
 

@@ -297,8 +297,11 @@ is on).
 
 ## Upgrading from an earlier build
 
-**From 0.1.0 or 0.1.1:** 0.1.2 has new kexts and a new Metal driver; `IntelXe.kext` in the EFI is unchanged. Install
-the package (the app: *Download v@VER@*, then *Install this package*; or `sudo ./install.sh --apply`) and reboot.
+**From 0.1.0 or 0.1.1:** every kext, the Metal driver and the video libraries are new, **`IntelXe.kext` in the EFI
+too** (it closes a security hole: an unprivileged process could get writable GPU mappings of pages it may only read).
+Install the package (the app: *Download v@VER@*, then *Install this package*; or `sudo ./install.sh --apply`), then
+replace `IntelXe.kext` in the EFI before you reboot (the app's EFI page or `sudo ./efi.sh --apply` on macOS,
+`IntelXe-EFI.ps1` on Windows, or copy it by hand; its `config.plist` entry stays as it is).
 `--apply` also installs the boot guard's LaunchDaemon and replaces the allow-list of 0.1.0 and 0.1.1 (with or without
 the `-NotificationCenter` line 0.1.1's guide asked for), so that Safari's GPU process, the Dock's icons and the desktop
 widgets use the driver again. An allow-list you changed in another way is kept: compare it with the package's

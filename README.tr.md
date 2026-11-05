@@ -176,8 +176,7 @@ biçimini izliyor. Yeni bir özellik, yeni bir macOS sürümü ya da yeni bir ka
 hata düzeltmeleri üçüncüyü (0.1.1). Güncellerken elle adım gerektiren değişiklikler (EFI'de bir değişiklik, adı değişen
 boot-arg'lar) sürüm notlarında yükseltme adımlarıyla birlikte geliyor. Paketler, GitHub etiketi ve `install.sh`
 sürüm numarasını taşıyor. Kext'ler ve Metal sürücüsü ise kendilerini en son yeniden derleyen sürümün numarasını taşıyor:
-0.1.1'de yalnızca rehber, dokümanlar ve paketleme değişti; 0.1.2 `IntelXe.kext` dışında her şeyi yeniden derledi, o hâlâ
-0.1.0 diyor.
+0.1.1'de yalnızca rehber, dokümanlar ve paketleme değişti; 0.1.2 her şeyi yeniden derledi.
 
 ## Yaklaşımımız
 
