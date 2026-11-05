@@ -4553,6 +4553,12 @@ static int bindOpCheck(const drm_xe_vm_bind_op &op) {
 		op.op == DRM_XE_VM_BIND_OP_UNMAP))
 		return EINVAL;
 	if (op.prefetch_mem_region_instance && op.op != DRM_XE_VM_BIND_OP_PREFETCH) return EINVAL;
+	// xe vm_bind_ioctl_check_args: every offset, address and size is whole pages (obj_offset shares its union with
+	// userptr), and only UNMAP_ALL may have no range. WAS missing: the low 12 bits of an unaligned address or offset
+	// reached the PTE, where they are control bits (present, RW, PAT, DM).
+	if ((op.obj_offset & 0xfff) || (op.addr & 0xfff) || (op.range & 0xfff) ||
+		(!op.range && op.op != DRM_XE_VM_BIND_OP_UNMAP_ALL))
+		return EINVAL;
 	if (decomp) return EOPNOTSUPP;
 	return 0;
 }
@@ -4565,7 +4571,8 @@ static int vmBindOp(XeClientState *c, XeVm *vm, const drm_xe_vm_bind_op &op, Bin
 			const bool comp = (kPatComp >> op.pat_index) & 1;
 			if (!(op.flags & DRM_XE_VM_BIND_FLAG_NULL)) {
 				bo = static_cast<XeBo *>(c->bos.get(op.obj));
-				if (!bo || op.obj_offset + op.range > bo->size) return EINVAL;
+				// xe_vm_bind_ioctl_validate_bo, in its overflow-safe form (WAS obj_offset + range > size, which wraps)
+				if (!bo || op.range > bo->size || op.obj_offset > bo->size - op.range) return EINVAL;
 				if (bo->noComp && comp) return EINVAL;   // xe_vm_bind_ioctl_validate_bo
 				// rb7r: xe_vma_create: a new mapping (WILLNEED) of a DONTNEED BO EBUSY, of a purged one EINVAL
 				if (bo->purgeTrack && bo->purgeState != kMadvWillneed) {
