@@ -25,6 +25,7 @@ from pathlib import Path
 HERE=Path(__file__).resolve().parent          # kernel/IntelXe
 REPO=HERE.parent.parent
 FBDIR=HERE.parent/'IntelXeFB'                    # kernel/IntelXeFB
+VER=(REPO/'VERSION').read_text().strip()       # the release that last rebuilt the kext
 GUC='bmg_guc_70.bin'
 GUC_SHA='de81c75f46a127c33cd59f604d800e9ffc7ed3495967ba0d8767cd6985ab398b'  # GuC 70.72.1
 HUC='bmg_huc.bin'
@@ -80,7 +81,7 @@ def main():
   info_c.write_text('#include <mach/kmod.h>\n'
    'extern kern_return_t _start(kmod_info_t *, void *);\nextern kern_return_t _stop(kmod_info_t *, void *);\n'
    f'extern kern_return_t {name}_start(kmod_info_t *, void *);\nextern kern_return_t {name}_stop(kmod_info_t *, void *);\n'
-   f'__attribute__((visibility("default"))) KMOD_EXPLICIT_DECL({ident}, "0.1.0", _start, _stop)\n'
+   f'__attribute__((visibility("default"))) KMOD_EXPLICIT_DECL({ident}, "{VER}", _start, _stop)\n'
    f'__private_extern__ kmod_start_func_t *_realmain = {name}_start;\n__private_extern__ kmod_stop_func_t *_antimain = {name}_stop;\n'
    '__private_extern__ int _kext_apple_cc = __APPLE_CC__;\n')
   objects=[]
@@ -90,8 +91,8 @@ def main():
   exe=bundle/f'MacOS/{name}'
   run(['xcrun','ld','-arch','x86_64','-kext','-undefined','dynamic_lookup','-no_fixup_chains','-macos_version_min','10.6','-o',exe,*objects,sdk/'Library/x86_64/libkmod.a'])
   run(['xcrun','strip','-S',exe])
-  info=dict(CFBundleIdentifier=ident,CFBundleExecutable=name,CFBundleName=name,CFBundlePackageType='KEXT',CFBundleVersion='0.1.0',
-   CFBundleShortVersionString='0.1.0',OSBundleCompatibleVersion='0.1.0',OSBundleLibraries=libs,
+  info=dict(CFBundleIdentifier=ident,CFBundleExecutable=name,CFBundleName=name,CFBundlePackageType='KEXT',CFBundleVersion=VER,
+   CFBundleShortVersionString=VER,OSBundleCompatibleVersion='0.1.0',OSBundleLibraries=libs,
    IOKitPersonalities={name:dict(CFBundleIdentifier=ident,IOClass=ioclass or name,IOProviderClass='IOPCIDevice',IOPCIMatch='0xe20b8086',**personality),
     **{k:dict(CFBundleIdentifier=ident,**v) for k,v in more.items()}},**extra)
   (bundle/'Info.plist').write_bytes(plistlib.dumps(info))

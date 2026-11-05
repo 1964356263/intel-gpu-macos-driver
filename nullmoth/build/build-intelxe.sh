@@ -26,6 +26,7 @@
 #                  downloaded into <repo>/external/ and checked by sha256 (the repository does not carry it)
 set -euo pipefail
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
+IXVER=$(cat "$REPO/VERSION")   # the release that last rebuilt a binary
 NM=$REPO/nullmoth
 OUT=${OUT:-$REPO/build/nullmoth}
 WHAT=${1:-all}
@@ -94,11 +95,12 @@ if want plugin; then
 	<key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
 	<key>CFBundleName</key><string>NVMTLDriver</string>
 	<key>CFBundlePackageType</key><string>BNDL</string>
-	<key>CFBundleShortVersionString</key><string>0.1.0</string>
-	<key>CFBundleVersion</key><string>0.1.0</string>
+	<key>CFBundleShortVersionString</key><string>@IXVER@</string>
+	<key>CFBundleVersion</key><string>@IXVER@</string>
 </dict>
 </plist>
 EOF
+  sed -i '' "s/@IXVER@/$IXVER/g" "$B/Info.plist"
   cp "$OUT/NVMTLDriver" "$B/MacOS/"; cp "$XL" "$B/MacOS/"; cp -R "$AR" "$B/MacOS/air-runtime"
   cp -R "$OUT/air-runtime-licenses" "$B/Resources/air-runtime"
   codesign -f -s - "$B/MacOS/libnvmtl_translate.dylib"
@@ -121,7 +123,7 @@ kext() { # name source-dir source define [extra defines...]
     -c "$dir/$src" -o "$OUT/$name.o" 2>"$OUT/$name.err" || { grep -A3 error "$OUT/$name.err" | head -30; exit 1; }
   xcrun clang++ -arch x86_64 -mmacosx-version-min=10.15 -fapple-kext -nostdlib -Xlinker -kext -Xlinker -no_fixup_chains \
     "$OUT/$name.o" -L"$KSDK/Library/x86_64" -lkmod -o "$K/MacOS/$name"
-  cp "$dir/Info-NMX-IntelXe.plist" "$K/Info.plist"
+  sed "s#<string>0\.1\.0</string>#<string>$IXVER</string>#g" "$dir/Info-NMX-IntelXe.plist" > "$K/Info.plist"
   codesign -f -s - "$OUT/$name.kext"
 }
 if want kexts; then
