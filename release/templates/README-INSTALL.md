@@ -143,6 +143,12 @@ Reboot into macOS. The screen still runs on the firmware output.
 Take the files from `intel-gpu-macos-driver-@VER@-efi.zip` (the macOS package has the same files under `EFI/OC/`).
 Mount the EFI partition as in stage 2; on the PC itself, `sudo diskutil mount disk0s1` with your partition.
 
+On the PC itself, `efi.sh` in the macOS package does steps 1 to 3 (and stage 2's settings) for you: it finds the EFI
+OpenCore booted from, backs up the whole EFI folder, copies the files, enables their `config.plist` entries, and adds
+`SSDT-ARCOFF.aml` only when its ACPI path is your card's. `./efi.sh --plan` shows the changes, `sudo ./efi.sh --apply`
+makes them, `sudo ./efi.sh --undo` takes them back; `--settings-plan` / `--settings-apply` do stage 2. `./efi.sh` alone
+lists every option. The IntelXe Manager app has the same on its EFI page.
+
 1. Copy `IntelXe.kext` to `EFI/OC/Kexts/` and add it under `Kernel > Add`: `BundlePath IntelXe.kext`,
    `ExecutablePath Contents/MacOS/IntelXe`, `PlistPath Contents/Info.plist`, `Enabled true`. This is the GPU driver
    (GuC/HuC firmware included); it does not need Lilu.
@@ -247,6 +253,7 @@ NVRAM settings and sysctls have only the new names: the variable `b580fb-vrr-mod
 | `Library/Extensions/IntelXeFB.kext`, `NMXAccel.kext`, `NMXAGDC.kext` | `/Library/Extensions` (display, accelerator), via `install.sh` |
 | `Library/GPUBundles/NVMTLDriverLib.bundle`, `nvmtl/`, `nvmtl-allow.txt` | `/Library/GPUBundles` (Metal driver, Mesa, codecs), via `install.sh` |
 | `system-volume/` | optional: the copy of the Metal driver on the system volume (Safari WebGL, step 3.4) |
+| `efi.sh` | optional, on macOS: stages 2 and 4 in the EFI OpenCore booted from, with a backup and an undo |
 | `SHA256SUMS`, `sigcheck` | the checks `install.sh` runs |
 | `SOURCES.md`, `LICENSES/` | which source and script built each binary; the licence texts |
 
