@@ -52,6 +52,18 @@ The order is roughly the intended one. Every item should follow the Linux xe/i91
 - Display hot-plug: interrupt-driven, instead of polling.
 - Second display pipe (pipe B, DBUF/MBUS split, watermarks). The test setup has only one monitor.
 
+### OpenGL through Zink
+- **Done (not in the release packages yet):** Mesa's Zink for applications that open their OpenGL context through
+  GLFW/EGL (LWJGL 3 games): Minecraft 1.21.1 at the bench spot 741 fps against 160 on Apple's OpenGL (Windows 450–479).
+  On the test machine it is switched on for every LWJGL 3 application.
+- Next: an installer component in the release packages; then native CGL/NSOpenGL applications (a CGL front end for
+  Zink), which is what "Zink by default for every OpenGL application" needs.
+
+### A companion app
+- A small macOS app for users: system and GPU information, whether the installed driver is the latest release, and
+  settings that today need Terminal (Zink on or off, the boot guard, VRAM sharing, diagnostics for a bug report).
+  Not before the driver itself is easier to install.
+
 ## Other Xe2 (Battlemage) cards
 
 The kext is organized around the graphics IP version (Xe2 / graphics 20.01, media 13.01, display 14.01), not the board.
