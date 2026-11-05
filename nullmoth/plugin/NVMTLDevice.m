@@ -1876,22 +1876,34 @@ static uint32_t nvmtl_a8_factor(uint32_t f) {
     default: return f;
     }
 }
+/* macOS 26 adds "unspecialized" values to the classic pipeline descriptor (MTLRenderPipeline.h): until a pipeline is
+   specialized they behave as MTLColorWriteMaskAll, MTLBlendFactorOne (source factors) / MTLBlendFactorZero (destination
+   factors) and MTLBlendOperationAdd. Read bit by bit, the 0x10 mask meant "write nothing". Done from the header; no app
+   seen using them yet (the SwiftUI material test never reaches this path: its masks are 0x0 and 0xf). */
+#define NVMTL_MTLColorWriteMaskUnspecialized 0x10u
+static MTLColorWriteMask nvmtl_write_mask(MTLColorWriteMask m) { return (m & NVMTL_MTLColorWriteMaskUnspecialized) ? MTLColorWriteMaskAll : m; }
+static MTLBlendFactor nvmtl_src_factor(MTLBlendFactor f) { return (NSUInteger)f == NVMTL_MTLBlendFactorUnspecialized ? MTLBlendFactorOne : f; }
+static MTLBlendFactor nvmtl_dst_factor(MTLBlendFactor f) { return (NSUInteger)f == NVMTL_MTLBlendFactorUnspecialized ? MTLBlendFactorZero : f; }
+static MTLBlendOperation nvmtl_unspec_op(MTLBlendOperation o) {
+    return (NSUInteger)o == NVMTL_MTLBlendOperationUnspecialized ? MTLBlendOperationAdd : o; }
 static int nvmtl_blend_from(MTLRenderPipelineColorAttachmentDescriptor *ca, int noWrite, int a8, nvk_blend_state *b) {
     *b = (nvk_blend_state){ .enabled = ca.blendingEnabled,
         .src_rgb = VK_BLEND_FACTOR_ONE, .dst_rgb = VK_BLEND_FACTOR_ZERO, .op_rgb = VK_BLEND_OP_ADD,
         .src_alpha = VK_BLEND_FACTOR_ONE, .dst_alpha = VK_BLEND_FACTOR_ZERO, .op_alpha = VK_BLEND_OP_ADD };
+    const MTLColorWriteMask wm = nvmtl_write_mask(ca.writeMask);
+    if (wm != ca.writeMask) { static int said; if (said++ < 2) nvlog("pipeline: colour write mask Unspecialized (0x%lx) -> All, as Metal documents it", (unsigned long)ca.writeMask); }
     if (!noWrite && a8) {
-        if (ca.writeMask & MTLColorWriteMaskAlpha) b->write_mask |= VK_COLOR_COMPONENT_R_BIT;
+        if (wm & MTLColorWriteMaskAlpha) b->write_mask |= VK_COLOR_COMPONENT_R_BIT;
     } else if (!noWrite) {
-        if (ca.writeMask & MTLColorWriteMaskRed) b->write_mask |= VK_COLOR_COMPONENT_R_BIT;
-        if (ca.writeMask & MTLColorWriteMaskGreen) b->write_mask |= VK_COLOR_COMPONENT_G_BIT;
-        if (ca.writeMask & MTLColorWriteMaskBlue) b->write_mask |= VK_COLOR_COMPONENT_B_BIT;
-        if (ca.writeMask & MTLColorWriteMaskAlpha) b->write_mask |= VK_COLOR_COMPONENT_A_BIT;
+        if (wm & MTLColorWriteMaskRed) b->write_mask |= VK_COLOR_COMPONENT_R_BIT;
+        if (wm & MTLColorWriteMaskGreen) b->write_mask |= VK_COLOR_COMPONENT_G_BIT;
+        if (wm & MTLColorWriteMaskBlue) b->write_mask |= VK_COLOR_COMPONENT_B_BIT;
+        if (wm & MTLColorWriteMaskAlpha) b->write_mask |= VK_COLOR_COMPONENT_A_BIT;
     }
-    if (b->enabled && (nvmtl_blend_factor(ca.sourceRGBBlendFactor, &b->src_rgb) ||
-        nvmtl_blend_factor(ca.destinationRGBBlendFactor, &b->dst_rgb) || nvmtl_blend_op(ca.rgbBlendOperation, &b->op_rgb) ||
-        nvmtl_blend_factor(ca.sourceAlphaBlendFactor, &b->src_alpha) || nvmtl_blend_factor(ca.destinationAlphaBlendFactor, &b->dst_alpha) ||
-        nvmtl_blend_op(ca.alphaBlendOperation, &b->op_alpha)))
+    if (b->enabled && (nvmtl_blend_factor(nvmtl_src_factor(ca.sourceRGBBlendFactor), &b->src_rgb) ||
+        nvmtl_blend_factor(nvmtl_dst_factor(ca.destinationRGBBlendFactor), &b->dst_rgb) || nvmtl_blend_op(nvmtl_unspec_op(ca.rgbBlendOperation), &b->op_rgb) ||
+        nvmtl_blend_factor(nvmtl_src_factor(ca.sourceAlphaBlendFactor), &b->src_alpha) || nvmtl_blend_factor(nvmtl_dst_factor(ca.destinationAlphaBlendFactor), &b->dst_alpha) ||
+        nvmtl_blend_op(nvmtl_unspec_op(ca.alphaBlendOperation), &b->op_alpha)))
         return -1;
     return 0;
 }
