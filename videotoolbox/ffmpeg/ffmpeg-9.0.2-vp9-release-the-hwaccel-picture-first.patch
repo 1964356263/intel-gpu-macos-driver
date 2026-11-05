@@ -1,0 +1,40 @@
+FFmpeg 9.0.2 vp9: release the hwaccel picture before the frame (backport of upstream FFmpeg master vp9.c)
+
+vp9_frame_unref() dropped the frame (tf) before its hwaccel_picture_private, and vp9_frame_replace() replaced the
+picture private after the frame; upstream now releases / replaces the hwaccel picture first, as av1dec.c does, so the
+hwaccel's per-picture state never outlives the frame it describes. Part of making a resolution change inside a VP9
+stream safe with the Vulkan hwaccel (see ffmpeg-9.0.2-vulkan-exec-frame-deps-keep-the-frames-context.patch).
+
+--- a/libavcodec/vp9.c
++++ b/libavcodec/vp9.c
+@@ -97,10 +97,10 @@
+ 
+ static void vp9_frame_unref(VP9Frame *f)
+ {
++    av_refstruct_unref(&f->hwaccel_picture_private);
+     ff_progress_frame_unref(&f->tf);
+     av_refstruct_unref(&f->header_ref);
+     av_refstruct_unref(&f->extradata);
+-    av_refstruct_unref(&f->hwaccel_picture_private);
+     f->segmentation_map = NULL;
+ }
+ 
+@@ -150,6 +150,8 @@
+     av_refstruct_replace(&dst->header_ref, src->header_ref);
+     dst->frame_header = src->frame_header;
+ 
++    av_refstruct_replace(&dst->hwaccel_picture_private,
++                          src->hwaccel_picture_private);
+     ff_progress_frame_replace(&dst->tf, &src->tf);
+ 
+     av_refstruct_replace(&dst->extradata, src->extradata);
+@@ -157,9 +159,6 @@
+     dst->segmentation_map = src->segmentation_map;
+     dst->mv = src->mv;
+     dst->uses_2pass = src->uses_2pass;
+-
+-    av_refstruct_replace(&dst->hwaccel_picture_private,
+-                          src->hwaccel_picture_private);
+ }
+ 
+ static int update_size(AVCodecContext *avctx, int w, int h)

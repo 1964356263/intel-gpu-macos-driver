@@ -1,0 +1,336 @@
+anv/nvmtl: GPU reset recovery - replace a banned exec queue on the same VM
+
+nvmtl_anv_device_recover_v1(VkDevice, flags, info), looked up with dlsym by the nullmoth Metal plugin: each banned exec
+queue (and companion RCS queue) of the device is replaced by a fresh one on device->vm_id, the new context gets anv's
+initial queue state again (genX(init_queue_state), split out of genX(init_device_state)), the old queues are destroyed
+and the queue and device lost flags are cleared. This is what Linux userspace does after an xe context ban (iris replaces
+its exec queue); the VM, BOs and GPU addresses survive, so every Vulkan handle the plugin holds stays valid. flags:
+FORCE (replace every queue, waiting for it to go idle: tests), QUERY (report only). The caller serializes submissions
+and fence waits around it. Base: Mesa "tile4v" = tile4 + 0040-0043 (51b37d76, mesa-wsi build-cpu3); touches no file of 0040-0043.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+--- a/src/intel/vulkan/genX_init_state.c
++++ b/src/intel/vulkan/genX_init_state.c
+@@ -1048,6 +1048,53 @@
+    pdevice->cmd_capture_data = genX(cmd_capture_data);
+ 
+    pdevice->gpgpu_pipeline_value = GPGPU;
++}
++
++/* The initial state of one queue's hardware contexts (its exec queue and, for compute and copy queues, the companion
++ * RCS one). Also used by nvmtl_anv_device_recover_v1 (anv_nvmtl_recover.c) when a banned exec queue is replaced by a
++ * fresh one on the same VM: a new context starts from the kernel's default image and needs this state again.
++ */
++VkResult
++genX(init_queue_state)(struct anv_queue *queue)
++{
++   struct anv_device *device = queue->device;
++   VkResult res;
++
++   switch (queue->family->engine_class) {
++   case INTEL_ENGINE_CLASS_RENDER:
++      res = init_render_queue_state(queue, false /* is_companion_rcs_batch */);
++      break;
++   case INTEL_ENGINE_CLASS_COMPUTE: {
++      res = init_compute_queue_state(queue);
++      if (res != VK_SUCCESS)
++         return res;
++
++      /**
++       * Execute RCS init batch by default on the companion RCS command buffer in
++       * order to support MSAA copy/clear operations on compute queue.
++       */
++      res = init_render_queue_state(queue, true /* is_companion_rcs_batch */);
++      break;
++   }
++   case INTEL_ENGINE_CLASS_VIDEO:
++      res = init_copy_video_queue_state(queue);
++      break;
++   case INTEL_ENGINE_CLASS_COPY:
++      res = init_copy_video_queue_state(queue);
++      if (res != VK_SUCCESS)
++         return res;
++
++      /**
++       * Execute RCS init batch by default on the companion RCS command buffer in
++       * order to support MSAA copy/clear operations on copy queue.
++       */
++      res = init_render_queue_state(queue, true /* is_companion_rcs_batch */);
++      break;
++   default:
++      res = vk_error(device, VK_ERROR_INITIALIZATION_FAILED);
++      break;
++   }
++   return res;
+ }
+ 
+ VkResult
+@@ -1058,40 +1105,7 @@
+    device->slice_hash = (struct anv_state) { 0 };
+    for (uint32_t i = 0; i < device->queue_count; i++) {
+       struct anv_queue *queue = &device->queues[i];
+-      switch (queue->family->engine_class) {
+-      case INTEL_ENGINE_CLASS_RENDER:
+-         res = init_render_queue_state(queue, false /* is_companion_rcs_batch */);
+-         break;
+-      case INTEL_ENGINE_CLASS_COMPUTE: {
+-         res = init_compute_queue_state(queue);
+-         if (res != VK_SUCCESS)
+-            return res;
+-
+-         /**
+-          * Execute RCS init batch by default on the companion RCS command buffer in
+-          * order to support MSAA copy/clear operations on compute queue.
+-          */
+-         res = init_render_queue_state(queue, true /* is_companion_rcs_batch */);
+-         break;
+-      }
+-      case INTEL_ENGINE_CLASS_VIDEO:
+-         res = init_copy_video_queue_state(queue);
+-         break;
+-      case INTEL_ENGINE_CLASS_COPY:
+-         res = init_copy_video_queue_state(queue);
+-         if (res != VK_SUCCESS)
+-            return res;
+-
+-         /**
+-          * Execute RCS init batch by default on the companion RCS command buffer in
+-          * order to support MSAA copy/clear operations on copy queue.
+-          */
+-         res = init_render_queue_state(queue, true /* is_companion_rcs_batch */);
+-         break;
+-      default:
+-         res = vk_error(device, VK_ERROR_INITIALIZATION_FAILED);
+-         break;
+-      }
++      res = genX(init_queue_state)(queue);
+       if (res != VK_SUCCESS)
+          return res;
+ 
+--- a/src/intel/vulkan/anv_genX.h
++++ b/src/intel/vulkan/anv_genX.h
+@@ -50,6 +50,8 @@
+ void genX(init_physical_device_state)(struct anv_physical_device *device);
+ 
+ VkResult genX(init_device_state)(struct anv_device *device);
++
++VkResult genX(init_queue_state)(struct anv_queue *queue);
+ 
+ void genX(init_cps_device_state)(struct anv_device *device);
+ 
+--- a/src/intel/vulkan/meson.build
++++ b/src/intel/vulkan/meson.build
+@@ -199,6 +199,7 @@
+   'anv_descriptor_set.c',
+   'anv_device.c',
+   'anv_nvmtl_surface.c',
++  'anv_nvmtl_recover.c',
+   'anv_dgc_layout.c',
+   'anv_dgc_set.c',
+   'anv_embedded_sampler.c',
+--- /dev/null
++++ b/src/intel/vulkan/anv_nvmtl_recover.c
+@@ -0,0 +1,202 @@
++/*
++ * GPU-reset recovery for the nullmoth Metal plugin on B580.kext (macOS, xemac): a fresh exec queue on the same VM.
++ *
++ * On xe a hang is per context: the GuC resets the guilty context (CONTEXT_RESET_NOTIFICATION), the kernel bans that
++ * exec queue and signals every fence it handed out; a GT reset bans the queues whose work had started and replays the
++ * rest. The VM, its BOs and every GPU address stay valid, and Linux userspace goes on with a new exec queue on the same
++ * VM (iris_xe_replace_batch). anv instead reports VK_ERROR_DEVICE_LOST, which is final for a VkDevice. That is right
++ * for a Vulkan application, but the Metal plugin cannot make a new VkDevice behind an MTLDevice: a new device is a new
++ * VM (no dma-buf on macOS), and Metal applications hold GPU addresses (gpuAddress, argument buffers) and CPU pointers
++ * (contents) into the old one. WindowServer must keep its MTLDevice through a GPU restart the way it does on Apple's
++ * drivers (in-flight command buffers end with an error, new work runs).
++ *
++ * nvmtl_anv_device_recover_v1 does what Linux userspace does after a ban: each banned exec queue (and its companion RCS
++ * queue) is replaced by a new one on device->vm_id, the new context gets anv's initial queue state again
++ * (genX(init_queue_state)), the old queue is destroyed, and the queue and device lost flags are cleared. Nothing else of
++ * the device changes: every VkBuffer, VkImage, VkDeviceMemory, pipeline, descriptor set and command pool stays valid.
++ * What the cancelled work was writing is undefined, as after a GPU restart on Apple's drivers.
++ *
++ * The caller must make sure no other thread submits to, or waits on, this device's queues while it runs (the plugin
++ * holds its submit lock and drains its fence waiters). It is looked up with dlsym; a plugin that does not find it keeps
++ * the old behaviour (a lost device stays lost).
++ */
++#include "anv_private.h"
++
++#include "common/xe/intel_queue.h"
++#include "drm-uapi/xe_drm.h"
++
++#include "xe/anv_queue.h"
++
++#define NVMTL_ANV_RECOVER_FORCE (1u << 0)      /* replace every queue, banned or not (tests); waits for each to idle */
++#define NVMTL_ANV_RECOVER_QUERY (1u << 1)      /* only report bans and the lost state, change nothing */
++
++struct nvmtl_anv_recover_info {
++   uint32_t size;              /* in: sizeof(struct nvmtl_anv_recover_info) */
++   uint32_t was_lost;          /* out: the device was marked lost */
++   uint32_t queues_banned;     /* out: exec queues (main or companion) the kernel reports banned */
++   uint32_t queues_replaced;   /* out: anv queues that got new exec queues */
++   int32_t  error;             /* out: errno of the step that failed, 0 */
++   uint32_t failed_step;       /* out: 0 none, 1 ban query, 2 create, 3 init state, 4 not xe */
++};
++
++PUBLIC VkResult nvmtl_anv_device_recover_v1(VkDevice _device, uint32_t flags, struct nvmtl_anv_recover_info *info);
++
++/* 1 banned, 0 not, -errno: the query failed (an id the kernel does not know: treated as gone) */
++static int
++nvmtl_exec_queue_banned(struct anv_device *device, uint32_t exec_queue_id)
++{
++   if (!exec_queue_id)
++      return 0;
++   struct drm_xe_exec_queue_get_property p = {
++      .exec_queue_id = exec_queue_id,
++      .property = DRM_XE_EXEC_QUEUE_GET_PROPERTY_BAN,
++   };
++   if (intel_ioctl(device->fd, DRM_IOCTL_XE_EXEC_QUEUE_GET_PROPERTY, &p))
++      return -errno;
++   return p.value ? 1 : 0;
++}
++
++static void
++nvmtl_exec_queue_destroy(struct anv_device *device, uint32_t exec_queue_id, bool wait_idle)
++{
++   if (!exec_queue_id)
++      return;
++   /* A queue that was not banned (NVMTL_ANV_RECOVER_FORCE) may still run work the caller waits for: destroying it
++    * would kill that work. A banned one has nothing left (the kernel dropped and signalled its jobs). */
++   if (wait_idle)
++      anv_xe_wait_exec_queue_idle(device, exec_queue_id);
++   struct drm_xe_exec_queue_destroy d = { .exec_queue_id = exec_queue_id };
++   intel_ioctl(device->fd, DRM_IOCTL_XE_EXEC_QUEUE_DESTROY, &d);
++}
++
++/* The initial-state batch of the old context: done (its fence completes with the ban) or abandoned after 2 s. */
++static void
++nvmtl_drop_init_submit(struct anv_device *device, struct anv_async_submit **submit)
++{
++   if (!*submit)
++      return;
++   VkResult r = vk_sync_wait(&device->vk, (*submit)->signal.sync, (*submit)->signal.signal_value,
++                             VK_SYNC_WAIT_COMPLETE, os_time_get_absolute_timeout(2000000000ull));
++   if (r == VK_SUCCESS)
++      anv_async_submit_destroy(*submit);   /* else leaked: its BOs may still be in use */
++   *submit = NULL;
++}
++
++PUBLIC VkResult
++nvmtl_anv_device_recover_v1(VkDevice _device, uint32_t flags, struct nvmtl_anv_recover_info *info)
++{
++   ANV_FROM_HANDLE(anv_device, device, _device);
++   struct nvmtl_anv_recover_info local = { .size = sizeof(local) };
++   if (!info || info->size < sizeof(*info))
++      info = &local;
++   const uint32_t size = info->size;
++   memset(info, 0, sizeof(*info));
++   info->size = size;
++
++   if (device->info->kmd_type != INTEL_KMD_TYPE_XE) {
++      info->failed_step = 4;
++      return VK_ERROR_FEATURE_NOT_PRESENT;
++   }
++
++   info->was_lost = vk_device_is_lost_no_report(&device->vk) ? 1 : 0;
++
++   /* Which queues are banned. A failed query (EINVAL: the kernel no longer knows the id) counts as banned: the queue is
++    * unusable either way. */
++   bool replace[ANV_MAX_QUEUE_FAMILIES * 8] = { false };
++   const uint32_t nq = MIN2(device->queue_count, ARRAY_SIZE(replace));
++   for (uint32_t i = 0; i < nq; i++) {
++      struct anv_queue *queue = &device->queues[i];
++      const int b0 = nvmtl_exec_queue_banned(device, queue->exec_queue_id);
++      const int b1 = nvmtl_exec_queue_banned(device, queue->companion_rcs_id);
++      if (b0 != 0) info->queues_banned++;
++      if (b1 != 0) info->queues_banned++;
++      if (b0 < 0 || b1 < 0) info->error = -(b0 < 0 ? b0 : b1);
++      replace[i] = b0 != 0 || b1 != 0 || (flags & NVMTL_ANV_RECOVER_FORCE) ||
++                   /* lost without a ban (an exec ioctl failed): a fresh context, as iris does for any reset */
++                   (info->was_lost && vk_queue_is_lost(&queue->vk));
++   }
++   /* lost, but no queue says why (a device-level loss such as a query timeout): every queue gets a fresh context */
++   if (info->was_lost && !info->queues_banned) {
++      bool any = false;
++      for (uint32_t i = 0; i < nq; i++) any |= replace[i];
++      if (!any)
++         for (uint32_t i = 0; i < nq; i++) replace[i] = true;
++   }
++   if (flags & NVMTL_ANV_RECOVER_QUERY)
++      return VK_SUCCESS;
++
++   bool nothing = true;
++   for (uint32_t i = 0; i < nq; i++) nothing &= !replace[i];
++   if (nothing)
++      return info->was_lost ? VK_ERROR_DEVICE_LOST : VK_SUCCESS;
++
++   VkResult result = VK_SUCCESS;
++   simple_mtx_lock(&device->mutex);   /* anv_queue_submit's lock: no submission sees half a swap */
++   for (uint32_t i = 0; i < nq && result == VK_SUCCESS; i++) {
++      if (!replace[i])
++         continue;
++      struct anv_queue *queue = &device->queues[i];
++      const bool idle = (flags & NVMTL_ANV_RECOVER_FORCE) && !info->was_lost &&
++                        !nvmtl_exec_queue_banned(device, queue->exec_queue_id);
++
++      /* the new exec queues first, into a copy: anv_xe_create_engine only reads the family and writes the ids */
++      const VkDeviceQueueCreateInfo qci = {
++         .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
++         .flags = queue->vk.flags,
++         .queueFamilyIndex = queue->vk.queue_family_index,
++         .queueCount = 1,   /* no VkDeviceQueueGlobalPriorityCreateInfo: MEDIUM, what the plugin creates its queue with */
++      };
++      struct anv_queue fresh = *queue;
++      fresh.exec_queue_id = 0;
++      fresh.companion_rcs_id = 0;
++      fresh.bind_queue_id = 0;
++      result = anv_xe_create_engine(device, &fresh, &qci);
++      if (result != VK_SUCCESS) {
++         info->failed_step = 2;
++         info->error = errno;
++         nvmtl_exec_queue_destroy(device, fresh.exec_queue_id, false);
++         nvmtl_exec_queue_destroy(device, fresh.companion_rcs_id, false);
++         nvmtl_exec_queue_destroy(device, fresh.bind_queue_id, false);
++         break;
++      }
++
++      const uint32_t old_exec = queue->exec_queue_id, old_comp = queue->companion_rcs_id,
++                     old_bind = queue->bind_queue_id;
++      nvmtl_drop_init_submit(device, &queue->init_submit);
++      nvmtl_drop_init_submit(device, &queue->init_companion_submit);
++      if (idle) {   /* FORCE on a live queue: the old one finishes its work before the new one takes over */
++         anv_xe_wait_exec_queue_idle(device, old_exec);
++         if (old_comp)
++            anv_xe_wait_exec_queue_idle(device, old_comp);
++      }
++      p_atomic_set(&queue->exec_queue_id, fresh.exec_queue_id);
++      p_atomic_set(&queue->companion_rcs_id, fresh.companion_rcs_id);
++      p_atomic_set(&queue->bind_queue_id, fresh.bind_queue_id);
++      queue->vk._lost.lost = 0;
++
++      /* the new context starts from the kernel's default image: anv's initial state again, as at vkCreateDevice */
++      result = anv_genX(device->info, init_queue_state)(queue);
++      if (result != VK_SUCCESS) {
++         info->failed_step = 3;
++         info->error = errno;
++      }
++
++      nvmtl_exec_queue_destroy(device, old_exec, false);
++      nvmtl_exec_queue_destroy(device, old_comp, false);
++      nvmtl_exec_queue_destroy(device, old_bind, false);
++      if (result == VK_SUCCESS)
++         info->queues_replaced++;
++   }
++   if (result == VK_SUCCESS) {
++      /* every queue that needed it has a fresh context: the device is usable again */
++      for (uint32_t i = 0; i < nq; i++)
++         device->queues[i].vk._lost.lost = 0;
++      p_atomic_set(&device->vk._lost.lost, 0);
++      device->vk._lost.reported = false;
++   } else {
++      vk_device_set_lost(&device->vk, "nvmtl: exec queue replacement failed (step %u, errno %d)",
++                         info->failed_step, info->error);
++   }
++   simple_mtx_unlock(&device->mutex);
++   return result;
++}

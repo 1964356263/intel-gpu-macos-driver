@@ -1,0 +1,28 @@
+anv: Xe2 decodes VP9 up to 16384x16384 (media-driver Xe2 caps)
+
+media-driver decodes VP9 up to 16Kx16K on Xe2, every profile (media_softlet/linux/xe2_hpm_r0/decode/vp9/ddi/
+capstable_data_vp9_decode_xe2_hpm_r0_specific.h: VAConfigAttribMaxPictureWidth/Height = CODEC_16K_MAX_PIC_*); anv
+reported 4096x4096. The VP9 session buffers are already sized from the session's max coded extent
+(get_vp9_video_mem_size: row stores per 64-pixel superblock column, MV and segment buffers per superblock), as 0074 did
+for AV1 and HEVC.
+B580: 7680x4320 8-bit VP9 (libvpx, 80 Mbit/s) decodes bit-exact (120/120 frames).
+
+diff --git a/src/intel/vulkan/anv_video.c b/src/intel/vulkan/anv_video.c
+--- a/src/intel/vulkan/anv_video.c
++++ b/src/intel/vulkan/anv_video.c
+@@ -430,6 +430,15 @@
+       struct VkVideoDecodeVP9CapabilitiesKHR *ext = (struct VkVideoDecodeVP9CapabilitiesKHR *)
+          vk_find_struct(pCapabilities->pNext, VIDEO_DECODE_VP9_CAPABILITIES_KHR);
+ 
++      /* media-driver decodes VP9 up to 16Kx16K on Xe2 (capstable_data_vp9_decode_xe2_hpm_r0_specific.h:
++       * CODEC_16K_MAX_PIC_WIDTH/HEIGHT for every profile). The HCP VP9 buffers are sized from the session's max
++       * coded extent (get_vp9_video_mem_size), the row stores from the frame width in 64-pixel superblocks.
++       */
++      if (pdevice->info.verx10 >= 200) {
++         pCapabilities->maxCodedExtent.width = 16384;
++         pCapabilities->maxCodedExtent.height = 16384;
++      }
++
+       pCapabilities->maxDpbSlots = STD_VIDEO_VP9_NUM_REF_FRAMES + 4;
+       pCapabilities->maxActiveReferencePictures = STD_VIDEO_VP9_REFS_PER_FRAME;
+       pCapabilities->pictureAccessGranularity.width = 8;

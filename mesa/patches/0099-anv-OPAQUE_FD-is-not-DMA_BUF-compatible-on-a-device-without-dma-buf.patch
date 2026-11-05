@@ -1,0 +1,54 @@
+From: Yusuf İhsan KILINÇ
+Subject: [PATCH 0099] anv: OPAQUE_FD is not DMA_BUF-compatible on a device without dma-buf
+
+On top of 0098 (src/mesa-fd1, build-fd1). NOT installed.
+
+vkGetPhysicalDeviceExternalBufferProperties(OPAQUE_FD) and the image query with an explicit layout (linear or a DRM
+format modifier) returned opaque_fd_dma_buf_props: compatibleHandleTypes and exportFromImportedHandleTypes include
+DMA_BUF. On Linux the device always has VK_EXT_external_memory_dma_buf; with xemac after 0098 it has
+VK_KHR_external_memory_fd but not (yet) dma-buf, and promising DMA_BUF there is the 0089 bug again (the handle
+type of an extension the device does not expose). Without the dma-buf extension they now
+return opaque_fd_only_props (OPAQUE_FD only), as the implicit-layout image case always did. Nothing changes on
+Linux.
+
+Validation: as 0098 (api.external.* 144 Pass, 0 Fail on the fake device; prod9 behaviour with XEMAC_FAKE_FDS=0).
+
+Generated-by: LLM
+---
+diff --git a/src/intel/vulkan/anv_formats.c b/src/intel/vulkan/anv_formats.c
+index 15433a1..a04b6f7 100644
+--- a/src/intel/vulkan/anv_formats.c
++++ b/src/intel/vulkan/anv_formats.c
+@@ -2117,7 +2117,8 @@ anv_get_image_format_properties(
+             goto unsupported;
+ 
+          if (external_props) {
+-            if (tiling_has_explicit_layout) {
++            if (tiling_has_explicit_layout &&
++                physical_device->vk.supported_extensions.EXT_external_memory_dma_buf) {
+                /* With an explicit memory layout, we don't care which type of fd
+                 * the image belongs too. Both OPAQUE_FD and DMA_BUF are
+                 * interchangeable here.
+@@ -2131,7 +2132,8 @@ anv_get_image_format_properties(
+             } else {
+                /* With an implicit memory layout, we must rely on deviceUUID
+                 * and driverUUID to determine the layout. Therefore DMA_BUF is
+-                * incompatible here.
++                * incompatible here. (Nor is it with an explicit layout on a
++                * device without VK_EXT_external_memory_dma_buf.)
+                 */
+                external_props->externalMemoryProperties = opaque_fd_only_props;
+             }
+@@ -2453,7 +2455,11 @@ void anv_GetPhysicalDeviceExternalBufferProperties(
+    case VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT:
+       if (!exts->KHR_external_memory_fd)
+          goto unsupported;
+-      pExternalBufferProperties->externalMemoryProperties = opaque_fd_dma_buf_props;
++      /* DMA_BUF is compatible only on a device that has it (not with xemac's
++       * PRIME fds before VK_EXT_external_memory_dma_buf).
++       */
++      pExternalBufferProperties->externalMemoryProperties =
++         exts->EXT_external_memory_dma_buf ? opaque_fd_dma_buf_props : opaque_fd_only_props;
+       return;
+    case VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT:
+       if (!exts->EXT_external_memory_dma_buf)

@@ -1,0 +1,16 @@
+# User space
+
+| Path | What |
+|---|---|
+| `xemac/` | The user-space side of IntelXe.kext's xe interface: `xemac_open`/`xemac_ioctl`/`xemac_mmap` in place of a DRM render node. It also contains a libdrm stand-in (`libdrm/xf86drm.h`, `xemac_drm.c`) and an `XEMAC_FAKE=1` device. Mesa is built with `-Dxemac=<repo>/user/xemac` (see `mesa/`). It opens the xe client through NMXAccel (an IOAccelerator, so sandboxed processes may use it), falling back to B580 directly (`XEMAC_DIRECT=1` forces that). |
+| `vkshim/` | a minimal `libvulkan.dylib` that forwards `vkGetInstanceProcAddr` to ANV's ICD entry point (`INTELXE_ANV=<dylib>`), so ffmpeg can be tested without a Vulkan loader |
+| `tests/kernel/` | uAPI tests without Mesa: `kxtest` (exec on every engine, load mode), `memq`, `vfill`, `vbw`, `vlat`, `rtt`, `bomove` (BO moves in and out of the BAR window; `bomove evict`), `winfill` (`unmap`: CPU maps are unmapped and distinct; `fill`: fills the CPU-visible window and checks that allocations, binds and contents still work), `latewake`, `surffence` (IOSurface fences); display tools `dmode`, `fbcrop`; `vmouse` (virtual HID, needs `vmouse.ent`). Build: `clang -arch x86_64 -O1 -I../../../kernel/IntelXe/uapi -o X X.c -framework IOKit -framework CoreFoundation` |
+| `tests/vulkan/` | `vk_smoke` (device + fill on every queue family), `vk_videocaps` (video profiles and queue families), `vkwin` (BAR-window cost of a VkDevice and of the plugin's descriptor pools, from `debug.intelxe.stats`); `build.sh` (needs Mesa's `include/`) |
+| `tests/metal/` | `mtl_smoke`, `mtl_tests` (vadd, threadgroup/atomics, math, textures, blit, render, perf, `bw`, `mip`), `mtl_lat`, OpenCL `cl_img`/`cl_lat`/`cl_xfer`, `xlate_check` (offline AIR → SPIR-V), `mtl_pools` (descriptor pools: window cost per process, growth, the full-pools error, set reclaim, texel buffers), `svimg` (two-process VRAM-shared IOSurface image test), `gpt_bench` (frame loop for GPUTIME; `surf` checks IOSurface out/in). `NVMTL_BUNDLE=<staged bundle>` tests a plugin build without installing it. |
+| `tests/inv/` | investigation tools and regression scripts from the bring-up of the accelerated desktop: present/IOSurface races (`burstpresent`, `surftest`), sampler/mip/pixelation (`samptest*`, `mipapp64`, `cgtest`, `citest`), OpenCL correctness/perf (`cl*`), GL (`glflat`, `glidx`), memory churn, the `final*.sh` gate scripts. Machine paths inside the scripts are those of the test machine. |
+| `tests/gate/` | `gate.sh`: the post-reboot regression gate, run from the build Mac over `rsh` (time-boxed ssh; `INTELXE_HOST=user@machine`) |
+| `tools/` | `sigcheck.c` (is every Mach-O code-signed? no Apple tools needed on the test machine); `install-plugin.sh`, `install-plugin-mesa.sh`: the guarded install scripts of a staged plugin (and Mesa) build: SHA256SUMS and signature checks, a backup in `./previous/`, `--undo` |
+| `vulkan-loader/` | notes, install script and check program for the Khronos Vulkan loader with our ICD manifest |
+| `tests/igpu/` | `vttest` (VideoToolbox HW encode/decode + Metal device list), `devorder` (Metal/OpenCL device order) |
+
+All tests are x86_64 binaries. They run on the test machine; on Apple Silicon only under Rosetta, and there without the GPU.

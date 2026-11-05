@@ -1,0 +1,12 @@
+--- a/libavcodec/vulkan_encode_av1.c
++++ b/libavcodec/vulkan_encode_av1.c
+@@ -762,6 +762,9 @@
+         .max_frame_height_minus_1 = base_ctx->surface_height - 1,
+         .enable_order_hint = 1,
+         .order_hint_bits_minus_1 = av_clip_intp2(av_log2(ctx->base.gop_size), 3),
++        /* Under rate control the driver picks the CDEF strengths (its BRC rewrites cdef_params() in the frame
++         * header it writes), as with VAAPI (vaapi_encode_av1.c: enable_cdef = 1 unless CQP). */
++        .enable_cdef = ctx->opts.rc_mode > VK_VIDEO_ENCODE_RATE_CONTROL_MODE_DISABLED_BIT_KHR,
+         .use_128x128_superblock = !!(enc->caps.superblockSizes & VK_VIDEO_ENCODE_AV1_SUPERBLOCK_SIZE_128_BIT_KHR),
+         .color_config = (AV1RawColorConfig) {
+             .high_bitdepth = desc->comp[0].depth > 8,

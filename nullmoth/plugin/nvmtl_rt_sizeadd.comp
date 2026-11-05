@@ -1,0 +1,25 @@
+#version 460
+// rtopt5: a primitive structure's compacted size as Metal sees it: the Vulkan compacted size (an 8-byte query result
+// at src) + add (NVMTL_AS_WRAP: the structure's top-level wrapper, nvmtl_rt_layout.h), as 4 or 8 little-endian bytes
+// at dst (4-aligned). One invocation, recorded right after the query result copy (nvmtl_vk_cmd_write_compacted_size).
+//   glslangValidator -V --target-env vulkan1.2 nvmtl_rt_sizeadd.comp -o nvmtl_rt_sizeadd.spv
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+layout(local_size_x = 1) in;
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer Words { uint w[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer OutWords { uint w[]; };
+layout(push_constant) uniform Args {
+    uint64_t src;   // the 64-bit query result
+    uint64_t dst;   // Metal's destination (4-aligned)
+    uint add;
+    uint bytes;     // 4 or 8
+} a;
+
+void main()
+{
+    Words s = Words(a.src);
+    const uvec2 v = unpackUint2x32(packUint2x32(uvec2(s.w[0], s.w[1])) + uint64_t(a.add));
+    OutWords d = OutWords(a.dst);
+    d.w[0] = v.x;
+    if (a.bytes == 8u) d.w[1] = v.y;
+}

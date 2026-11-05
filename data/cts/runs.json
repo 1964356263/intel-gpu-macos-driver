@@ -1,0 +1,814 @@
+[
+ {
+  "id": "2026-10-29-results",
+  "date": "2026-10-29 21:03-21:20",
+  "stack": "kernel sv7 (c3372d3ba712), Mesa mesa-rel-pkg-wsi (44c369573ae2, -Dintel-internal-shaders=stub), Khronos loader /usr/local/lib/libvulkan.1.dylib",
+  "source": "hackintosh ~/vk-cts/results (run.sh), copied 2026-10-31",
+  "note": "groups g1_basic g2_memory g3_sync g4_render g5_image (two attempts, the later one wins) g7_dxvk; stopped early: g3 timeout, g5 crashes then a ban (HEALTH), g7 timeout",
+  "cases": 24424,
+  "status": {
+   "Pass": 19380,
+   "NotSupported": 4979,
+   "Timeout": 2,
+   "Crash": 62,
+   "DeviceLost": 1
+  },
+  "shard_groups": {
+   "g1_basic": {
+    "Pass": 8884,
+    "NotSupported": 562
+   },
+   "g2_memory": {
+    "Pass": 1547,
+    "NotSupported": 391
+   },
+   "g3_sync": {
+    "Pass": 37,
+    "NotSupported": 2,
+    "Timeout": 1
+   },
+   "g4_render": {
+    "NotSupported": 1435,
+    "Pass": 6741,
+    "Crash": 22
+   },
+   "g5_image": {
+    "Pass": 1707,
+    "NotSupported": 1857,
+    "Crash": 37,
+    "DeviceLost": 1
+   },
+   "g7_dxvk": {
+    "Pass": 464,
+    "NotSupported": 732,
+    "Crash": 3,
+    "Timeout": 1
+   }
+  },
+  "partial_groups": [
+   "g3_sync",
+   "g5_image",
+   "g7_dxvk"
+  ]
+ },
+ {
+  "id": "2026-10-30-results3",
+  "date": "2026-10-30 00:19-00:25",
+  "stack": "kernel rb2 (f22356cab64f), Mesa cpu3 (a8a18273, internal shaders built), per the project log entry 2026-10-30 00:45 ('CTS on it: ~22.3k pass')",
+  "source": "hackintosh ~/vk-cts/results3 (run3.sh, caselists3 with EXCLUDE.re), copied 2026-10-31",
+  "note": "groups p0_prevcrash (the 62 cases that crashed before) g4_render g5_image g7_dxvk g3b_sync g7b_dxvk g6_wsi; g1/g2 not re-run; known hang cases excluded by caselists3/EXCLUDE.re",
+  "cases": 29456,
+  "status": {
+   "Pass": 22367,
+   "NotSupported": 7088,
+   "Fail": 1
+  },
+  "shard_groups": {
+   "g3b_sync": {
+    "Pass": 1488,
+    "NotSupported": 109
+   },
+   "g4_render": {
+    "NotSupported": 1435,
+    "Pass": 6763
+   },
+   "g5_image": {
+    "Pass": 2229,
+    "NotSupported": 2186
+   },
+   "g6_wsi": {
+    "Pass": 13,
+    "NotSupported": 286,
+    "Fail": 1
+   },
+   "g7_dxvk": {
+    "Pass": 6136,
+    "NotSupported": 1895
+   },
+   "g7b_dxvk": {
+    "Pass": 5676,
+    "NotSupported": 1177
+   },
+   "p0_prevcrash": {
+    "Pass": 62
+   }
+  },
+  "partial_groups": []
+ },
+ {
+  "id": "2026-11-04-prod9t",
+  "date": "2026-11-04 03:54-10:11",
+  "stack": "kernel rb7t (UUID 20C5385B, debug.b580.fds=1), Mesa vb1 = prod8 + 0089-0092 + 0095-0100 (shim xemac-fd2, intel-rt on), Khronos loader /usr/local/lib/libvulkan.1.dylib; installed prod9 Mesa = this minus 0092 (DGC, no CTS effect)",
+  "source": "hackintosh ~/b580/cts-full/results-prod9t (cts.sh run, all 196 groups), copied 2026-11-04",
+  "note": "full CTS 1.4.7.1 from the start; g183 spirv-assembly stopped after 50 timeouts (constant_data count_262128 > 60 s per case), the rest of that group not run; video tests compiled out in this deqp-vk (separate video kit)",
+  "cases": 3145441,
+  "status": {
+   "Pass": 1772948,
+   "NotSupported": 1372354,
+   "Fail": 84,
+   "QualityWarning": 5,
+   "Timeout": 50
+  },
+  "shard_groups": {
+   "g000_api": {
+    "Pass": 126971,
+    "NotSupported": 140533,
+    "Fail": 1,
+    "QualityWarning": 4
+   },
+   "g001_binding-model": {
+    "Pass": 147371,
+    "NotSupported": 2923
+   },
+   "g002_clipping": {
+    "Pass": 308
+   },
+   "g003_compute": {
+    "NotSupported": 50211,
+    "Pass": 17342
+   },
+   "g004_conditional-rendering": {
+    "Pass": 1030
+   },
+   "g005_cooperative-vector": {
+    "NotSupported": 53562
+   },
+   "g006_data-graph": {
+    "NotSupported": 12632
+   },
+   "g007_depth": {
+    "Pass": 8
+   },
+   "g008_descriptor-indexing": {
+    "Pass": 111,
+    "NotSupported": 4
+   },
+   "g009_device-group": {
+    "Pass": 12,
+    "NotSupported": 9
+   },
+   "g010_dgc": {
+    "Pass": 1179,
+    "NotSupported": 3556,
+    "Fail": 4
+   },
+   "g011_draw": {
+    "NotSupported": 1801,
+    "Pass": 27674
+   },
+   "g012_drm-format-modifiers": {
+    "NotSupported": 861,
+    "Pass": 711
+   },
+   "g013_dynamic-state": {
+    "Pass": 547,
+    "NotSupported": 124
+   },
+   "g014_fragment-operations": {
+    "NotSupported": 30,
+    "Pass": 121
+   },
+   "g015_fragment-shader-interlock": {
+    "Pass": 384,
+    "NotSupported": 192
+   },
+   "g016_fragment-shading-barycentric": {
+    "Pass": 20991
+   },
+   "g017_fragment-shading-rate": {
+    "Pass": 54246,
+    "NotSupported": 56357
+   },
+   "g018_geometry": {
+    "Pass": 192,
+    "NotSupported": 8
+   },
+   "g019_glsl": {
+    "Pass": 27054,
+    "NotSupported": 1345
+   },
+   "g020_graphicsfuzz": {
+    "Pass": 757
+   },
+   "g021_image-2d-array-compatible": {
+    "Pass": 24
+   },
+   "g022_image-astc-decode-mode": {
+    "NotSupported": 164
+   },
+   "g023_image-atomic-operations": {
+    "Pass": 4637,
+    "NotSupported": 1572
+   },
+   "g024_image-concurrent-copy": {
+    "Pass": 216
+   },
+   "g025_image-depth-stencil-descriptor": {
+    "NotSupported": 10,
+    "Pass": 32
+   },
+   "g026_image-depth-stencil-separate-access": {
+    "NotSupported": 27,
+    "Pass": 54
+   },
+   "g027_image-device-scope-access": {
+    "Pass": 390
+   },
+   "g028_image-extend-operands-spirv1p4": {
+    "Pass": 81
+   },
+   "g029_image-extended-usage-bit": {
+    "Pass": 69,
+    "NotSupported": 147
+   },
+   "g030_image-extended-usage-bit-compatibility": {
+    "Pass": 4824,
+    "NotSupported": 8424
+   },
+   "g031_image-format-reinterpret": {
+    "Pass": 3856,
+    "NotSupported": 2088
+   },
+   "g032_image-general-layout": {
+    "NotSupported": 7,
+    "Pass": 22
+   },
+   "g033_image-host-image-copy": {
+    "Pass": 16644,
+    "NotSupported": 25835
+   },
+   "g034_image-image-size": {
+    "Pass": 108
+   },
+   "g035_image-load-store": {
+    "Pass": 2792,
+    "NotSupported": 654
+   },
+   "g036_image-load-store-lod": {
+    "NotSupported": 702
+   },
+   "g037_image-load-store-multisample": {
+    "NotSupported": 252
+   },
+   "g038_image-misaligned-cube": {
+    "Pass": 5
+   },
+   "g039_image-mismatched-formats": {
+    "NotSupported": 147,
+    "Pass": 159
+   },
+   "g040_image-mismatched-write-op": {
+    "Pass": 423,
+    "NotSupported": 41
+   },
+   "g041_image-mutable": {
+    "NotSupported": 4850,
+    "Pass": 5796
+   },
+   "g042_image-non-uniform-offset-sample": {
+    "Pass": 22
+   },
+   "g043_image-nontemporal-operand": {
+    "Pass": 21
+   },
+   "g044_image-qualifiers": {
+    "Pass": 56
+   },
+   "g045_image-queue-transfer": {
+    "Pass": 1155,
+    "NotSupported": 810
+   },
+   "g046_image-sample-cubemap": {
+    "Pass": 1
+   },
+   "g047_image-sample-texture": {
+    "Pass": 8
+   },
+   "g048_image-store": {
+    "Pass": 2538,
+    "NotSupported": 474
+   },
+   "g049_image-store-load-consistency": {
+    "Pass": 3
+   },
+   "g050_image-subresource-layout": {
+    "Pass": 2079,
+    "NotSupported": 1458
+   },
+   "g051_image-swapchain-mutable": {
+    "NotSupported": 3138,
+    "Pass": 102
+   },
+   "g052_image-texel-view-compatible": {
+    "NotSupported": 6240,
+    "Pass": 2400
+   },
+   "g053_image-tiling-control": {
+    "NotSupported": 89
+   },
+   "g054_image-processing": {
+    "NotSupported": 1211
+   },
+   "g055_imageless-framebuffer": {
+    "Pass": 12
+   },
+   "g056_info": {
+    "Pass": 22,
+    "NotSupported": 1
+   },
+   "g057_memory": {
+    "Pass": 5133,
+    "NotSupported": 1231
+   },
+   "g058_memory-model": {
+    "Pass": 16916,
+    "NotSupported": 1614
+   },
+   "g059_mesh-shader": {
+    "Pass": 18006,
+    "NotSupported": 10055
+   },
+   "g060_multiview": {
+    "Pass": 838
+   },
+   "g061_pipeline-fast-linked-library": {
+    "Pass": 91819,
+    "NotSupported": 40047,
+    "Fail": 23
+   },
+   "g062_pipeline-monolithic-attachment-feedback-loop-layout": {
+    "Pass": 941,
+    "NotSupported": 1442
+   },
+   "g063_pipeline-monolithic-bind-buffers-2": {
+    "Pass": 97
+   },
+   "g064_pipeline-monolithic-bind-point": {
+    "Pass": 1296
+   },
+   "g065_pipeline-monolithic-blend": {
+    "NotSupported": 3574,
+    "Pass": 8632
+   },
+   "g066_pipeline-monolithic-blend-operation-advanced": {
+    "NotSupported": 4652
+   },
+   "g067_pipeline-monolithic-cache": {
+    "Pass": 774
+   },
+   "g068_pipeline-monolithic-color-write-enable": {
+    "Pass": 576
+   },
+   "g069_pipeline-monolithic-color-write-enable-maxa": {
+    "Pass": 24
+   },
+   "g070_pipeline-monolithic-creation-cache-control": {
+    "Pass": 18
+   },
+   "g071_pipeline-monolithic-creation-feedback": {
+    "Pass": 12,
+    "QualityWarning": 1
+   },
+   "g072_pipeline-monolithic-depth": {
+    "Pass": 6637,
+    "NotSupported": 1884
+   },
+   "g073_pipeline-monolithic-depth-range-unrestricted": {
+    "Pass": 2028
+   },
+   "g074_pipeline-monolithic-derivative": {
+    "Pass": 3
+   },
+   "g075_pipeline-monolithic-descriptor-limits": {
+    "Pass": 382,
+    "NotSupported": 14
+   },
+   "g076_pipeline-monolithic-dynamic-control-points": {
+    "Pass": 3
+   },
+   "g077_pipeline-monolithic-dynamic-offset": {
+    "Pass": 408
+   },
+   "g078_pipeline-monolithic-dynamic-vertex-attribute": {
+    "Pass": 1
+   },
+   "g079_pipeline-monolithic-early-destroy": {
+    "Pass": 9
+   },
+   "g080_pipeline-monolithic-empty-fs": {
+    "Pass": 8
+   },
+   "g081_pipeline-monolithic-executable-properties": {
+    "Pass": 16
+   },
+   "g082_pipeline-monolithic-extended-dynamic-state": {
+    "Pass": 3248,
+    "NotSupported": 811
+   },
+   "g083_pipeline-monolithic-framebuffer-attachment": {
+    "Pass": 50
+   },
+   "g084_pipeline-monolithic-image": {
+    "Pass": 33840,
+    "NotSupported": 89072
+   },
+   "g085_pipeline-monolithic-image-2d-view-3d-image": {
+    "Pass": 24,
+    "NotSupported": 24
+   },
+   "g086_pipeline-monolithic-image-view": {
+    "Pass": 15624,
+    "NotSupported": 12084
+   },
+   "g087_pipeline-monolithic-input-assembly": {
+    "Pass": 198
+   },
+   "g088_pipeline-monolithic-input-attribute-offset": {
+    "Pass": 228
+   },
+   "g089_pipeline-monolithic-interface-matching": {
+    "Pass": 1589
+   },
+   "g090_pipeline-monolithic-logic-op": {
+    "NotSupported": 80,
+    "Pass": 144
+   },
+   "g091_pipeline-monolithic-logic-op-na-formats": {
+    "NotSupported": 256,
+    "Pass": 320
+   },
+   "g092_pipeline-monolithic-matched-attachments": {
+    "Pass": 2
+   },
+   "g093_pipeline-monolithic-max-varyings": {
+    "Pass": 3,
+    "NotSupported": 3
+   },
+   "g094_pipeline-monolithic-misc": {
+    "Pass": 13
+   },
+   "g095_pipeline-monolithic-multisample": {
+    "NotSupported": 7162,
+    "Pass": 3462,
+    "Fail": 12
+   },
+   "g096_pipeline-monolithic-multisample-interpolation": {
+    "NotSupported": 120,
+    "Pass": 127
+   },
+   "g097_pipeline-monolithic-multisample-shader-builtin": {
+    "NotSupported": 43,
+    "Pass": 52
+   },
+   "g098_pipeline-monolithic-multisample-with-fragment-shading-rate": {
+    "NotSupported": 2504,
+    "Pass": 1157,
+    "Fail": 11
+   },
+   "g099_pipeline-monolithic-no-position": {
+    "Pass": 300
+   },
+   "g100_pipeline-monolithic-pipeline-binary": {
+    "Pass": 34
+   },
+   "g101_pipeline-monolithic-pipeline-cache": {
+    "Pass": 14
+   },
+   "g102_pipeline-monolithic-primitive-restart-index": {
+    "Pass": 810
+   },
+   "g103_pipeline-monolithic-push-constant": {
+    "Pass": 61,
+    "NotSupported": 4
+   },
+   "g104_pipeline-monolithic-push-descriptor": {
+    "Pass": 76
+   },
+   "g105_pipeline-monolithic-render-to-image": {
+    "Pass": 1325
+   },
+   "g106_pipeline-monolithic-sampler": {
+    "Pass": 132487,
+    "NotSupported": 49548
+   },
+   "g107_pipeline-monolithic-shader-module-identifier": {
+    "Pass": 1556
+   },
+   "g108_pipeline-monolithic-shader-stencil-export": {
+    "Pass": 3,
+    "NotSupported": 3
+   },
+   "g109_pipeline-monolithic-sliced-view-of-3d-image": {
+    "Pass": 156
+   },
+   "g110_pipeline-monolithic-spec-constant": {
+    "Pass": 1413
+   },
+   "g111_pipeline-monolithic-stencil": {
+    "NotSupported": 16710,
+    "Pass": 41786
+   },
+   "g112_pipeline-monolithic-timestamp": {
+    "Pass": 278
+   },
+   "g113_pipeline-monolithic-vertex-input": {
+    "Pass": 13193,
+    "NotSupported": 103
+   },
+   "g114_pipeline-no-queues": {
+    "Pass": 36
+   },
+   "g115_pipeline-pipeline-library": {
+    "Pass": 85889,
+    "NotSupported": 34732,
+    "Fail": 23
+   },
+   "g116_pipeline-shader-object-linked-binary": {
+    "Pass": 13756,
+    "NotSupported": 10598
+   },
+   "g117_pipeline-shader-object-linked-spirv": {
+    "Pass": 13756,
+    "NotSupported": 10598
+   },
+   "g118_pipeline-shader-object-unlinked-binary": {
+    "Pass": 13756,
+    "NotSupported": 10598
+   },
+   "g119_pipeline-shader-object-unlinked-spirv-attachment-feedback-loop-layout": {
+    "Pass": 624,
+    "NotSupported": 960
+   },
+   "g120_pipeline-shader-object-unlinked-spirv-bind-buffers-2": {
+    "Pass": 96
+   },
+   "g121_pipeline-shader-object-unlinked-spirv-bind-point": {
+    "Pass": 864
+   },
+   "g122_pipeline-shader-object-unlinked-spirv-blend": {
+    "NotSupported": 3574,
+    "Pass": 8623
+   },
+   "g123_pipeline-shader-object-unlinked-spirv-blend-operation-advanced": {
+    "NotSupported": 4652
+   },
+   "g124_pipeline-shader-object-unlinked-spirv-cache": {
+    "Pass": 772
+   },
+   "g125_pipeline-shader-object-unlinked-spirv-color-write-enable": {
+    "Pass": 432
+   },
+   "g126_pipeline-shader-object-unlinked-spirv-color-write-enable-maxa": {
+    "Pass": 24
+   },
+   "g127_pipeline-shader-object-unlinked-spirv-creation-feedback": {
+    "Pass": 10
+   },
+   "g128_pipeline-shader-object-unlinked-spirv-depth": {
+    "Pass": 6622,
+    "NotSupported": 1884
+   },
+   "g129_pipeline-shader-object-unlinked-spirv-depth-range-unrestricted": {
+    "Pass": 2028
+   },
+   "g130_pipeline-shader-object-unlinked-spirv-descriptor-limits": {
+    "Pass": 180
+   },
+   "g131_pipeline-shader-object-unlinked-spirv-dynamic-control-points": {
+    "Pass": 3
+   },
+   "g132_pipeline-shader-object-unlinked-spirv-dynamic-offset": {
+    "Pass": 192
+   },
+   "g133_pipeline-shader-object-unlinked-spirv-dynamic-vertex-attribute": {
+    "Pass": 1
+   },
+   "g134_pipeline-shader-object-unlinked-spirv-early-destroy": {
+    "Pass": 9
+   },
+   "g135_pipeline-shader-object-unlinked-spirv-empty-fs": {
+    "Pass": 8
+   },
+   "g136_pipeline-shader-object-unlinked-spirv-extended-dynamic-state": {
+    "Pass": 2288,
+    "NotSupported": 567
+   },
+   "g137_pipeline-shader-object-unlinked-spirv-framebuffer-attachment": {
+    "Pass": 49
+   },
+   "g138_pipeline-shader-object-unlinked-spirv-image": {
+    "Pass": 33840,
+    "NotSupported": 27616
+   },
+   "g139_pipeline-shader-object-unlinked-spirv-image-2d-view-3d-image": {
+    "Pass": 12,
+    "NotSupported": 12
+   },
+   "g140_pipeline-shader-object-unlinked-spirv-image-view": {
+    "Pass": 15624,
+    "NotSupported": 12084
+   },
+   "g141_pipeline-shader-object-unlinked-spirv-input-assembly": {
+    "Pass": 176
+   },
+   "g142_pipeline-shader-object-unlinked-spirv-input-attribute-offset": {
+    "Pass": 228
+   },
+   "g143_pipeline-shader-object-unlinked-spirv-interface-matching": {
+    "Pass": 1589
+   },
+   "g144_pipeline-shader-object-unlinked-spirv-logic-op": {
+    "NotSupported": 80,
+    "Pass": 144
+   },
+   "g145_pipeline-shader-object-unlinked-spirv-logic-op-na-formats": {
+    "NotSupported": 256,
+    "Pass": 320
+   },
+   "g146_pipeline-shader-object-unlinked-spirv-max-varyings": {
+    "Pass": 3,
+    "NotSupported": 3
+   },
+   "g147_pipeline-shader-object-unlinked-spirv-misc": {
+    "Pass": 7
+   },
+   "g148_pipeline-shader-object-unlinked-spirv-multisample": {
+    "NotSupported": 3908,
+    "Pass": 2600
+   },
+   "g149_pipeline-shader-object-unlinked-spirv-multisample-interpolation": {
+    "NotSupported": 120,
+    "Pass": 122
+   },
+   "g150_pipeline-shader-object-unlinked-spirv-multisample-with-fragment-shading-rate": {
+    "NotSupported": 2150,
+    "Pass": 1048
+   },
+   "g151_pipeline-shader-object-unlinked-spirv-no-position": {
+    "Pass": 120
+   },
+   "g152_pipeline-shader-object-unlinked-spirv-primitive-restart-index": {
+    "Pass": 810
+   },
+   "g153_pipeline-shader-object-unlinked-spirv-push-constant": {
+    "Pass": 58,
+    "NotSupported": 4
+   },
+   "g154_pipeline-shader-object-unlinked-spirv-push-descriptor": {
+    "Pass": 32
+   },
+   "g155_pipeline-shader-object-unlinked-spirv-render-to-image": {
+    "Pass": 1325
+   },
+   "g156_pipeline-shader-object-unlinked-spirv-sampler": {
+    "Pass": 132487,
+    "NotSupported": 49548
+   },
+   "g157_pipeline-shader-object-unlinked-spirv-shader-stencil-export": {
+    "Pass": 3,
+    "NotSupported": 3
+   },
+   "g158_pipeline-shader-object-unlinked-spirv-spec-constant": {
+    "Pass": 1170
+   },
+   "g159_pipeline-shader-object-unlinked-spirv-stencil": {
+    "NotSupported": 16710,
+    "Pass": 41780
+   },
+   "g160_pipeline-shader-object-unlinked-spirv-timestamp": {
+    "Pass": 112
+   },
+   "g161_pipeline-shader-object-unlinked-spirv-vertex-input": {
+    "Pass": 386,
+    "NotSupported": 94
+   },
+   "g162_postmortem": {
+    "NotSupported": 24
+   },
+   "g163_protected-memory": {
+    "NotSupported": 6000
+   },
+   "g164_query-pool": {
+    "Pass": 19264,
+    "NotSupported": 12
+   },
+   "g165_rasterization": {
+    "NotSupported": 9787,
+    "Pass": 5232
+   },
+   "g166_ray-query": {
+    "Pass": 22580,
+    "NotSupported": 26779
+   },
+   "g167_ray-tracing-pipeline": {
+    "NotSupported": 13261,
+    "Pass": 9416
+   },
+   "g168_reconvergence": {
+    "Pass": 6253
+   },
+   "g169_renderpasses": {
+    "NotSupported": 24497,
+    "Pass": 57190
+   },
+   "g170_robustness": {
+    "Pass": 82420,
+    "NotSupported": 16356
+   },
+   "g171_shader-abort": {
+    "NotSupported": 8
+   },
+   "g172_shader-object-api": {
+    "NotSupported": 2,
+    "Pass": 3
+   },
+   "g173_shader-object-binary": {
+    "Pass": 437
+   },
+   "g174_shader-object-binding": {
+    "Pass": 273
+   },
+   "g175_shader-object-create": {
+    "Pass": 22
+   },
+   "g176_shader-object-link": {
+    "Pass": 161
+   },
+   "g177_shader-object-m11-independent-sets": {
+    "Pass": 1440
+   },
+   "g178_shader-object-misc": {
+    "Pass": 672,
+    "NotSupported": 72
+   },
+   "g179_shader-object-pipeline-interaction": {
+    "Pass": 18
+   },
+   "g180_shader-object-rendering": {
+    "Pass": 70575,
+    "NotSupported": 170112
+   },
+   "g181_shader-object-tessellation": {
+    "Pass": 36
+   },
+   "g182_sparse-resources": {
+    "NotSupported": 8586,
+    "Pass": 10816
+   },
+   "g183_spirv-assembly": {
+    "Pass": 578,
+    "Timeout": 50
+   },
+   "g184_ssbo": {
+    "Pass": 12162,
+    "NotSupported": 63
+   },
+   "g185_subgroups": {
+    "Pass": 26756,
+    "NotSupported": 21865
+   },
+   "g186_synchronization": {
+    "Pass": 33058,
+    "NotSupported": 31810,
+    "Fail": 4
+   },
+   "g187_synchronization2": {
+    "Pass": 44868,
+    "NotSupported": 36745,
+    "Fail": 4
+   },
+   "g188_tensor": {
+    "NotSupported": 2843
+   },
+   "g189_tessellation": {
+    "Pass": 1114
+   },
+   "g190_texture": {
+    "NotSupported": 8022,
+    "Pass": 17647
+   },
+   "g191_transform-feedback": {
+    "Pass": 52293,
+    "NotSupported": 81426
+   },
+   "g192_ubo": {
+    "Pass": 13240
+   },
+   "g193_video": {
+    "NotSupported": 9471
+   },
+   "g194_wsi": {
+    "NotSupported": 36505,
+    "Pass": 369,
+    "Fail": 2
+   },
+   "g195_ycbcr": {
+    "NotSupported": 51828,
+    "Pass": 16331
+   }
+  },
+  "partial_groups": [
+   "g183_spirv-assembly"
+  ]
+ }
+]

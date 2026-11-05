@@ -1,0 +1,429 @@
+From: Yusuf İhsan KILINÇ
+Subject: [PATCH 0081] anv: Xe2 encodes AV1 up to 8K: multi-tile frames and multi-tile HuC BRC
+
+On top of fac3fc75 (a3ad934 + 0074 0075 0048 0049 0076 0077 0078 0079 0080).
+
+- Caps: AV1 encode maxCodedExtent 8192x8192 and maxLevel 6.3 on Xe2, as media-driver
+  (capstable_data_av1_encode_xe2_hpm_r0_specific.h: VAConfigAttribMaxPictureWidth/Height = CODEC_8K_MAX_PIC_*);
+  was 4096 / level 5.3.
+- Buffers: the VDEnc intra row store, tile row store and cumulative CU count streamout are sized from the session's
+  max coded extent (at least 4096, so <= 4K sessions keep their layout); the AVP buffers already were (0074).
+- Tiles: a frame wider than 4096 needs at least two tile columns, and 8K at least 2x2 tiles (AV1 5.9.15
+  MAX_TILE_WIDTH / MAX_TILE_AREA). FFmpeg passes no pTileInfo, so the frame header writer (vk_video) and ANV both take
+  the minimum the frame size imposes (vk_video_av1_uniform_tiles_log2), and the header codes the increments over it.
+- VDENC_CMD2 TilingEnable now follows the tiles the frame is coded with (media-driver Av1BasicFeature VDENC_CMD2:
+  tile_cols > 1 || tile_rows > 1), not pTileInfo: a 4-tile frame with TilingEnable clear hung the VDBox (GuC reset).
+- HuC BRC with more than one tile (one tile group, single pipe), as media-driver Av1BrcUpdatePkt::
+  AddAvpPicStateBaseOnTile / Av1VdencPktXe2_Hpm::AddOneTileCommands: a second AVP_PIC_STATE (no header) right after
+  the first in the SLBB, UPD_AVPPiCStateCmdNum 2 and UPD_TileNum = tiles; the tiles after the first execute it.
+  Was: BRC only for single tile frames.
+- The tile group obu_size with BRC header variants and more than one tile: one leb128 per variant (the payload is the
+  frame's bytes past that variant's header), computed outside the small variant batches.
+
+Single-tile streams are byte-identical to fac3fc75 (4K 8-bit VBR, 1080p 10-bit VBR, CQP).
+
+--- a/src/intel/vulkan/anv_video.c
++++ b/src/intel/vulkan/anv_video.c
+@@ -594,7 +594,10 @@
+          ext->flags = VK_VIDEO_ENCODE_AV1_CAPABILITY_PER_RATE_CONTROL_GROUP_MIN_MAX_Q_INDEX_BIT_KHR |
+                    VK_VIDEO_ENCODE_AV1_CAPABILITY_GENERATE_OBU_EXTENSION_HEADER_BIT_KHR |
+                    VK_VIDEO_ENCODE_AV1_CAPABILITY_FRAME_SIZE_OVERRIDE_BIT_KHR;
+-         ext->maxLevel = STD_VIDEO_AV1_LEVEL_5_3;
++         /* media-driver encodes AV1 up to 8Kx8K on Xe2 (capstable_data_av1_encode_xe2_hpm_r0_specific.h:
++          * VAConfigAttribMaxPictureWidth/Height = CODEC_8K_MAX_PIC_*) and takes the application's seq_level_idx;
++          * 8K needs level 6.x. */
++         ext->maxLevel = pdevice->info.verx10 >= 200 ? STD_VIDEO_AV1_LEVEL_6_3 : STD_VIDEO_AV1_LEVEL_5_3;
+          ext->codedPictureAlignment.width = 8;
+          ext->codedPictureAlignment.height = 8;
+          ext->maxTiles.width = 64;
+@@ -636,6 +639,13 @@
+ 
+       pCapabilities->minBitstreamBufferOffsetAlignment = 4096;
+       pCapabilities->minBitstreamBufferSizeAlignment = 4096;
++
++      /* 8Kx8K on Xe2, as media-driver (see maxLevel above); frames wider than 4096 are split into tile columns
++       * (AV1 MAX_TILE_WIDTH), and the VDEnc row stores are sized from the session's max coded extent. */
++      if (pdevice->info.verx10 >= 200) {
++         pCapabilities->maxCodedExtent.width = 8192;
++         pCapabilities->maxCodedExtent.height = 8192;
++      }
+ 
+       pCapabilities->maxDpbSlots = STD_VIDEO_AV1_NUM_REF_FRAMES + 1;
+       pCapabilities->maxActiveReferencePictures = STD_VIDEO_AV1_REFS_PER_FRAME;
+@@ -1307,24 +1317,26 @@
+          buffer_size = 1;
+          break;
+       /* Sizes in 64-byte units, from media-driver Av1VdencPktXe_Lpm_Plus_Base::AllocateResources and
+-       * Av1VdencPkt::AllocateResources for the largest frame (4096x4096, 64x64 superblocks, 10-bit). */
++       * Av1VdencPkt::AllocateResources, for the session's largest frame (64x64 superblocks, 10-bit), at least
++       * 4096x4096 (what they were sized for before AV1 encode went beyond 4K). */
+       case ANV_VID_MEM_AV1_ENCODE_VDENC_INTRA_ROW_STORE:
+          /* m_resMfdIntraRowStoreScratchBuffer: width in SB * 4 * 64 cache lines (10-bit) */
+          if (dev->info->ver < 20 || !(vid->vk.op & VK_VIDEO_CODEC_OPERATION_ENCODE_AV1_BIT_KHR))
+             continue;
+-         buffer_size = DIV_ROUND_UP(4096, 64) * 4 * 64;
++         buffer_size = DIV_ROUND_UP(MAX2(vid->vk.max_coded.width, 4096), 64) * 4 * 64;
+          break;
+       case ANV_VID_MEM_AV1_ENCODE_VDENC_TILE_ROW_STORE:
+          /* m_vdencTileRowStoreBuffer: ceil(width / 32) * 2 cache lines */
+          if (dev->info->ver < 20 || !(vid->vk.op & VK_VIDEO_CODEC_OPERATION_ENCODE_AV1_BIT_KHR))
+             continue;
+-         buffer_size = DIV_ROUND_UP(4096, 32) * 2;
++         buffer_size = DIV_ROUND_UP(MAX2(vid->vk.max_coded.width, 4096), 32) * 2;
+          break;
+       case ANV_VID_MEM_AV1_ENCODE_VDENC_CU_COUNT_STREAMOUT:
+          /* m_resCumulativeCuCountStreamoutBuffer: width in SB * height in SB * 4 bytes */
+          if (dev->info->ver < 20 || !(vid->vk.op & VK_VIDEO_CODEC_OPERATION_ENCODE_AV1_BIT_KHR))
+             continue;
+-         buffer_size = DIV_ROUND_UP(DIV_ROUND_UP(4096, 64) * DIV_ROUND_UP(4096, 64) * 4, 64);
++         buffer_size = DIV_ROUND_UP(DIV_ROUND_UP(MAX2(vid->vk.max_coded.width, 4096), 64) *
++                                    DIV_ROUND_UP(MAX2(vid->vk.max_coded.height, 4096), 64) * 4, 64);
+          break;
+       case ANV_VID_MEM_AV1_ENCODE_VDENC_STATS:
+          /* VDEnc statistics streamout: the tile-slice state offsets each tile by 19 cache lines; up to 128 tiles
+--- a/src/intel/vulkan/genX_cmd_video_enc.c
++++ b/src/intel/vulkan/genX_cmd_video_enc.c
+@@ -4324,6 +4324,22 @@
+    return target_usage[MIN2(cmd->video.vid->quality_level, ANV_AV1_ENCODE_QUALITY_LEVELS - 1)];
+ }
+ 
++/* The 4-byte (non-minimal) leb128 of @bytes, the tile group obu_size placeholder's encoding */
++static struct mi_value
++anv_av1_leb128_4(struct mi_builder *b, struct mi_value bytes)
++{
++   struct mi_value leb0 =
++      mi_ior(b, mi_iand(b, mi_value_ref(b, bytes), mi_imm(0x7f)), mi_imm(0x80));
++   struct mi_value leb1 =
++      mi_ishl_imm(b, mi_ior(b, mi_iand(b, mi_ushr32_imm(b, mi_value_ref(b, bytes), 7), mi_imm(0x7f)),
++                            mi_imm(0x80)), 8);
++   struct mi_value leb2 =
++      mi_ishl_imm(b, mi_ior(b, mi_iand(b, mi_ushr32_imm(b, mi_value_ref(b, bytes), 14), mi_imm(0x7f)),
++                            mi_imm(0x80)), 16);
++   struct mi_value leb3 = mi_ishl_imm(b, mi_ushr32_imm(b, bytes, 21), 24);
++   return mi_ior(b, mi_ior(b, leb0, leb1), mi_ior(b, leb2, leb3));
++}
++
+ static void
+ anv_av1_encode_video(struct anv_cmd_buffer *cmd, const VkVideoEncodeInfoKHR *enc_info)
+ {
+@@ -4478,16 +4494,45 @@
+       wake.MaskBits = 768;
+    }
+ 
++   const StdVideoAV1TileInfo *ti = pic_info->pTileInfo;
++   uint32_t num_tile_cols = ti ? ti->TileCols : 1;
++   uint32_t num_tile_rows = ti ? ti->TileRows : 1;
++   const uint32_t sb_size = seq_hdr->flags.use_128x128_superblock ? 128 : 64;
++   const uint32_t pic_width_in_sb =
++      DIV_ROUND_UP(src_img->vk.extent.width, sb_size);
++   const uint32_t pic_height_in_sb =
++      DIV_ROUND_UP(src_img->vk.extent.height, sb_size);
++   /* AV1 uniform tiling (5.9.15): the requested TileCols/TileRows may not
++    * divide the frame evenly, so the actual tile count derived by the decoder
++    * (tileWidthSb = ceil(sb / 2^log2); num = ceil(sb / tileWidthSb)) can be
++    * smaller. Recompute it so we never emit a zero-width/height tail tile. */
++   if (!ti || ti->flags.uniform_tile_spacing_flag) {
++      /* Never fewer tiles than the frame size requires (wider than 4096: at least two columns; 8K: 2x2), as the
++       * frame header codes them (vk_video_av1_uniform_tiles_log2). */
++      uint32_t cols_log2 = util_logbase2_ceil(num_tile_cols);
++      uint32_t rows_log2 = util_logbase2_ceil(num_tile_rows);
++      vk_video_av1_uniform_tiles_log2(pic_width_in_sb, pic_height_in_sb, sb_size == 128, &cols_log2, &rows_log2);
++      uint32_t cw = 1u << cols_log2;
++      uint32_t ch = 1u << rows_log2;
++      num_tile_cols = DIV_ROUND_UP(pic_width_in_sb,
++                                   DIV_ROUND_UP(pic_width_in_sb, cw));
++      num_tile_rows = DIV_ROUND_UP(pic_height_in_sb,
++                                   DIV_ROUND_UP(pic_height_in_sb, ch));
++   }
++
++
+ #if GFX_VER >= 20
+    /* CBR/VBR: the HuC BRC kernels choose base_q_idx and patch the picture level commands and the frame
+-    * header (media-driver Av1BrcInitPkt / Av1BrcUpdatePkt), single tile frames only like the update
+-    * kernel's single PAK integration-free path. */
++    * header (media-driver Av1BrcInitPkt / Av1BrcUpdatePkt), one tile group, single pipe (no PAK
++    * integration): with more than one tile (above 4096 wide even when the application asks for none) the tiles
++    * after the first execute a second AVP_PIC_STATE the kernel patches too, as media-driver's
++    * Av1VdencPktXe2_Hpm::AddOneTileCommands. */
+    struct anv_av1_brc_frame brc = { 0 };
+-   brc.enabled = (vid->rc_mode == VK_VIDEO_ENCODE_RATE_CONTROL_MODE_CBR_BIT_KHR ||
+-                  vid->rc_mode == VK_VIDEO_ENCODE_RATE_CONTROL_MODE_VBR_BIT_KHR) &&
+-                 (!pic_info->pTileInfo || pic_info->pTileInfo->TileCols * pic_info->pTileInfo->TileRows == 1);
++   brc.enabled = vid->rc_mode == VK_VIDEO_ENCODE_RATE_CONTROL_MODE_CBR_BIT_KHR ||
++                 vid->rc_mode == VK_VIDEO_ENCODE_RATE_CONTROL_MODE_VBR_BIT_KHR;
+    if (brc.enabled) {
+-      brc.layout = anv_av1_brc_slb_layout();
++      brc.num_tiles = num_tile_cols * num_tile_rows;
++      brc.layout = anv_av1_brc_slb_layout(brc.num_tiles > 1);
+       /* media-driver: the kernel picks the loop filter levels for the base_q_idx it chooses, except for intra
+        * block copy frames, which have no loop filter (5.9.2) */
+       brc.lf_update = !pic_info->flags.allow_intrabc;
+@@ -4541,6 +4586,7 @@
+    uint32_t num_tiles = 1;
+ #if GFX_VER >= 20
+    struct anv_address brc_tg_leb128_addr[8] = { 0 };
++   uint32_t brc_tg_payload_prefix[8] = { 0 };
+    const uint32_t num_passes = brc.enabled && brc.two_pass ? 2 : 1;
+ #else
+    const uint32_t num_passes = 1;
+@@ -4758,27 +4804,6 @@
+     * tg_leb128_addr is hoisted so the post-loop size patch still sees it.
+     */
+    tg_payload_prefix = 0;
+-   const StdVideoAV1TileInfo *ti = pic_info->pTileInfo;
+-   uint32_t num_tile_cols = ti ? ti->TileCols : 1;
+-   uint32_t num_tile_rows = ti ? ti->TileRows : 1;
+-   const uint32_t sb_size = seq_hdr->flags.use_128x128_superblock ? 128 : 64;
+-   const uint32_t pic_width_in_sb =
+-      DIV_ROUND_UP(src_img->vk.extent.width, sb_size);
+-   const uint32_t pic_height_in_sb =
+-      DIV_ROUND_UP(src_img->vk.extent.height, sb_size);
+-   /* AV1 uniform tiling (5.9.15): the requested TileCols/TileRows may not
+-    * divide the frame evenly, so the actual tile count derived by the decoder
+-    * (tileWidthSb = ceil(sb / 2^log2); num = ceil(sb / tileWidthSb)) can be
+-    * smaller. Recompute it so we never emit a zero-width/height tail tile. */
+-   if (!ti || ti->flags.uniform_tile_spacing_flag) {
+-      uint32_t cw = util_next_power_of_two(num_tile_cols);
+-      uint32_t ch = util_next_power_of_two(num_tile_rows);
+-      num_tile_cols = DIV_ROUND_UP(pic_width_in_sb,
+-                                   DIV_ROUND_UP(pic_width_in_sb, cw));
+-      num_tile_rows = DIV_ROUND_UP(pic_height_in_sb,
+-                                   DIV_ROUND_UP(pic_height_in_sb, ch));
+-   }
+-
+    num_tiles = num_tile_cols * num_tile_rows;
+    uint32_t cu_tile_offset = 0;
+    uint32_t lcu_tile_offset = 0;
+@@ -5116,8 +5141,10 @@
+       uint32_t frame_height = src_img->vk.extent.height;
+ 
+ #if GFX_VER >= 20
++      /* the first tile's AVP_PIC_STATE (header present) and the one of the tiles after it */
++      const uint16_t brc_pic_state_offset = tile_idx == 0 ? brc.layout.pic_state_offset : brc.layout.pic_state2_offset;
+       if (brc.enabled)
+-         anv_av1_brc_slb_begin(cmd, &brc_parent, brc.slb_in, brc.layout.pic_state_offset);
++         anv_av1_brc_slb_begin(cmd, &brc_parent, brc.slb_in, brc_pic_state_offset);
+ #endif
+       anv_batch_emit(&cmd->batch, GENX(AVP_PIC_STATE), pic) {
+          pic.FrameWidth = frame_width - 1;
+@@ -5332,7 +5359,7 @@
+ #if GFX_VER >= 20
+       if (brc.enabled)
+          anv_av1_brc_slb_end(cmd, &brc_parent, 4 * GENX(AVP_PIC_STATE_length) + 4,
+-                             anv_av1_brc_slb_out_addr(vid, brc.layout.pic_state_offset));
++                             anv_av1_brc_slb_out_addr(vid, brc_pic_state_offset));
+ #endif
+ 
+       /* SavedOrderHints / ActiveReferenceBitmask are only consumed for motion
+@@ -5628,6 +5655,7 @@
+             if (num_variants > 1) {
+                anv_video_end_sub_batch(cmd, &lf_variant);
+                brc_tg_leb128_addr[v] = tg_leb128_addr;
++               brc_tg_payload_prefix[v] = tg_payload_prefix;
+             }
+ #endif
+          }
+@@ -5887,8 +5915,9 @@
+          else
+             picture_type = 2;
+ 
+-         bool tiling = pic_info->pTileInfo &&
+-                       (pic_info->pTileInfo->TileCols > 1 || pic_info->pTileInfo->TileRows > 1);
++         /* the tiles the frame is coded with (media-driver Av1BasicFeature VDENC_CMD2: tile_cols > 1 ||
++          * tile_rows > 1), more than one above 4096 wide even without pTileInfo */
++         bool tiling = num_tiles > 1;
+ 
+          cmd2.FrameWidthInPixelsMinusOne = align(frame_width, 8) - 1;
+          cmd2.FrameHeightInPixelsMinusOne = align(frame_height, 8) - 1;
+@@ -6271,34 +6300,24 @@
+          mi_value_to_gpr(&b, mi_reg32(AVP_BITSTREAM_BYTECOUNT_TILE_NOHEADER_REG));
+ #endif
+    }
+-   struct mi_value leb0 =
+-      mi_ior(&b, mi_iand(&b, mi_value_ref(&b, tile_bytes), mi_imm(0x7f)),
+-             mi_imm(0x80));
+-   struct mi_value leb1 =
+-      mi_ishl_imm(&b,
+-                  mi_ior(&b,
+-                         mi_iand(&b,
+-                                 mi_ushr32_imm(&b, mi_value_ref(&b, tile_bytes), 7),
+-                                 mi_imm(0x7f)),
+-                         mi_imm(0x80)), 8);
+-   struct mi_value leb2 =
+-      mi_ishl_imm(&b,
+-                  mi_ior(&b,
+-                         mi_iand(&b,
+-                                 mi_ushr32_imm(&b, mi_value_ref(&b, tile_bytes), 14),
+-                                 mi_imm(0x7f)),
+-                         mi_imm(0x80)), 16);
+-   struct mi_value leb3 =
+-      mi_ishl_imm(&b, mi_ushr32_imm(&b, tile_bytes, 21), 24);
+-
+-   struct mi_value leb128 =
+-      mi_ior(&b, mi_ior(&b, leb0, leb1), mi_ior(&b, leb2, leb3));
+ #if GFX_VER >= 20
+    if (brc.enabled && (brc.lf_update || brc.cdef_update)) {
+-      /* the leb128 goes to whichever header length the kernel produced, see the padding above */
++      /* the leb128 goes to whichever header length the kernel produced, see the padding above; with more than
++       * one tile the payload is the frame's bytes past that header (the prefix differs per variant) */
+       const uint32_t lf_v = brc.lf_update ? 2 : 1, cdef_v = brc.cdef_update ? 4 : 1;
+       struct anv_address leb_tmp = anv_av1_brc_scratch_addr(vid, ANV_AV1_BRC_SCRATCH_LEB128);
+-      mi_store(&b, mi_mem32(leb_tmp), leb128);
++      if (num_tiles > 1) {
++         /* one leb128 per variant (scratch dwords after ANV_AV1_BRC_SCRATCH_LEB128), computed here: the
++          * variant batches only copy */
++         mi_value_unref(&b, tile_bytes);
++         struct anv_address tile_bs_accum =
++            ANV_VID_MEM_ADDR(vid, ANV_VID_MEM_AV1_ENCODE_TILE_BITSTREAM_ACCUM);
++         for (uint32_t v = 0; v < lf_v * cdef_v; v++)
++            mi_store(&b, mi_mem32(anv_address_add(leb_tmp, 4 * v)),
++                     anv_av1_leb128_4(&b, mi_isub(&b, mi_mem32(tile_bs_accum), mi_imm(brc_tg_payload_prefix[v]))));
++      } else {
++         mi_store(&b, mi_mem32(leb_tmp), anv_av1_leb128_4(&b, tile_bytes));
++      }
+       for (uint32_t v = 0; v < lf_v * cdef_v; v++) {
+          struct anv_video_sub_batch lf_variant;
+          if (!anv_video_begin_sub_batch(cmd, 256, &lf_variant))
+@@ -6310,12 +6329,13 @@
+          struct mi_builder vb;
+          mi_builder_init(&vb, cmd->device->info, &cmd->batch);
+          mi_builder_set_mocs(&vb, anv_mocs_for_address(cmd->device, &brc_tg_leb128_addr[v]));
+-         mi_store(&vb, mi_mem32(brc_tg_leb128_addr[v]), mi_mem32(leb_tmp));
++         mi_store(&vb, mi_mem32(brc_tg_leb128_addr[v]),
++                  mi_mem32(anv_address_add(leb_tmp, num_tiles > 1 ? 4 * v : 0)));
+          anv_video_end_sub_batch(cmd, &lf_variant);
+       }
+    } else
+ #endif
+-   mi_store(&b, mi_mem32(tg_leb128_addr), leb128);
++   mi_store(&b, mi_mem32(tg_leb128_addr), anv_av1_leb128_4(&b, tile_bytes));
+ 
+ #endif // GFX_VERx10 == 125 || GFX_VERx10 == 200
+ }
+--- a/src/intel/vulkan/genX_huc_brc_av1.h
++++ b/src/intel/vulkan/genX_huc_brc_av1.h
+@@ -224,19 +224,21 @@
+ };
+ static_assert(sizeof(struct anv_huc_av1_brc_const_data) == 2176, "AV1 BRC constant data");
+ 
+-/* Byte layout of the input SLBB (media-driver Av1BrcUpdatePkt::ConstructBatchBufferHuCBRC, one tile, no
+- * segmentation, no palette). */
++/* Byte layout of the input SLBB (media-driver Av1BrcUpdatePkt::ConstructBatchBufferHuCBRC, no segmentation, no
++ * palette). A frame of more than one tile (one tile group) has a second AVP_PIC_STATE, for the tiles after the
++ * first (HeaderPresentFlag clear), right after the first one (Av1BrcUpdatePkt::AddAvpPicStateBaseOnTile). */
+ struct anv_av1_brc_slb_layout {
+    uint16_t segment_offset;
+    uint16_t inloop_filter_offset;
+    uint16_t cmd1_offset;
+    uint16_t cmd2_offset;
+    uint16_t pic_state_offset;
++   uint16_t pic_state2_offset;
+    uint16_t size;
+ };
+ 
+ static inline struct anv_av1_brc_slb_layout
+-anv_av1_brc_slb_layout(void)
++anv_av1_brc_slb_layout(bool multi_tile)
+ {
+    struct anv_av1_brc_slb_layout l;
+ 
+@@ -245,15 +247,16 @@
+    l.cmd1_offset = l.inloop_filter_offset + 4 * GENX(AVP_INLOOP_FILTER_STATE_length) + 4;
+    l.cmd2_offset = l.cmd1_offset + 4 * GENX(VDENC_CMD1_length) + 4;
+    l.pic_state_offset = l.cmd2_offset + 4 * GENX(VDENC_CMD2_length) + 4;
++   l.pic_state2_offset = l.pic_state_offset + 4 * GENX(AVP_PIC_STATE_length) + 4;
+    /* Av1BrcUpdatePkt::AddAvpPicStateBaseOnTile pads the batch to a cache line with MI_NOOPs */
+-   l.size = align(l.pic_state_offset + 4 * GENX(AVP_PIC_STATE_length) + 4, 64);
++   l.size = align(multi_tile ? l.pic_state2_offset + 4 * GENX(AVP_PIC_STATE_length) + 4 : l.pic_state2_offset, 64);
+    return l;
+ }
+ 
+ /* Driver scratch dwords in ANV_VID_MEM_AV1_ENCODE_BRC_DATA, past the 64 bytes the kernel writes there */
+ #define ANV_AV1_BRC_SCRATCH_LF_LEVELS  2048 /* AVP_INLOOP_FILTER_STATE DW1 as the kernel wrote it, then a mask */
+ #define ANV_AV1_BRC_SCRATCH_CDEF_BITS  2056 /* AVP_INLOOP_FILTER_STATE DW5 as the kernel wrote it, then a mask */
+-#define ANV_AV1_BRC_SCRATCH_LEB128     2064 /* the tile group obu_size leb128 */
++#define ANV_AV1_BRC_SCRATCH_LEB128     2064 /* the tile group obu_size leb128 (more than one tile: one per header variant, 8 dwords) */
+ 
+ /* Per-frame BRC state the AV1 encode records against. */
+ struct anv_av1_brc_frame {
+@@ -263,6 +266,8 @@
+    /* the kernel picks the CDEF parameters, cdef_bits included (header length then known only on the GPU) */
+    bool cdef_update;
+    struct anv_av1_brc_slb_layout layout;
++   /* tiles in the frame (one tile group) */
++   uint32_t num_tiles;
+    struct anv_state slb_in;
+    struct anv_state pak_insert_in;
+    struct anv_state update_dmem;
+@@ -642,14 +647,15 @@
+    dmem->UPD_LALength = 0;
+ 
+    dmem->UPD_SLBBSize = brc->layout.size - brc->layout.segment_offset;
+-   dmem->UPD_AVPPiCStateCmdNum = 1;
++   /* media-driver Av1Brc::SetDmemForUpdate from Av1BrcUpdatePkt::AddAvpPicStateBaseOnTile's SlbData */
++   dmem->UPD_AVPPiCStateCmdNum = brc->num_tiles > 1 ? 2 : 1;
+    dmem->UPD_AVPSegmentStateOffset = brc->layout.segment_offset;
+    dmem->UPD_AVPInloopFilterStateOffset = brc->layout.inloop_filter_offset;
+    dmem->UPD_VDEncCmd1Offset = brc->layout.cmd1_offset;
+    dmem->UPD_VDEncCmd2Offset = brc->layout.cmd2_offset;
+    dmem->UPD_AVPPicStateOffset = brc->layout.pic_state_offset;
+    dmem->UPD_VDEncTileSliceStateOffset = 0;
+-   dmem->UPD_TileNum = 1;
++   dmem->UPD_TileNum = brc->num_tiles;
+ 
+    /* back-annotation of the packed frame header (bit offsets from the start of the frame header OBU) */
+    dmem->UPD_LoopFilterParamsBitOffset = brc->hdr.loop_filter_bit_offset;
+--- a/src/vulkan/runtime/vk_video.c
++++ b/src/vulkan/runtime/vk_video.c
+@@ -3323,6 +3323,23 @@
+    return k;
+ }
+ 
++/* AV1 uniform tile spacing (5.9.15): raise TileColsLog2 / TileRowsLog2 to the minimum for a frame of
++ * sb_cols x sb_rows superblocks (MAX_TILE_WIDTH 4096, MAX_TILE_AREA 4096 * 2304).
++ */
++void
++vk_video_av1_uniform_tiles_log2(uint32_t sb_cols, uint32_t sb_rows, bool use_128x128,
++                                uint32_t *cols_log2, uint32_t *rows_log2)
++{
++   const uint32_t sb_shift = use_128x128 ? 7 : 6;
++   const uint32_t max_tile_width_sb = 4096 >> sb_shift;
++   const uint32_t max_tile_area_sb = (4096 * 2304) >> (2 * sb_shift);
++   const uint32_t min_log2_cols = av1_tile_log2(max_tile_width_sb, sb_cols);
++   const uint32_t min_log2_tiles = MAX2(min_log2_cols, av1_tile_log2(max_tile_area_sb, sb_rows * sb_cols));
++
++   *cols_log2 = MAX2(*cols_log2, min_log2_cols);
++   *rows_log2 = MAX2(*rows_log2, min_log2_tiles > *cols_log2 ? min_log2_tiles - *cols_log2 : 0);
++}
++
+ static void
+ av1_write_ns(struct vl_bitstream_encoder *enc, uint32_t v, uint32_t n)
+ {
+@@ -3611,6 +3628,14 @@
+    uint32_t tile_rows_log2 = av1_tile_log2(1, tile_rows);
+ 
+    uint32_t uniform = tile_info ? tile_info->flags.uniform_tile_spacing_flag : 1;
++
++   /* Uniform spacing codes TileColsLog2 / TileRowsLog2 as increments over the minimum the frame size imposes (a
++    * tile is at most 4096 wide and 4096x2304 in area, 5.9.15): a frame wider than 4096 has at least two tile
++    * columns, whatever the application asked for (without pTileInfo, one tile). The encoder lays the tiles out the
++    * same way (vk_video_av1_uniform_tiles_log2).
++    */
++   if (uniform)
++      vk_video_av1_uniform_tiles_log2(sb_cols, sb_rows, use_128x128, &tile_cols_log2, &tile_rows_log2);
+ 
+    /* uniform_tile_spacing_flag */
+    vl_bitstream_put_bits(&enc, 1, uniform);
+--- a/src/vulkan/runtime/vk_video.h
++++ b/src/vulkan/runtime/vk_video.h
+@@ -380,6 +380,10 @@
+                          size_t size_limit,
+                          size_t *data_size,
+                          void *data_ptr);
++
++void
++vk_video_av1_uniform_tiles_log2(uint32_t sb_cols, uint32_t sb_rows, bool use_128x128,
++                                uint32_t *cols_log2, uint32_t *rows_log2);
+ 
+ VkResult
+ vk_video_encode_av1_seq_hdr(const struct vk_video_session_parameters *params,

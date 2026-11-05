@@ -1,0 +1,545 @@
+From: Yusuf İhsan KILINÇ
+Subject: [PATCH 0101] anv/nvmtl, xemac: rename B580 to IntelXe
+
+On top of the whole series as installed (prod9, mesa/b580-prod9.diff before this rename); the result is
+mesa/intelxe.diff.
+
+The kernel extension is IntelXe.kext now: it was named after the first card it drove, and it is meant for Intel Xe
+GPUs. Its uAPI extensions follow the name: uapi/b580_drm.h is intelxe_drm.h, DRM_IOCTL_B580_* / DRM_B580_* are
+DRM_IOCTL_INTELXE_* / DRM_INTELXE_*, B580_CAP_* / B580_SURFACE_* are INTELXE_CAP_* / INTELXE_SURFACE_*, struct
+drm_b580_* is struct drm_intelxe_*. Ioctl numbers, capability values and structure layouts are unchanged, so this
+build talks to the same kernel interface; only the names differ. Comments name IntelXe.kext and debug.intelxe.*.
+
+The header was included by a path relative to the Mesa checkout ("../../../../b580/uapi/b580_drm.h", the layout of the
+development tree). It is now found through the xemac dependency: <xemac>/../uapi is an include directory, the place
+xemac.c already takes it from (in the intel-gpu-macos-driver repository user/uapi, a link to kernel/IntelXe/uapi).
+---
+diff --git a/meson.build b/meson.build
+index 3e20988..0c8b70f 100644
+--- a/meson.build
++++ b/meson.build
+@@ -824,7 +824,8 @@ if with_xemac
+   _xemac_dir = get_option('xemac')
+   files_xemac = files(_xemac_dir / 'xemac.c', _xemac_dir / 'xemac_drm.c')
+   dep_libdrm = declare_dependency(
+-    include_directories : include_directories(_xemac_dir, _xemac_dir / 'libdrm'),
++    # <xemac>/../uapi: the kernel's uAPI headers (intelxe_drm.h), where xemac.c finds them too
++    include_directories : include_directories(_xemac_dir, _xemac_dir / 'libdrm', _xemac_dir / '..' / 'uapi'),
+   )
+   pre_args += '-DHAVE_XEMAC'
+ endif
+diff --git a/meson.options b/meson.options
+index d9470d0..fae664a 100644
+--- a/meson.options
++++ b/meson.options
+@@ -732,7 +732,9 @@ option(
+   value : '',
+   description : 'macOS: directory with xemac.h, xemac.c, xemac_drm.c and ' +
+                 'libdrm/xf86drm.h, the user-space side of a kernel extension ' +
+-                'that implements the xe uAPI. Replaces libdrm and DRM nodes.'
++                'that implements the xe uAPI. Replaces libdrm and DRM nodes. ' +
++                'Its sibling directory ../uapi holds the kernel\'s uAPI headers ' +
++                '(intelxe_drm.h).'
+ )
+ 
+ option(
+diff --git a/src/intel/vulkan/anv_allocator.c b/src/intel/vulkan/anv_allocator.c
+index f61c5f8..2723552 100644
+--- a/src/intel/vulkan/anv_allocator.c
++++ b/src/intel/vulkan/anv_allocator.c
+@@ -2129,7 +2129,7 @@ anv_device_import_bo(struct anv_device *device,
+       };
+ 
+ #ifdef HAVE_XEMAC
+-      /* An object fd is an open of B580.kext's clone device, whose
++      /* An object fd is an open of IntelXe.kext's clone device, whose
+        * lseek(SEEK_END) is 0: the kernel tells the BO's size.
+        */
+       off_t size = xemac_obj_size(device->fd, fd);
+@@ -2174,8 +2174,8 @@ anv_device_import_bo(struct anv_device *device,
+    return VK_SUCCESS;
+ }
+ 
+-/* nvmtl (gpuperf): anv_device_import_bo for a GEM handle the kernel already gave this client (B580.kext's
+- * DRM_IOCTL_B580_SURFACE_VRAM: an IOSurface's VRAM backing, shared with other processes) and its size. The handle is
++/* nvmtl (gpuperf): anv_device_import_bo for a GEM handle the kernel already gave this client (IntelXe.kext's
++ * DRM_IOCTL_INTELXE_SURFACE_VRAM: an IOSurface's VRAM backing, shared with other processes) and its size. The handle is
+  * this import's: a second import of the same surface gets its own handle (and its own anv_bo); on failure it is closed. */
+ VkResult
+ anv_device_import_bo_handle_locked(struct anv_device *device, uint32_t gem_handle, uint64_t size,
+@@ -2186,7 +2186,7 @@ anv_device_import_bo_handle_locked(struct anv_device *device, uint32_t gem_handl
+    struct anv_bo_cache *cache = &device->bo_cache;
+    simple_mtx_assert_locked(&cache->mutex);
+    struct anv_bo *bo = anv_device_lookup_bo(device, gem_handle);
+-   /* A handle this device already imported (B580_SURFACE_VRAM_SAME_HANDLE, as PRIME's fd-to-handle gives the existing
++   /* A handle this device already imported (INTELXE_SURFACE_VRAM_SAME_HANDLE, as PRIME's fd-to-handle gives the existing
+     * handle): the same anv_bo, one more reference, as anv_device_import_bo does for a dma-buf imported twice. */
+    if (bo && bo->refcount > 0) {
+       if ((bo->alloc_flags & ANV_BO_ALLOC_CLIENT_VISIBLE_ADDRESS) !=
+diff --git a/src/intel/vulkan/anv_instance.c b/src/intel/vulkan/anv_instance.c
+index 94bbdf0..f2899cf 100644
+--- a/src/intel/vulkan/anv_instance.c
++++ b/src/intel/vulkan/anv_instance.c
+@@ -29,7 +29,7 @@ process_anv_debug_variable_once(void)
+ {
+    anv_debug = parse_debug_string(os_get_option("ANV_DEBUG"), debug_control);
+ #ifdef HAVE_XEMAC
+-   /* macOS over B580.kext: Vulkan Video decode and encode are on without ANV_DEBUG=video-decode,video-encode
++   /* macOS over IntelXe.kext: Vulkan Video decode and encode are on without ANV_DEBUG=video-decode,video-encode
+     * (VideoToolbox and ffmpeg's Vulkan hwaccel use them system-wide). ANV_NO_VIDEO=1 turns them off again. The
+     * extensions and video queues still need the media GT's engines, which the kernel reports only when it has them.
+     */
+diff --git a/src/intel/vulkan/anv_nvmtl_recover.c b/src/intel/vulkan/anv_nvmtl_recover.c
+index db475fa..af256df 100644
+--- a/src/intel/vulkan/anv_nvmtl_recover.c
++++ b/src/intel/vulkan/anv_nvmtl_recover.c
+@@ -1,5 +1,5 @@
+ /*
+- * GPU-reset recovery for the nullmoth Metal plugin on B580.kext (macOS, xemac): a fresh exec queue on the same VM.
++ * GPU-reset recovery for the nullmoth Metal plugin on IntelXe.kext (macOS, xemac): a fresh exec queue on the same VM.
+  *
+  * On xe a hang is per context: the GuC resets the guilty context (CONTEXT_RESET_NOTIFICATION), the kernel bans that
+  * exec queue and signals every fence it handed out; a GT reset bans the queues whose work had started and replays the
+diff --git a/src/intel/vulkan/anv_nvmtl_surface.c b/src/intel/vulkan/anv_nvmtl_surface.c
+index ae0be47..73c1461 100644
+--- a/src/intel/vulkan/anv_nvmtl_surface.c
++++ b/src/intel/vulkan/anv_nvmtl_surface.c
+@@ -1,11 +1,11 @@
+ /*
+- * Implicit IOSurface synchronization for the nullmoth Metal plugin on B580.kext (macOS, xemac).
++ * Implicit IOSurface synchronization for the nullmoth Metal plugin on IntelXe.kext (macOS, xemac).
+  *
+- * B580.kext keeps, per IOSurface ID, the fences of the jobs that last wrote and read the surface (uapi/b580_drm.h, the
++ * IntelXe.kext keeps, per IOSurface ID, the fences of the jobs that last wrote and read the surface (uapi/intelxe_drm.h, the
+  * dma-resv model). These entry points let the plugin, which only sees Vulkan objects, attach a submission's fence to a
+  * surface and import a surface's fences into a timeline semaphore it then waits on in vkQueueSubmit, so a consumer in
+  * another process (WindowServer compositing a game's frame) waits on the GPU instead of the producer waiting on the CPU.
+- * They are looked up with dlsym; a plugin that does not find them, or a kernel without B580_CAP_SURFACE_FENCES, keeps
++ * They are looked up with dlsym; a plugin that does not find them, or a kernel without INTELXE_CAP_SURFACE_FENCES, keeps
+  * the CPU-side ordering.
+  */
+ #include "anv_private.h"
+@@ -15,13 +15,13 @@
+ #include "vk_semaphore.h"
+ 
+ #include "drm-uapi/drm.h"
+-#include "../../../../b580/uapi/b580_drm.h"
++#include "intelxe_drm.h"   /* the kernel's uAPI extensions: <xemac>/../uapi (meson.build) */
+ 
+-#ifndef DRM_IOCTL_B580_SURFACE_VRAM   /* B580.kext gpuperf phase 1 (b580-surfvram uapi/b580_drm.h); older headers lack it */
+-#define B580_CAP_SURFACE_VRAM 0xb5800002ull
+-#define B580_SURFACE_VRAM_CREATE (1u << 0)
+-#define B580_SURFACE_DIRTY_TRYLOCK (1u << 0)
+-struct drm_b580_surface_vram {
++#ifndef DRM_IOCTL_INTELXE_SURFACE_VRAM   /* IntelXe.kext gpuperf phase 1 (b580-surfvram uapi/intelxe_drm.h); older headers lack it */
++#define INTELXE_CAP_SURFACE_VRAM 0xb5800002ull
++#define INTELXE_SURFACE_VRAM_CREATE (1u << 0)
++#define INTELXE_SURFACE_DIRTY_TRYLOCK (1u << 0)
++struct drm_intelxe_surface_vram {
+    __u32 surface_id;
+    __u32 plane;
+    __u64 size;
+@@ -31,26 +31,26 @@ struct drm_b580_surface_vram {
+    __u32 gen;
+    __u32 pad;
+ };
+-struct drm_b580_surface_dirty {
++struct drm_intelxe_surface_dirty {
+    __u32 surface_id;
+    __u32 plane;
+    __u32 flags;
+    __u32 pad;
+ };
+-#define DRM_B580_SURFACE_VRAM 0x53
+-#define DRM_B580_SURFACE_DIRTY 0x54
+-#define DRM_IOCTL_B580_SURFACE_VRAM DRM_IOWR(DRM_COMMAND_BASE + DRM_B580_SURFACE_VRAM, struct drm_b580_surface_vram)
+-#define DRM_IOCTL_B580_SURFACE_DIRTY DRM_IOW(DRM_COMMAND_BASE + DRM_B580_SURFACE_DIRTY, struct drm_b580_surface_dirty)
++#define DRM_INTELXE_SURFACE_VRAM 0x53
++#define DRM_INTELXE_SURFACE_DIRTY 0x54
++#define DRM_IOCTL_INTELXE_SURFACE_VRAM DRM_IOWR(DRM_COMMAND_BASE + DRM_INTELXE_SURFACE_VRAM, struct drm_intelxe_surface_vram)
++#define DRM_IOCTL_INTELXE_SURFACE_DIRTY DRM_IOW(DRM_COMMAND_BASE + DRM_INTELXE_SURFACE_DIRTY, struct drm_intelxe_surface_dirty)
+ #endif
+ 
+-#ifndef DRM_IOCTL_B580_SURFACE_VRAM2
+-/* B580.kext (tile4) uAPI, uapi/b580_drm.h: a VRAM backing that carries the layout its creator renders with (a DRM format
++#ifndef DRM_IOCTL_INTELXE_SURFACE_VRAM2
++/* IntelXe.kext (tile4) uAPI, uapi/intelxe_drm.h: a VRAM backing that carries the layout its creator renders with (a DRM format
+  * modifier and its pitch, like a Linux framebuffer), so importers (the window server's Metal plugin) build the same image
+  * and the kernel's CPU-lock page-off detiles it (XY_BLOCK_COPY_BLT Tile4 -> linear pages). GET_CAP
+- * B580_CAP_SURFACE_VRAM_LAYOUT = 1 once WindowServer imports with SURFACE_VRAM2. modifier: DRM_FORMAT_MOD_LINEAR or
++ * INTELXE_CAP_SURFACE_VRAM_LAYOUT = 1 once WindowServer imports with SURFACE_VRAM2. modifier: DRM_FORMAT_MOD_LINEAR or
+  * I915_FORMAT_MOD_4_TILED (uncompressed: the backing stays noComp); CREATE records it, an import gets it back. */
+-#define B580_CAP_SURFACE_VRAM_LAYOUT 0xb5800003ull
+-struct drm_b580_surface_vram2 {
++#define INTELXE_CAP_SURFACE_VRAM_LAYOUT 0xb5800003ull
++struct drm_intelxe_surface_vram2 {
+    __u32 surface_id;
+    __u32 plane;
+    __u64 size;
+@@ -67,32 +67,32 @@ struct drm_b580_surface_vram2 {
+    __u32 linear_pitch;/* in (CREATE) / out: the IOSurface's bytesPerRow */
+    __u32 pad2;
+ };
+-#define DRM_B580_SURFACE_VRAM2 0x55
+-#define DRM_IOCTL_B580_SURFACE_VRAM2 DRM_IOWR(DRM_COMMAND_BASE + DRM_B580_SURFACE_VRAM2, struct drm_b580_surface_vram2)
++#define DRM_INTELXE_SURFACE_VRAM2 0x55
++#define DRM_IOCTL_INTELXE_SURFACE_VRAM2 DRM_IOWR(DRM_COMMAND_BASE + DRM_INTELXE_SURFACE_VRAM2, struct drm_intelxe_surface_vram2)
+ #endif
+ #ifndef DRM_FORMAT_MOD_LINEAR
+ #define DRM_FORMAT_MOD_LINEAR 0ull
+ #endif
+-#ifndef B580_SURFACE_VRAM_SAME_HANDLE
+-/* B580.kext rb7m (uapi/b580_drm.h): the handle this client already holds for the backing comes back, as
++#ifndef INTELXE_SURFACE_VRAM_SAME_HANDLE
++/* IntelXe.kext rb7m (uapi/intelxe_drm.h): the handle this client already holds for the backing comes back, as
+  * DRM_IOCTL_PRIME_FD_TO_HANDLE returns the file's existing handle for a dma-buf it imported before; older kernels answer
+  * EINVAL. */
+-#define B580_SURFACE_VRAM_SAME_HANDLE (1u << 1)
++#define INTELXE_SURFACE_VRAM_SAME_HANDLE (1u << 1)
+ #endif
+ 
+ 
+ /* VRAM-shared IOSurfaces (gpuperf phase 2). The plugin stages a request, then calls vkAllocateMemory with a
+  * VkImportMemoryFdInfoKHR (OPAQUE_FD, any placeholder fd it owns, consumed on success) in the same thread: that import
+- * becomes the surface's VRAM backing (DRM_IOCTL_B580_SURFACE_VRAM), the way NVK's nvmtl_nvk_stage_import works. */
++ * becomes the surface's VRAM backing (DRM_IOCTL_INTELXE_SURFACE_VRAM), the way NVK's nvmtl_nvk_stage_import works. */
+ /* req->flags (0083): a creator asks for a Tile4 backing (I915_FORMAT_MOD_4_TILED, its pitch the row rounded up to 128 B)
+- * when the window server's plugin reads backing layouts (B580_CAP_SURFACE_VRAM_LAYOUT = 1), as a Wayland client picks a
++ * when the window server's plugin reads backing layouts (INTELXE_CAP_SURFACE_VRAM_LAYOUT = 1), as a Wayland client picks a
+  * tiled modifier from the compositor's dmabuf feedback; width, height, cpp (4) and linear_pitch (the IOSurface's
+  * bytesPerRow) are then inputs. Linear when the layout cannot be used, when the kernel refuses it (a backing that exists
+  * with another layout: EBUSY) or without the capability. A Mesa before 0083 ignores the flag: linear. */
+ #define NVMTL_ANV_SURFACE_VRAM_WANT_TILE4 (1u << 8)
+ struct nvmtl_anv_surface_vram_req {
+    uint32_t version;     /* 1, or 2: the caller reads tiled backings (the fields below) */
+-   uint32_t surface_id, plane, flags;   /* flags: B580_SURFACE_VRAM_CREATE, NVMTL_ANV_SURFACE_VRAM_WANT_TILE4 */
++   uint32_t surface_id, plane, flags;   /* flags: INTELXE_SURFACE_VRAM_CREATE, NVMTL_ANV_SURFACE_VRAM_WANT_TILE4 */
+    uint64_t size;        /* bytes the caller needs */
+    uint64_t size_out;    /* out: the backing's bytes */
+    uint32_t gen;         /* out: its generation */
+@@ -138,10 +138,10 @@ static int
+ nvmtl_surface_vram_ioctl(struct anv_device *device, unsigned long request, void *arg, uint32_t *flags)
+ {
+    if (!nvmtl_same_handle_refused)
+-      *flags |= B580_SURFACE_VRAM_SAME_HANDLE;
++      *flags |= INTELXE_SURFACE_VRAM_SAME_HANDLE;
+    int r = nvmtl_ioctl(device->fd, request, arg);
+-   if (r && errno == EINVAL && (*flags & B580_SURFACE_VRAM_SAME_HANDLE)) {
+-      *flags &= ~B580_SURFACE_VRAM_SAME_HANDLE;
++   if (r && errno == EINVAL && (*flags & INTELXE_SURFACE_VRAM_SAME_HANDLE)) {
++      *flags &= ~INTELXE_SURFACE_VRAM_SAME_HANDLE;
+       r = nvmtl_ioctl(device->fd, request, arg);
+       if (r == 0)
+          nvmtl_same_handle_refused = true;   /* the flag was what it refused: a kernel before rb7m */
+@@ -187,12 +187,12 @@ nvmtl_errno_result(int err)
+    }
+ }
+ 
+-/* *supported = 1 when the kernel has the surface-fence ioctls (B580_CAP_SURFACE_FENCES). */
++/* *supported = 1 when the kernel has the surface-fence ioctls (INTELXE_CAP_SURFACE_FENCES). */
+ PUBLIC VkResult
+ nvmtl_anv_surface_cap_v1(VkDevice _device, uint32_t *supported)
+ {
+    ANV_FROM_HANDLE(anv_device, device, _device);
+-   struct drm_get_cap cap = { .capability = B580_CAP_SURFACE_FENCES };
++   struct drm_get_cap cap = { .capability = INTELXE_CAP_SURFACE_FENCES };
+    *supported = 0;
+    if (intel_ioctl(device->fd, DRM_IOCTL_GET_CAP, &cap))
+       return VK_SUCCESS;
+@@ -201,7 +201,7 @@ nvmtl_anv_surface_cap_v1(VkDevice _device, uint32_t *supported)
+ }
+ 
+ /* Attach the fence of `fence` (a binary syncobj), or of timeline semaphore `sem` at `value`, to surface `surface_id`
+- * as a B580_SURFACE_FENCE_WRITE or _READ user. VK_NOT_READY: not submitted yet (EAGAIN). */
++ * as a INTELXE_SURFACE_FENCE_WRITE or _READ user. VK_NOT_READY: not submitted yet (EAGAIN). */
+ PUBLIC VkResult
+ nvmtl_anv_surface_attach_v1(VkDevice _device, VkFence fence, VkSemaphore sem, uint64_t value, uint32_t surface_id,
+                             uint32_t flags)
+@@ -210,13 +210,13 @@ nvmtl_anv_surface_attach_v1(VkDevice _device, VkFence fence, VkSemaphore sem, ui
+    struct vk_drm_syncobj *s = nvmtl_syncobj_of(fence, sem);
+    if (!s)
+       return VK_ERROR_FEATURE_NOT_PRESENT;
+-   struct drm_b580_surface_fence_attach a = {
++   struct drm_intelxe_surface_fence_attach a = {
+       .surface_id = surface_id, .syncobj = s->syncobj, .point = fence ? 0 : value, .flags = flags,
+    };
+-   return nvmtl_ioctl(device->fd, DRM_IOCTL_B580_SURFACE_FENCE_ATTACH, &a) ? nvmtl_errno_result(errno) : VK_SUCCESS;
++   return nvmtl_ioctl(device->fd, DRM_IOCTL_INTELXE_SURFACE_FENCE_ATTACH, &a) ? nvmtl_errno_result(errno) : VK_SUCCESS;
+ }
+ 
+-/* Add the fences of surface `surface_id` that a B580_SURFACE_FENCE_READER or _WRITER must wait for as new points of
++/* Add the fences of surface `surface_id` that a INTELXE_SURFACE_FENCE_READER or _WRITER must wait for as new points of
+  * timeline semaphore `sem` (one used for nothing else). *wait_value: the point to wait on, 0 when there is nothing. */
+ PUBLIC VkResult
+ nvmtl_anv_surface_import_v1(VkDevice _device, VkSemaphore sem, uint32_t surface_id, uint32_t flags,
+@@ -229,8 +229,8 @@ nvmtl_anv_surface_import_v1(VkDevice _device, VkSemaphore sem, uint32_t surface_
+    struct vk_drm_syncobj *s = nvmtl_syncobj_of(VK_NULL_HANDLE, sem);
+    if (!s || !(s->base.flags & VK_SYNC_IS_TIMELINE))
+       return VK_ERROR_FEATURE_NOT_PRESENT;
+-   struct drm_b580_surface_fence_import m = { .surface_id = surface_id, .syncobj = s->syncobj, .flags = flags };
+-   if (nvmtl_ioctl(device->fd, DRM_IOCTL_B580_SURFACE_FENCE_IMPORT, &m))
++   struct drm_intelxe_surface_fence_import m = { .surface_id = surface_id, .syncobj = s->syncobj, .flags = flags };
++   if (nvmtl_ioctl(device->fd, DRM_IOCTL_INTELXE_SURFACE_FENCE_IMPORT, &m))
+       return nvmtl_errno_result(errno);
+    *wait_value = m.count_out ? m.point_out : 0;
+    if (count)
+@@ -244,17 +244,17 @@ PUBLIC VkResult
+ nvmtl_anv_surface_wait_v1(VkDevice _device, uint32_t surface_id, uint32_t flags, int64_t timeout_abs_ns)
+ {
+    ANV_FROM_HANDLE(anv_device, device, _device);
+-   struct drm_b580_surface_fence_wait w = { .surface_id = surface_id, .flags = flags, .timeout_ns = timeout_abs_ns };
+-   return nvmtl_ioctl(device->fd, DRM_IOCTL_B580_SURFACE_FENCE_WAIT, &w) ? nvmtl_errno_result(errno) : VK_SUCCESS;
++   struct drm_intelxe_surface_fence_wait w = { .surface_id = surface_id, .flags = flags, .timeout_ns = timeout_abs_ns };
++   return nvmtl_ioctl(device->fd, DRM_IOCTL_INTELXE_SURFACE_FENCE_WAIT, &w) ? nvmtl_errno_result(errno) : VK_SUCCESS;
+ }
+ 
+-/* *level = debug.b580.surfvram as the kernel reports it (B580_CAP_SURFACE_VRAM): 0 off or absent, 1 apps, 2 apps and
++/* *level = debug.intelxe.surfvram as the kernel reports it (INTELXE_CAP_SURFACE_VRAM): 0 off or absent, 1 apps, 2 apps and
+  * WindowServer. */
+ PUBLIC VkResult
+ nvmtl_anv_surface_vram_cap_v1(VkDevice _device, uint32_t *level)
+ {
+    ANV_FROM_HANDLE(anv_device, device, _device);
+-   struct drm_get_cap cap = { .capability = B580_CAP_SURFACE_VRAM };
++   struct drm_get_cap cap = { .capability = INTELXE_CAP_SURFACE_VRAM };
+    *level = 0;
+    if (nvmtl_ioctl(device->fd, DRM_IOCTL_GET_CAP, &cap) == 0)
+       *level = (uint32_t)cap.value;
+@@ -282,24 +282,24 @@ anv_nvmtl_surface_vram_staged(struct anv_device *device, uint64_t need, enum anv
+    if (!req)
+       return false;
+    nvmtl_staged_vram = NULL;   /* one import per stage */
+-   struct drm_b580_surface_vram v = {
++   struct drm_intelxe_surface_vram v = {
+       .surface_id = req->surface_id, .plane = req->plane,
+-      .size = req->size > need ? req->size : need, .flags = req->flags & B580_SURFACE_VRAM_CREATE,
++      .size = req->size > need ? req->size : need, .flags = req->flags & INTELXE_SURFACE_VRAM_CREATE,
+    };
+    simple_mtx_lock(&device->bo_cache.mutex);
+    if (req->version >= 2) {
+       /* SURFACE_VRAM2: a creator records linear (the plugin renders linear); an importer learns the layout. A kernel
+        * without it (ENOTTY) has linear backings only. */
+-      struct drm_b580_surface_vram2 v2 = {
++      struct drm_intelxe_surface_vram2 v2 = {
+          .surface_id = v.surface_id, .plane = v.plane, .size = v.size, .flags = v.flags,
+          .modifier = DRM_FORMAT_MOD_LINEAR,
+       };
+       /* 0083: a creator that renders Tile4 when the reader takes layouts (see NVMTL_ANV_SURFACE_VRAM_WANT_TILE4) */
+       bool t4 = false;
+-      if ((req->flags & B580_SURFACE_VRAM_CREATE) && (req->flags & NVMTL_ANV_SURFACE_VRAM_WANT_TILE4) && req->cpp == 4 &&
++      if ((req->flags & INTELXE_SURFACE_VRAM_CREATE) && (req->flags & NVMTL_ANV_SURFACE_VRAM_WANT_TILE4) && req->cpp == 4 &&
+           req->width && req->height && req->width <= 16384 && req->height <= 16384 &&
+           req->linear_pitch >= req->width * 4) {
+-         struct drm_get_cap cap = { .capability = B580_CAP_SURFACE_VRAM_LAYOUT };
++         struct drm_get_cap cap = { .capability = INTELXE_CAP_SURFACE_VRAM_LAYOUT };
+          if (nvmtl_ioctl(device->fd, DRM_IOCTL_GET_CAP, &cap) == 0 && cap.value == 1) {
+             const uint32_t pitch = align(req->width * 4, 128);
+             const uint64_t tsize = (uint64_t)pitch * align(req->height, 32);
+@@ -312,11 +312,11 @@ anv_nvmtl_surface_vram_staged(struct anv_device *device, uint64_t need, enum anv
+       }
+       req->modifier = DRM_FORMAT_MOD_LINEAR;
+       req->pitch = req->cpp = req->width = req->height = req->linear_pitch = 0;
+-      int r2 = nvmtl_surface_vram_ioctl(device, DRM_IOCTL_B580_SURFACE_VRAM2, &v2, &v2.flags);
++      int r2 = nvmtl_surface_vram_ioctl(device, DRM_IOCTL_INTELXE_SURFACE_VRAM2, &v2, &v2.flags);
+       if (r2 && t4 && errno != ENOTTY) {   /* refused as Tile4 (another layout exists, too large ...): linear, as before */
+          v2.modifier = DRM_FORMAT_MOD_LINEAR; v2.pitch = v2.cpp = v2.width = v2.height = v2.linear_pitch = 0;
+          v2.size = v.size; v2.flags = v.flags; v2.handle = 0;
+-         r2 = nvmtl_surface_vram_ioctl(device, DRM_IOCTL_B580_SURFACE_VRAM2, &v2, &v2.flags);
++         r2 = nvmtl_surface_vram_ioctl(device, DRM_IOCTL_INTELXE_SURFACE_VRAM2, &v2, &v2.flags);
+       }
+       if (r2 == 0) {
+          req->modifier = v2.modifier; req->pitch = v2.pitch; req->cpp = v2.cpp; req->width = v2.width;
+@@ -331,7 +331,7 @@ anv_nvmtl_surface_vram_staged(struct anv_device *device, uint64_t need, enum anv
+          return true;
+       }
+    }
+-   if (nvmtl_surface_vram_ioctl(device, DRM_IOCTL_B580_SURFACE_VRAM, &v, &v.flags)) {
++   if (nvmtl_surface_vram_ioctl(device, DRM_IOCTL_INTELXE_SURFACE_VRAM, &v, &v.flags)) {
+       req->err = errno;
+       simple_mtx_unlock(&device->bo_cache.mutex);
+       *result = vk_errorf(device, VK_ERROR_INVALID_EXTERNAL_HANDLE, "surface %u VRAM: errno %d", req->surface_id, req->err);
+@@ -357,13 +357,13 @@ imported:
+ }
+ 
+ /* The GPU copy of surface `surface_id` is newer than its pages (a job that wrote it was submitted and its fence
+- * attached): a CPU lock pages it off first. flags: B580_SURFACE_DIRTY_TRYLOCK. */
++ * attached): a CPU lock pages it off first. flags: INTELXE_SURFACE_DIRTY_TRYLOCK. */
+ PUBLIC VkResult
+ nvmtl_anv_surface_dirty_v1(VkDevice _device, uint32_t surface_id, uint32_t plane, uint32_t flags)
+ {
+    ANV_FROM_HANDLE(anv_device, device, _device);
+-   struct drm_b580_surface_dirty d = { .surface_id = surface_id, .plane = plane, .flags = flags };
+-   if (nvmtl_ioctl(device->fd, DRM_IOCTL_B580_SURFACE_DIRTY, &d))
++   struct drm_intelxe_surface_dirty d = { .surface_id = surface_id, .plane = plane, .flags = flags };
++   if (nvmtl_ioctl(device->fd, DRM_IOCTL_INTELXE_SURFACE_DIRTY, &d))
+       return errno == EBUSY ? VK_NOT_READY : nvmtl_errno_result(errno);
+    return VK_SUCCESS;
+ }
+@@ -371,15 +371,15 @@ nvmtl_anv_surface_dirty_v1(VkDevice _device, uint32_t surface_id, uint32_t plane
+ #if defined(VK_USE_PLATFORM_METAL_EXT) && defined(HAVE_XEMAC)
+ /*
+  * VK_EXT_metal_surface swapchains (wsi_device::iosurface, wsi_common_metal.c): the images are IOSurfaces whose VRAM
+- * backing (DRM_B580_SURFACE_VRAM, the one the window server's Metal plugin imports) is the VkImage's memory, and the
+- * present's fence is attached to the IOSurface (DRM_B580_SURFACE_FENCE_ATTACH) so the window server's GPU waits for
++ * backing (DRM_INTELXE_SURFACE_VRAM, the one the window server's Metal plugin imports) is the VkImage's memory, and the
++ * present's fence is attached to the IOSurface (DRM_INTELXE_SURFACE_FENCE_ATTACH) so the window server's GPU waits for
+  * the frame: present at submission, implicit sync, no copy.
+  */
+ #include <IOSurface/IOSurface.h>
+ #include <mach/mach_time.h>
+ #include "util/os_time.h"
+ 
+-/* debug.b580.surfvram >= 1 (apps may have VRAM-shared IOSurfaces) and the surface fences exist */
++/* debug.intelxe.surfvram >= 1 (apps may have VRAM-shared IOSurfaces) and the surface fences exist */
+ bool
+ anv_wsi_iosurface_supports_gpu_memory(VkDevice _device)
+ {
+@@ -399,7 +399,7 @@ anv_wsi_iosurface_gpu_memory_modifier(VkDevice _device, VkFormat format)
+    ANV_FROM_HANDLE(anv_device, device, _device);
+    if (format != VK_FORMAT_B8G8R8A8_UNORM && format != VK_FORMAT_B8G8R8A8_SRGB)
+       return DRM_FORMAT_MOD_LINEAR;
+-   struct drm_get_cap cap = { .capability = B580_CAP_SURFACE_VRAM_LAYOUT };
++   struct drm_get_cap cap = { .capability = INTELXE_CAP_SURFACE_VRAM_LAYOUT };
+    if (nvmtl_ioctl(device->fd, DRM_IOCTL_GET_CAP, &cap) || cap.value != 1)
+       return DRM_FORMAT_MOD_LINEAR;
+    return I915_FORMAT_MOD_4_TILED;
+@@ -410,17 +410,17 @@ anv_wsi_iosurface_import(struct anv_device *device, uint32_t iosurface_id, uint6
+                          uint32_t pitch, uint32_t cpp, uint32_t width, uint32_t height, uint32_t linear_pitch,
+                          enum anv_bo_alloc_flags alloc_flags, uint64_t client_address, struct anv_bo **bo)
+ {
+-   struct drm_b580_surface_vram v = {
+-      .surface_id = iosurface_id, .plane = 0, .size = size, .flags = B580_SURFACE_VRAM_CREATE,
++   struct drm_intelxe_surface_vram v = {
++      .surface_id = iosurface_id, .plane = 0, .size = size, .flags = INTELXE_SURFACE_VRAM_CREATE,
+    };
+    simple_mtx_lock(&device->bo_cache.mutex);
+    if (modifier != DRM_FORMAT_MOD_LINEAR) {
+       /* the layout goes with the backing (SURFACE_VRAM2); a backing someone else made with another layout is refused */
+-      struct drm_b580_surface_vram2 v2 = {
+-         .surface_id = iosurface_id, .plane = 0, .size = size, .flags = B580_SURFACE_VRAM_CREATE,
++      struct drm_intelxe_surface_vram2 v2 = {
++         .surface_id = iosurface_id, .plane = 0, .size = size, .flags = INTELXE_SURFACE_VRAM_CREATE,
+          .modifier = modifier, .pitch = pitch, .cpp = cpp, .width = width, .height = height, .linear_pitch = linear_pitch,
+       };
+-      if (nvmtl_surface_vram_ioctl(device, DRM_IOCTL_B580_SURFACE_VRAM2, &v2, &v2.flags)) {
++      if (nvmtl_surface_vram_ioctl(device, DRM_IOCTL_INTELXE_SURFACE_VRAM2, &v2, &v2.flags)) {
+          const int e = errno;
+          simple_mtx_unlock(&device->bo_cache.mutex);
+          return vk_errorf(device, VK_ERROR_OUT_OF_DEVICE_MEMORY, "IOSurface %u: no tiled VRAM backing (errno %d)",
+@@ -435,7 +435,7 @@ anv_wsi_iosurface_import(struct anv_device *device, uint32_t iosurface_id, uint6
+       v.handle = v2.handle;
+       v.size_out = v2.size_out;
+       v.gen = v2.gen;
+-   } else if (nvmtl_surface_vram_ioctl(device, DRM_IOCTL_B580_SURFACE_VRAM, &v, &v.flags)) {
++   } else if (nvmtl_surface_vram_ioctl(device, DRM_IOCTL_INTELXE_SURFACE_VRAM, &v, &v.flags)) {
+       const int e = errno;
+       simple_mtx_unlock(&device->bo_cache.mutex);
+       return vk_errorf(device, VK_ERROR_OUT_OF_DEVICE_MEMORY, "IOSurface %u: no VRAM backing (errno %d)",
+@@ -490,16 +490,16 @@ anv_wsi_iosurface_signal_write(VkDevice _device, VkFence _fence, void *iosurface
+ 
+    /* 1. The frame's fence becomes the IOSurface's write fence: readers on the GPU (the window server's composite) wait
+     *    for it in the kernel's job queue. */
+-   struct drm_b580_surface_fence_attach a = {
+-      .surface_id = sid, .syncobj = syncobj->syncobj, .point = 0, .flags = B580_SURFACE_FENCE_WRITE,
++   struct drm_intelxe_surface_fence_attach a = {
++      .surface_id = sid, .syncobj = syncobj->syncobj, .point = 0, .flags = INTELXE_SURFACE_FENCE_WRITE,
+    };
+-   int err = nvmtl_ioctl(device->fd, DRM_IOCTL_B580_SURFACE_FENCE_ATTACH, &a) ? errno : 0;
++   int err = nvmtl_ioctl(device->fd, DRM_IOCTL_INTELXE_SURFACE_FENCE_ATTACH, &a) ? errno : 0;
+    if (err == EAGAIN) {
+       /* not in the kernel yet (a deferred submission): wait until it is */
+       VkResult result = vk_sync_wait(&device->vk, sync, 0, VK_SYNC_WAIT_PENDING, UINT64_MAX);
+       if (result != VK_SUCCESS)
+          return result;
+-      err = nvmtl_ioctl(device->fd, DRM_IOCTL_B580_SURFACE_FENCE_ATTACH, &a) ? errno : 0;
++      err = nvmtl_ioctl(device->fd, DRM_IOCTL_INTELXE_SURFACE_FENCE_ATTACH, &a) ? errno : 0;
+    }
+    if (err)
+       return vk_errorf(device, VK_ERROR_UNKNOWN, "IOSurface %u: write fence not attached (errno %d)", sid, err);
+@@ -507,8 +507,8 @@ anv_wsi_iosurface_signal_write(VkDevice _device, VkFence _fence, void *iosurface
+    if (gpu_memory) {
+       /* 2. The VRAM copy is newer than the pages: a CPU lock (a screenshot) pages it off after the fence. This moves
+        *    the IOSurface's seed. */
+-      struct drm_b580_surface_dirty d = { .surface_id = sid, .plane = 0, .flags = 0 };
+-      if (nvmtl_ioctl(device->fd, DRM_IOCTL_B580_SURFACE_DIRTY, &d))
++      struct drm_intelxe_surface_dirty d = { .surface_id = sid, .plane = 0, .flags = 0 };
++      if (nvmtl_ioctl(device->fd, DRM_IOCTL_INTELXE_SURFACE_DIRTY, &d))
+          mesa_logw_once("anv: IOSurface %u: SURFACE_DIRTY failed (errno %d): CPU readers may see an older frame",
+                         sid, errno);
+       /* 3. Readers use the VRAM as it is at this seed (no page-off and upload). */
+@@ -532,11 +532,11 @@ anv_wsi_iosurface_wait_idle(VkDevice _device, void *iosurface, uint64_t abs_time
+       const int64_t left = (int64_t)abs_timeout - (int64_t)os_time_get_nano();
+       timeout_ns = (int64_t)clock_gettime_nsec_np(CLOCK_UPTIME_RAW) + MAX2(left, 0);
+    }
+-   struct drm_b580_surface_fence_wait w = {
+-      .surface_id = IOSurfaceGetID((IOSurfaceRef)iosurface), .flags = B580_SURFACE_FENCE_WRITER,
++   struct drm_intelxe_surface_fence_wait w = {
++      .surface_id = IOSurfaceGetID((IOSurfaceRef)iosurface), .flags = INTELXE_SURFACE_FENCE_WRITER,
+       .timeout_ns = timeout_ns ? timeout_ns : 0,
+    };
+-   if (nvmtl_ioctl(device->fd, DRM_IOCTL_B580_SURFACE_FENCE_WAIT, &w))
++   if (nvmtl_ioctl(device->fd, DRM_IOCTL_INTELXE_SURFACE_FENCE_WAIT, &w))
+       return (errno == ETIME || errno == ETIMEDOUT) ? VK_TIMEOUT : VK_SUCCESS;
+    return VK_SUCCESS;
+ }
+diff --git a/src/intel/vulkan/anv_physical_device.c b/src/intel/vulkan/anv_physical_device.c
+index 1fe77f0..1d650a3 100644
+--- a/src/intel/vulkan/anv_physical_device.c
++++ b/src/intel/vulkan/anv_physical_device.c
+@@ -354,8 +354,8 @@ get_device_descriptor_limits(const struct anv_physical_device *device,
+ }
+ 
+ 
+-/* With xemac (macOS, B580.kext) the fd handle types exist only when the
+- * kernel offers object fds (xemac_fd_sharing(): B580_CAP_FD_OBJECTS and
++/* With xemac (macOS, IntelXe.kext) the fd handle types exist only when the
++ * kernel offers object fds (xemac_fd_sharing(): INTELXE_CAP_FD_OBJECTS and
+  * DRM_CAP_PRIME), asked at runtime so that an older kernel keeps today's
+  * behaviour: DRM syncobj fds and sync files for the semaphore and fence fd
+  * extensions, PRIME fds for VK_KHR_external_memory_fd. A dma-buf with an
+@@ -383,8 +383,8 @@ get_device_extensions(const struct anv_physical_device *device,
+                                           device->info.verx10 == 200;
+ 
+ #ifdef HAVE_XEMAC
+-   /* video is on by default here (anv_instance.c): advertise it only when the kernel reports a video engine (B580.kext
+-    * brings the media GT up only when asked, debug.b580.video) */
++   /* video is on by default here (anv_instance.c): advertise it only when the kernel reports a video engine (IntelXe.kext
++    * brings the media GT up only when asked, debug.intelxe.video) */
+    const bool has_vcs = device->engine_info &&
+       intel_engines_count(device->engine_info, INTEL_ENGINE_CLASS_VIDEO) > 0;
+ #else
+diff --git a/src/intel/vulkan/anv_private.h b/src/intel/vulkan/anv_private.h
+index b4dacdb..855e07b 100644
+--- a/src/intel/vulkan/anv_private.h
++++ b/src/intel/vulkan/anv_private.h
+@@ -1530,7 +1530,7 @@ struct anv_physical_device {
+      */
+     bool                                        has_reg_timestamp;
+ #ifdef HAVE_XEMAC
+-    /** XEMAC_FD_* bits: the object fds B580.kext offers (xemac_fd_sharing) */
++    /** XEMAC_FD_* bits: the object fds IntelXe.kext offers (xemac_fd_sharing) */
+     unsigned                                    xemac_fd_sharing;
+ #endif
+ 
+@@ -3220,7 +3220,7 @@ VkResult anv_device_import_bo_from_host_ptr(struct anv_device *device,
+                                             enum anv_bo_alloc_flags alloc_flags,
+                                             uint64_t client_address,
+                                             struct anv_bo **bo_out);
+-/* nvmtl (gpuperf): a GEM handle the kernel gave this client (B580.kext SURFACE_VRAM), imported as a PRIME fd's would be */
++/* nvmtl (gpuperf): a GEM handle the kernel gave this client (IntelXe.kext SURFACE_VRAM), imported as a PRIME fd's would be */
+ VkResult anv_device_import_bo_handle(struct anv_device *device, uint32_t gem_handle, uint64_t size,
+                                      enum anv_bo_alloc_flags alloc_flags, uint64_t client_address,
+                                      struct anv_bo **bo);
+diff --git a/src/intel/vulkan/anv_wsi.c b/src/intel/vulkan/anv_wsi.c
+index b5573ba..706e8d1 100644
+--- a/src/intel/vulkan/anv_wsi.c
++++ b/src/intel/vulkan/anv_wsi.c
+@@ -71,7 +71,7 @@ anv_init_wsi(struct anv_physical_device *physical_device)
+ 
+ #if defined(VK_USE_PLATFORM_METAL_EXT) && defined(HAVE_XEMAC)
+    /* VK_EXT_metal_surface: IOSurface swapchains, implicitly synchronized
+-    * with the window server through B580.kext (anv_nvmtl_surface.c).
++    * with the window server through IntelXe.kext (anv_nvmtl_surface.c).
+     */
+    wsi_device->iosurface.supports_gpu_memory = anv_wsi_iosurface_supports_gpu_memory;
+    wsi_device->iosurface.signal_write = anv_wsi_iosurface_signal_write;

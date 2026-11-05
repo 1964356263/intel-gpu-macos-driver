@@ -1,0 +1,174 @@
+anv: AV1 HuC BRC runs two PAK passes, as media-driver
+
+media-driver gives every BRC frame two passes (EncodeAv1VdencFeatureManager::SetPassNum): the second BRC update
+(UPD_PAKPassNum 1) sees the first pass's size and asks for a re-encode with HUC_STATUS bit 31, and the second PAK
+pass runs only then (AddCondBBEndFor2ndPass). The pass is a second-level batch behind the conditional end, so
+only it is skipped; its calls into the kernel's batches and the header variant batches nest one level deeper
+(measured on Xe2: a second-level call from a second-level batch returns, and a conditional end there ends only
+that level). The loop filter / CDEF variants of the re-encode are captured inside the pass, so the obu_size patch
+after the passes matches the bitstream either way.
+First test, Netflix Aerial 1080p60 VBR 3 Mbit/s, 600 frames: 1 B frame 3813 -> 3529 kbit/s (key frames 161 -> 122 kB),
+2 B frames 3266 -> 3150 kbit/s; all frames decode with dav1d.
+
+--- a/src/intel/vulkan/genX_huc_brc_av1.h
++++ b/src/intel/vulkan/genX_huc_brc_av1.h
+@@ -264,6 +264,10 @@
+    struct anv_state slb_in;
+    struct anv_state pak_insert_in;
+    struct anv_state update_dmem;
++   /* media-driver runs two PAK passes with BRC (EncodeAv1VdencFeatureManager::SetPassNum): the second BRC update
++    * sees the first pass's size and may ask for a re-encode (HUC_STATUS bit 31) */
++   bool two_pass;
++   struct anv_state update_dmem_pass1;
+    struct anv_state const_data;
+    struct vk_video_av1_frame_hdr_layout hdr;
+    uint32_t pak_insert_size;
+@@ -542,7 +546,7 @@
+    dmem->INIT_GopPicSize = r.gop_pic_size;
+ }
+ 
+-/* Av1Brc::SetDmemForUpdate, one PAK pass */
++/* Av1Brc::SetDmemForUpdate for the first PAK pass (the second pass copies it, see anv_av1_encode_video) */
+ static void
+ anv_av1_brc_fill_update_dmem(struct anv_video_session *vid,
+                              const StdVideoEncodeAV1PictureInfo *pic_info,
+--- a/src/intel/vulkan/genX_cmd_video_enc.c
++++ b/src/intel/vulkan/genX_cmd_video_enc.c
+@@ -4407,6 +4407,13 @@
+       brc.const_data = anv_cmd_buffer_alloc_temporary_state(cmd, 4096, 4096);
+       if (!brc.slb_in.map || !brc.pak_insert_in.map || !brc.update_dmem.map || !brc.const_data.map)
+          return;
++      brc.two_pass = true;
++      if (brc.two_pass) {
++         brc.update_dmem_pass1 =
++            anv_cmd_buffer_alloc_temporary_state(cmd, sizeof(struct anv_huc_av1_brc_update_dmem), 64);
++         if (!brc.update_dmem_pass1.map)
++            return;
++      }
+       memset(brc.slb_in.map, 0, brc.slb_in.alloc_size);
+       memset(brc.pak_insert_in.map, 0, brc.pak_insert_in.alloc_size);
+       /* MI_NOOP padding after the AVP_PIC_STATE group (zeroed dwords are MI_NOOP) */
+@@ -4433,6 +4440,56 @@
+          anv_av1_brc_capture_cdef_bits(cmd, &brc);
+    }
+    struct anv_batch brc_parent;
++#endif
++
++   /* The tile group obu_size patch after the passes needs these. */
++   struct anv_address tg_leb128_addr = { 0 };
++   uint32_t tg_payload_prefix = 0;
++   uint32_t num_tiles = 1;
++#if GFX_VER >= 20
++   struct anv_address brc_tg_leb128_addr[8] = { 0 };
++   const uint32_t num_passes = brc.enabled && brc.two_pass ? 2 : 1;
++#else
++   const uint32_t num_passes = 1;
++#endif
++
++   for (uint32_t pass = 0; pass < num_passes; pass++) {
++#if GFX_VER >= 20
++   struct anv_video_sub_batch reencode;
++   if (pass > 0) {
++      /* media-driver Av1VdencPkt / Av1BrcUpdatePkt, second pass: the BRC update runs again with the first pass's
++       * size in region 7 (ReadPakMmioRegisters), then the PAK re-runs only if the kernel asked for it
++       * (AddCondBBEndFor2ndPass on HUC_STATUS bit 31). The pass is a second-level batch, so the conditional end
++       * skips just this pass; its calls into the kernel's batches and the header variants nest one level deeper. */
++      struct mi_builder pb;
++      mi_builder_init(&pb, cmd->device->info, &cmd->batch);
++      struct anv_address pak_info = anv_brc_mem_addr(vid, ANV_VID_MEM_BRC_PAK_INFO);
++      mi_builder_set_mocs(&pb, anv_mocs_for_address(cmd->device, &pak_info));
++      mi_store(&pb, mi_mem32(pak_info),
++               mi_mem32(ANV_VID_MEM_ADDR(vid, ANV_VID_MEM_AV1_ENCODE_TILE_BITSTREAM_ACCUM)));
++
++      struct anv_av1_brc_frame brc1 = brc;
++      brc1.update_dmem = brc.update_dmem_pass1;
++      anv_av1_brc_emit_huc_update(cmd, &brc1);
++
++      if (!anv_video_begin_sub_batch(cmd, 32768 + num_tiles * 8192, &reencode)) {
++         anv_batch_set_error(&cmd->batch, VK_ERROR_OUT_OF_DEVICE_MEMORY);
++         return;
++      }
++      anv_batch_emit(&cmd->batch, GENX(MI_CONDITIONAL_BATCH_BUFFER_END), cbbe) {
++         cbbe.CompareOperation = MADGreaterThanIDD;
++         cbbe.EndCurrentBatchBufferLevel = true;
++         cbbe.CompareSemaphore = 1;
++         cbbe.CompareMaskMode = CompareMaskModeEnabled;
++         cbbe.CompareDataDword = 0;
++         cbbe.CompareAddress = anv_brc_mem_addr(vid, ANV_VID_MEM_BRC_PAK_MMIO_SEM);
++      }
++      /* the header variants of the re-encode, read by the obu_size patch after the passes */
++      if (brc.lf_update)
++         anv_av1_brc_capture_lf_levels(cmd, &brc);
++      if (brc.cdef_update)
++         anv_av1_brc_capture_cdef_bits(cmd, &brc);
++   }
+ #endif
+ 
+    anv_batch_emit(&cmd->batch, GENX(VDENC_CONTROL_STATE), v) {
+@@ -4607,11 +4664,7 @@
+     * Per-tile geometry / bitstream tile sizes / PAK readback come later.
+     * tg_leb128_addr is hoisted so the post-loop size patch still sees it.
+     */
+-   struct anv_address tg_leb128_addr;
+-   uint32_t tg_payload_prefix = 0;
+-#if GFX_VER >= 20
+-   struct anv_address brc_tg_leb128_addr[8] = { 0 };
+-#endif
++   tg_payload_prefix = 0;
+    const StdVideoAV1TileInfo *ti = pic_info->pTileInfo;
+    uint32_t num_tile_cols = ti ? ti->TileCols : 1;
+    uint32_t num_tile_rows = ti ? ti->TileRows : 1;
+@@ -4633,7 +4686,7 @@
+                                    DIV_ROUND_UP(pic_height_in_sb, ch));
+    }
+ 
+-   uint32_t num_tiles = num_tile_cols * num_tile_rows;
++   num_tiles = num_tile_cols * num_tile_rows;
+    uint32_t cu_tile_offset = 0;
+    uint32_t lcu_tile_offset = 0;
+ 
+@@ -5426,8 +5479,14 @@
+             struct anv_video_sub_batch lf_variant;
+             if (num_variants > 1) {
+                vhdr_size = brc_hdr_size[v];
+-               if (!anv_video_begin_sub_batch(cmd, 256, &lf_variant))
++               if (!anv_video_begin_sub_batch(cmd, 256, &lf_variant)) {
++                  if (pass > 0) {
++                     /* leave the re-encode pass's batch before giving up */
++                     cmd->batch = reencode.parent;
++                     anv_batch_set_error(&cmd->batch, VK_ERROR_OUT_OF_DEVICE_MEMORY);
++                  }
+                   return;
++               }
+                if (lf_variants > 1)
+                   anv_av1_brc_emit_lf_variant_check(cmd, v / cdef_variants);
+                if (cdef_variants > 1)
+@@ -6022,6 +6081,12 @@
+    anv_batch_emit(&cmd->batch, GENX(MI_FLUSH_DW), flush) {
+       flush.DWordLength = 2;
+    };
++
++#if GFX_VER >= 20
++   if (pass > 0)
++      anv_video_end_sub_batch(cmd, &reencode);
++#endif
++   } /* end pass loop */
+ 
+ #if GFX_VER >= 20
+    if (brc.enabled) {
+@@ -6037,6 +6102,15 @@
+       anv_av1_brc_fill_update_dmem(vid, pic_info, is_intra, low_delay, disable_cdf_update,
+                                    src_img->vk.extent.width, src_img->vk.extent.height,
+                                    &brc, brc.update_dmem.map);
++      if (brc.two_pass) {
++         /* media-driver Av1Brc::SetDmemForUpdate per pass: UPD_MaxNumPAKs = 2, UPD_PAKPassNum = the pass; the
++          * buffer wrap (overflow flag) only on the first pass, the same target fullness on both */
++         struct anv_huc_av1_brc_update_dmem *d0 = brc.update_dmem.map, *d1 = brc.update_dmem_pass1.map;
++         d0->UPD_MaxNumPAKs = 2;
++         *d1 = *d0;
++         d1->UPD_PAKPassNum = 1;
++         d1->UPD_OverflowFlag = 0;
++      }
+       vid->rc.frame_counter++;
+    }
+ #endif

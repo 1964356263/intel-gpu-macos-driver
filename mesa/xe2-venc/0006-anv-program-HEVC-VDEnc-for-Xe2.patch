@@ -1,0 +1,358 @@
+From e36a47942f582db97f28ea09b187c2bc892dbed8 Mon Sep 17 00:00:00 2001
+From: "Emil J. Tywoniak" <emil@tywoniak.eu>
+Date: Thu, 15 Oct 2026 00:41:32 +0200
+Subject: [PATCH 06/18] anv: program HEVC VDEnc for Xe2
+
+---
+ src/intel/vulkan/genX_cmd_video_enc.c | 101 +++++++++++++++++---
+ src/intel/vulkan/h265_vdenc_tables.h  | 129 ++++++++++++++++++++++++++
+ 2 files changed, 215 insertions(+), 15 deletions(-)
+
+diff --git a/src/intel/vulkan/genX_cmd_video_enc.c b/src/intel/vulkan/genX_cmd_video_enc.c
+index 31858a6c447..a5832df2359 100644
+--- a/src/intel/vulkan/genX_cmd_video_enc.c
++++ b/src/intel/vulkan/genX_cmd_video_enc.c
+@@ -384,7 +384,7 @@ anv_vdenc_emit_pipe_buf_addr_state(struct anv_cmd_buffer *cmd,
+       vdenc_buf.DSFWDREF0.PictureFields = ANV_VID_PIC(cmd->device, p->ds_fwd_ref[0].bo);
+       vdenc_buf.DSFWDREF1.Address = p->ds_fwd_ref[1];
+       vdenc_buf.DSFWDREF1.PictureFields = ANV_VID_PIC(cmd->device, p->ds_fwd_ref[1].bo);
+-#if GFX_VERx10 == 125
++#if GFX_VERx10 >= 125
+       vdenc_buf.DSBWDREF0.Address = p->ds_bwd_ref;
+       vdenc_buf.DSBWDREF0.PictureFields = ANV_VID_PIC(cmd->device, p->ds_bwd_ref.bo);
+ #endif
+@@ -456,7 +456,7 @@ anv_vdenc_emit_pipe_buf_addr_state(struct anv_cmd_buffer *cmd,
+          ANV_VID_PIC(cmd->device, NULL);
+ #endif
+ 
+-#if GFX_VERx10 == 125
++#if GFX_VERx10 >= 125
+       vdenc_buf.IntraPredictionRowStoreBuffer.PictureFields =
+          ANV_VID_PIC(cmd->device, NULL);
+       vdenc_buf.ColocatedMVAVCWriteBuffer.Address = p->col_mv_avc_write;
+@@ -2636,7 +2636,7 @@ anv_h265_emit_vdenc_pipe_buf_addr_state(struct anv_cmd_buffer *cmd,
+       buf.bwd_ref =
+             anv_image_dpb_address(bwd_ref_iv, bwd_ref_layer);
+ 
+-#if GFX_VERx10 == 125
++#if GFX_VERx10 >= 125
+    const struct anv_image_view *ds_ref_iv[2] = { ref_iv[0], ref_iv[1] };
+    uint32_t ds_ref_layer[2] = { ref_layer[0], ref_layer[1] };
+ #else
+@@ -2658,7 +2658,7 @@ anv_h265_emit_vdenc_pipe_buf_addr_state(struct anv_cmd_buffer *cmd,
+       buf.ds_fwd_ref_4x[i] = anv_image_ds_4x_address(ds_ref_iv[i], ds_ref_layer[i]);
+    }
+ 
+-#if GFX_VERx10 == 125
++#if GFX_VERx10 >= 125
+    if (bwd_ref_iv) {
+       buf.ds_bwd_ref = anv_image_ds_8x_address(bwd_ref_iv, bwd_ref_layer);
+       buf.ds_bwd_ref_4x = anv_image_ds_4x_address(bwd_ref_iv, bwd_ref_layer);
+@@ -2678,7 +2678,66 @@ anv_h265_emit_vdenc_cmd1(struct anv_cmd_buffer *cmd,
+    if (!batch)
+       batch = &cmd->batch;
+ 
+-#if GFX_VERx10 >= 125
++#define CMD1_BYTES(b0, b1, b2, b3) \
++   ((uint32_t)(b0) | (uint32_t)(b1) << 8 | (uint32_t)(b2) << 16 | (uint32_t)(b3) << 24)
++
++#if GFX_VER >= 20
++   bool is_intra =
++      anv_vdenc_h265_picture_type(frame_info->pStdPictureInfo->pic_type) == 0;
++   uint32_t cmd1_qp = anv_h265_slice_qp(cmd, enc_info, 0);
++   unsigned type = is_intra ? 0 : 1;
++
++   /* TODO: Lambda weights for hierarchical B (GopRefDist 4/8). */
++   double weight = is_intra ? 0.60 : 0.65;
++   double num = weight * hevc_vdenc_cmd1_qp_scale[cmd1_qp - 1];
++   uint32_t par0 = MIN2(65535u, (uint32_t)(num * 4 + 0.5));
++   uint32_t par1 = MIN2(65535u, (uint32_t)(sqrt(num) * 4 + 0.5));
++
++   const uint8_t (*p8)[4] = hevc_vdenc_cmd1_par8_15_xe2;
++   const uint8_t *p16 = hevc_vdenc_cmd1_par16_21_xe2[type];
++   const uint8_t *p36 = hevc_vdenc_cmd1_par36_41_xe2[type];
++   const uint8_t *p87 = hevc_vdenc_cmd1_par87_89_xe2[type];
++   const uint8_t par34 = is_intra ? 21 : 7, par35 = is_intra ? 0 : 4;
++
++   /* p8[0..7] are CMD1 parameters 8 to 15. */
++   uint32_t v[38] = { 0 };
++   v[0] = CMD1_BYTES(hevc_vdenc_cmd1_par2[0], hevc_vdenc_cmd1_par2[1],
++                     hevc_vdenc_cmd1_par2[2], hevc_vdenc_cmd1_par2[3]);
++   v[1] = CMD1_BYTES(hevc_vdenc_cmd1_par2[4], hevc_vdenc_cmd1_par2[5],
++                     hevc_vdenc_cmd1_par2[6], hevc_vdenc_cmd1_par2[7]);
++   for (unsigned i = 0; i < 3; i++) {
++      /* Parameters 3 and 4 share the same values at this target usage. */
++      v[2 + i] = CMD1_BYTES(hevc_vdenc_cmd1_par3[4 * i], hevc_vdenc_cmd1_par3[4 * i + 1],
++                            hevc_vdenc_cmd1_par3[4 * i + 2], hevc_vdenc_cmd1_par3[4 * i + 3]);
++      v[5 + i] = v[2 + i];
++   }
++   v[8] = CMD1_BYTES(0, 0, 0, HEVC_VDENC_CMD1_PAR95_XE2);
++   v[9] = CMD1_BYTES(p8[0][0], p8[4][0], p8[1][0], p8[5][0]);
++   v[10] = CMD1_BYTES(p8[2][0], p8[6][0], p8[3][0], p8[7][0]);
++   v[11] = CMD1_BYTES(p16[0], p16[1], p16[2], p16[3]);
++   v[12] = CMD1_BYTES(p16[4], p16[5], 4, hevc_vdenc_cmd1_par23_xe2[type]);
++   v[15] = CMD1_BYTES(0, 0, par34, par35);
++   v[16] = CMD1_BYTES(p36[0], p36[1], p36[2], p36[3]);
++   v[17] = CMD1_BYTES(p36[4], p36[5], 0, 0);
++   v[18] = CMD1_BYTES(0, 0, 20, 0);
++   v[19] = CMD1_BYTES(12, 12, 12, 12);
++   v[20] = CMD1_BYTES(12, 12, 12, 12);
++   v[21] = par0 | par1 << 16;
++   for (unsigned i = 0; i < 8; i++)
++      v[22 + i] = CMD1_BYTES(0x10, 0x10, 0x10, 0x10);
++   v[30] = CMD1_BYTES(p87[0], p87[1], p87[2], 0);
++   v[32] = CMD1_BYTES(p8[3][1], p8[7][3], p8[7][2], p8[7][1]);
++   v[33] = CMD1_BYTES(p8[6][2], p8[6][1], p8[3][3], p8[3][2]);
++   v[34] = CMD1_BYTES(p8[2][3], p8[2][2], p8[2][1], p8[6][3]);
++   v[35] = CMD1_BYTES(p8[1][1], p8[5][3], p8[5][2], p8[5][1]);
++   v[36] = CMD1_BYTES(p8[4][2], p8[4][1], p8[1][3], p8[1][2]);
++   v[37] = CMD1_BYTES(p8[0][3], p8[0][2], p8[0][1], p8[4][3]);
++
++   anv_batch_emit(batch, GENX(VDENC_CMD1), cmd1) {
++      for (unsigned i = 0; i < ARRAY_SIZE(v); i++)
++         cmd1.Values[i] = v[i];
++   }
++#elif GFX_VERx10 >= 125
+    bool is_intra =
+       anv_vdenc_h265_picture_type(frame_info->pStdPictureInfo->pic_type) == 0;
+    uint32_t cmd1_qp = anv_h265_slice_qp(cmd, enc_info, 0);
+@@ -2714,9 +2773,6 @@ anv_h265_emit_vdenc_cmd1(struct anv_cmd_buffer *cmd,
+    memcpy(&par[87], hevc_vdenc_cmd1_par87_89_gen125[type],
+           sizeof(hevc_vdenc_cmd1_par87_89_gen125[0]));
+ 
+-#define CMD1_BYTES(b0, b1, b2, b3) \
+-   ((uint32_t)(b0) | (uint32_t)(b1) << 8 | (uint32_t)(b2) << 16 | (uint32_t)(b3) << 24)
+-
+    uint32_t v[32] = { 0 };
+    v[0] = CMD1_BYTES(hevc_vdenc_cmd1_par2[0], hevc_vdenc_cmd1_par2[1],
+                      hevc_vdenc_cmd1_par2[2], hevc_vdenc_cmd1_par2[3]);
+@@ -2743,7 +2799,6 @@ anv_h265_emit_vdenc_cmd1(struct anv_cmd_buffer *cmd,
+       v[22 + i] = CMD1_BYTES(par[55 + 4 * i], par[56 + 4 * i], par[57 + 4 * i], par[58 + 4 * i]);
+    v[30] = CMD1_BYTES(par[87], par[88], par[89], 0);
+    v[31] = CMD1_BYTES(par[90], par[91], par[92], 0);
+-#undef CMD1_BYTES
+ 
+    anv_batch_emit(batch, GENX(VDENC_CMD1), cmd1) {
+       for (unsigned i = 0; i < 32; i++)
+@@ -2803,6 +2858,7 @@ anv_h265_emit_vdenc_cmd1(struct anv_cmd_buffer *cmd,
+       }
+    }
+ #endif
++#undef CMD1_BYTES
+ }
+ 
+ static void
+@@ -2956,19 +3012,30 @@ anv_h265_emit_vdenc_cmd2(struct anv_cmd_buffer *cmd,
+       uint32_t num_l0_is0 = pic_type == 0 ? 1 : (ref_lists->num_ref_idx_l0_active_minus1 == 0);
+ 
+       cmd2.Values5  |= hevc_vdenc_cmd2_dw5[pic_type];
+-      cmd2.Values7  |= hevc_vdenc_cmd2_dw7[pic_type][num_l0_is0][low_delay][0][1];
+-      cmd2.Values9  |= hevc_vdenc_cmd2_dw9[pic_type][target_usage][low_delay][0][1];
+       cmd2.Values12 |= hevc_vdenc_cmd2_dw12[target_usage];
+       cmd2.Values19 |= 0x98000000;
+       cmd2.Values23 |= 0xcccc0000;
+-      cmd2.Values53 |= hevc_vdenc_cmd2_dw52[target_usage];
+-      cmd2.Values55 |= hevc_vdenc_cmd2_dw54[target_usage][0];
++#if GFX_VER >= 20
++      /* Wa_22011549751 does not apply to Xe2. */
++      cmd2.Values7  |= hevc_vdenc_cmd2_dw7[pic_type][num_l0_is0][low_delay][0][0];
++      cmd2.Values8  |= hevc_vdenc_cmd2_dw8_xe2[pic_type][target_usage][low_delay];
++      cmd2.Values9  |= hevc_vdenc_cmd2_dw9_xe2[pic_type][target_usage][low_delay];
++      cmd2.Values52 |= hevc_vdenc_cmd2_dw51_xe2[target_usage];
++      cmd2.Values53 |= hevc_vdenc_cmd2_dw52_xe2[target_usage];
++      cmd2.Values54 |= hevc_vdenc_cmd2_dw53_xe2[target_usage];
++      cmd2.Values55 |= hevc_vdenc_cmd2_dw54_xe2[target_usage];
++#else
++      cmd2.Values7  |= hevc_vdenc_cmd2_dw7[pic_type][num_l0_is0][low_delay][0][1];
++      cmd2.Values8  |= hevc_vdenc_cmd2_dw8_gen125[pic_type][target_usage][low_delay];
++      cmd2.Values9  |= hevc_vdenc_cmd2_dw9[pic_type][target_usage][low_delay][0][1];
+       cmd2.Values52 |= hevc_vdenc_cmd2_dw51_gen125[pic_type][target_usage];
++      cmd2.Values53 |= hevc_vdenc_cmd2_dw52[target_usage];
+       cmd2.Values54 |= hevc_vdenc_cmd2_dw53_gen125[pic_type][target_usage];
++      cmd2.Values55 |= hevc_vdenc_cmd2_dw54[target_usage][0];
++#endif
+ 
+       /* TODO: palette, current picture reference, and RDOQ are not handled. */
+       cmd2.Values2 |= 0x3;
+-      cmd2.Values8 |= hevc_vdenc_cmd2_dw8_gen125[pic_type][target_usage][low_delay];
+       cmd2.SubPelMode = 3;
+       cmd2.MinQp = 10;
+       cmd2.Values28 |= 0x07d00fa0;
+@@ -2988,6 +3055,7 @@ anv_h265_emit_vdenc_cmd2(struct anv_cmd_buffer *cmd,
+                        round_inter << 24 | round_inter << 28;
+       cmd2.Values34 |= round_inter | round_inter << 4 | round_intra << 8 |
+                        round_intra << 12 | round_inter << 16 | round_inter << 20;
++#if GFX_VER < 20
+       cmd2.AV1L0RefID0 = 1;
+       cmd2.AV1L0RefID1 = 1;
+       cmd2.AV1L0RefID2 = 1;
+@@ -2996,14 +3064,17 @@ anv_h265_emit_vdenc_cmd2(struct anv_cmd_buffer *cmd,
+       cmd2.AV1L1RefID1 = 1;
+       cmd2.AV1L1RefID2 = 1;
+       cmd2.AV1L1RefID3 = 1;
++#endif
+ 
+       if (pic_type == 0) {
++#if GFX_VER < 20
+          /* Wa_22011549751 also forces intra frames to low delay B with both
+           * reference indices at 0. The dw7/dw9 lookups above assume the same
+           * workaround is in effect.
+           */
+          ref_idx[0] = 0;
+          ref_idx[l1_entry] = 0;
++#endif
+       } else {
+          for (unsigned i = 0;
+               i < ref_lists->num_ref_idx_l0_active_minus1 + 1 && i < l1_entry;
+@@ -3111,7 +3182,7 @@ anv_h265_emit_vdenc_cmd2(struct anv_cmd_buffer *cmd,
+ 
+       cmd2.FrameWidthInPixelsMinusOne = width_in_pix - 1;
+       cmd2.FrameHeightInPixelsMinusOne = height_in_pix - 1;
+-#if GFX_VERx10 >= 125
++#if GFX_VERx10 == 125
+       /* Wa_22011549751: intra frames are programmed as low delay B. */
+       cmd2.PictureType = is_low_delay ? 3 : 2;
+ #else
+diff --git a/src/intel/vulkan/h265_vdenc_tables.h b/src/intel/vulkan/h265_vdenc_tables.h
+index d745cdab000..0ab0f7f93c9 100644
+--- a/src/intel/vulkan/h265_vdenc_tables.h
++++ b/src/intel/vulkan/h265_vdenc_tables.h
+@@ -372,6 +372,135 @@ static const uint32_t h265_vdenc_hevc_tile_slice_params[3][10][11] = {
+       { 768, 128, 64, 8, 128, 1, 128, 4, 32, 0, 4 },
+    },
+ };
++
++#if GFX_VER >= 20
++/* Xe2 VDEnc HEVC settings for target usage 4, taken from media-driver
++ * (EncodeHevcVdencConstSettings and its Xe2_HPM overrides).
++ *
++ * Unlike Gen125, CMD1 parameters 8 to 15 are 4-entry arrays: entry 0 lives
++ * in DW10/DW11 like before and entries 1 to 3 in the new DW33 to DW38.
++ */
++static const uint8_t hevc_vdenc_cmd1_par8_15_xe2[8][4] = {
++   { 11, 14, 15, 17 },
++   { 14, 17, 18, 19 },
++   { 14, 17, 18, 19 },
++   { 20, 23, 24, 25 },
++   { 23, 26, 27, 29 },
++   { 26, 29, 30, 31 },
++   { 26, 29, 30, 31 },
++   { 38, 41, 42, 43 },
++};
++
++/* Indexed by is_intra ? 0 : 1 */
++static const uint8_t hevc_vdenc_cmd1_par16_21_xe2[2][6] = {
++   { 92, 23, 92, 21, 23, 0 },
++   { 110, 26, 110, 24, 26, 0 },
++};
++
++static const uint8_t hevc_vdenc_cmd1_par23_xe2[2] = { 42, 54 };
++
++static const uint8_t hevc_vdenc_cmd1_par36_41_xe2[2][6] = {
++   { 21, 47, 16, 16, 30, 30 },
++   { 7, 20, 20, 20, 30, 68 },
++};
++
++static const uint8_t hevc_vdenc_cmd1_par87_89_xe2[2][3] = {
++   { 16, 16, 47 },
++   { 20, 20, 20 },
++};
++
++#define HEVC_VDENC_CMD1_PAR95_XE2 50
++
++/* Indexed by [picture type][target usage][low delay]. */
++static const uint32_t hevc_vdenc_cmd2_dw8_xe2[3][8][2] = {
++   {
++      { 0x54555555, 0x00000000 },
++      { 0x54555555, 0x00000000 },
++      { 0x54555555, 0x00000000 },
++      { 0x54555555, 0x00000000 },
++      { 0x54555555, 0x00000000 },
++      { 0x54555555, 0x00000000 },
++      { 0x54555555, 0x00000000 },
++      { 0x54555555, 0x00000000 },
++   },
++   {
++      { 0x54555555, 0x00000000 },
++      { 0x90908090, 0x90908090 },
++      { 0xfffdccaa, 0xfffdccaa },
++      { 0x54555555, 0x00000000 },
++      { 0x55550000, 0x55550000 },
++      { 0x54555555, 0x00000000 },
++      { 0x55550000, 0x55550000 },
++      { 0x55550000, 0x55550000 },
++   },
++   {
++      { 0x54555555, 0x00000000 },
++      { 0x90908090, 0x90908090 },
++      { 0xfffdfcaa, 0xfffdfcaa },
++      { 0x54555555, 0x00000000 },
++      { 0x55550000, 0x55550000 },
++      { 0x54555555, 0x00000000 },
++      { 0x55550000, 0x55550000 },
++      { 0x55550000, 0x55550000 },
++   },
++};
++
++/* Indexed by [picture type][target usage][low delay]. */
++static const uint32_t hevc_vdenc_cmd2_dw9_xe2[3][8][2] = {
++   {
++      { 0xc45555, 0xc40000 },
++      { 0xc45555, 0xc40000 },
++      { 0x845555, 0x840000 },
++      { 0x835555, 0x830000 },
++      { 0x835555, 0x830000 },
++      { 0x835555, 0x830000 },
++      { 0x635555, 0x630000 },
++      { 0x325555, 0x320000 },
++   },
++   {
++      { 0xc45555, 0xc40000 },
++      { 0xc461e4, 0xc461e4 },
++      { 0x84ffff, 0x84ffff },
++      { 0x835555, 0x830000 },
++      { 0x830000, 0x830000 },
++      { 0x835555, 0x830000 },
++      { 0x630000, 0x630000 },
++      { 0x320000, 0x320000 },
++   },
++   {
++      { 0xc45555, 0xc40000 },
++      { 0xc461e4, 0xc461e4 },
++      { 0x84fcff, 0x84fcff },
++      { 0x835555, 0x830000 },
++      { 0x830000, 0x830000 },
++      { 0x835555, 0x830000 },
++      { 0x630000, 0x630000 },
++      { 0x320000, 0x320000 },
++   },
++};
++
++/* Indexed by target usage. */
++static const uint32_t hevc_vdenc_cmd2_dw51_xe2[8] = {
++   0x33430aa0, 0x33430952, 0x03431552, 0x22223552,
++   0x22223552, 0x22223552, 0x22227152, 0x12127006,
++};
++
++static const uint32_t hevc_vdenc_cmd2_dw52_xe2[8] = {
++   0x077fdb5b, 0x077f5b5b, 0x077f5bdb, 0x072d5959,
++   0x072d5959, 0x072d5959, 0x0929595a, 0x09294a5a,
++};
++
++static const uint32_t hevc_vdenc_cmd2_dw53_xe2[8] = {
++   0x0000ffff, 0x0000ffff, 0xffffffff, 0xff000000,
++   0xff000000, 0xff000000, 0x80000000, 0x00008000,
++};
++
++/* 4:2:0 only. */
++static const uint32_t hevc_vdenc_cmd2_dw54_xe2[8] = {
++   0x010080c0, 0x010080c0, 0x01008000, 0xc5008000,
++   0xc5008000, 0x85008000, 0xbd008004, 0xbd00800c,
++};
++#endif /* GFX_VER >= 20 */
+ #endif /* GFX_VERx10 >= 125 */
+ 
+ #endif
+-- 
+2.54.0 (Apple Git-157)
+

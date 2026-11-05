@@ -1,0 +1,60 @@
+From: Yusuf İhsan KILINÇ
+Subject: [PATCH 0095] anv: Xe2 HEVC encode: target usage 1 takes TU 4's VDENC_CMD2 DW54
+
+On top of prod8 (935ef655 + 0084-0087; NOT on 0088, which is a diagnostic patch that rewrites the same line).
+Built as one object with build-prod8's compile command (x86_64, Xe2 variant libanv_per_hw_ver200): no warnings.
+NOT installed, NOT yet run as this patch (the same command stream was measured through 0088's ANV_HEVC_AB=dw54=4).
+
+ANV takes its Xe2 HEVC VDENC_CMD2 values from media-driver's Xe2_HPM tables; TU 1 and TU 4 differ only in seven
+dwords (8, 9, 12, 51-54). Measured on an Arc B580 (hackintosh, 3 Nov 2026, 4K 300 frames, VBR 25 Mbit/s, 0088
+switches; docs/reports/b580-hevc-tu1-ab-20261103.md section 7 in the development repository):
+- all seven from TU 4: the TU 4 stream byte for byte (cmp), 6.0 ms per frame;
+- DW54 alone from TU 4: 23.2 -> 9.9 ms per frame (DW51 alone 16.8, DW53 18.2, DW52 22.4, DW8/9/12 no change);
+  Intel's Windows driver on the same card: 12.34 ms per frame at TU 1, one VDBOX;
+- quality with DW54 from TU 4 (1080p 3/6/12 + 4K 12/25/50 Mbit/s, two clips, BD-rate PSNR-Y): -8.3/-13.0 (1080p)
+  and -4.5/-7.3 (4K) against Windows QSV at TU 1; +0.7..+1.9% against our TU 1 with media-driver's DW54.
+
+So TU 1 keeps every other TU 1 setting and takes TU 4's DW54. This is a deliberate departure from media-driver's
+open table (Intel's Windows driver uses closed tables). ANV_HEVC_TU1_MEDIA_DRIVER_DW54=true restores it.
+
+--- a/src/intel/vulkan/genX_cmd_video_enc.c
++++ b/src/intel/vulkan/genX_cmd_video_enc.c
+@@ -2261,7 +2261,29 @@
+ 
+    return target_usage[MIN2(cmd->video.vid->quality_level,
+                             ANV_H265_ENCODE_QUALITY_LEVELS - 1)];
++}
++
++#if GFX_VER >= 20
++/* VDENC_CMD2 DW54 at target usage 1. media-driver's Xe2_HPM table gives TU 1 0x010080c0 and TU 4
++ * 0xc5008000 (h265_vdenc_tables.h hevc_vdenc_cmd2_dw54_xe2). The seven TU-dependent CMD2 dwords
++ * are the only difference between ANV's TU 1 and TU 4 (with all seven from TU 4, TU 1 encodes the
++ * TU 4 stream byte for byte), and DW54 alone carries most of TU 1's cost: on an Arc B580, 4K HEVC,
++ * VBR 25 Mbit/s, the PAK pass takes 23.2 ms per frame with TU 1's value and 9.9 ms with TU 4's
++ * (Intel's Windows driver: 12.3 ms at TU 1 on the same card). With TU 4's value TU 1 still needs
++ * 4.5-13% fewer bits than Intel's Windows QSV at TU 1 (BD-rate PSNR-Y, 1080p and 4K) and 0.7-1.9%
++ * more than with media-driver's value. TU 1 therefore takes TU 4's DW54;
++ * ANV_HEVC_TU1_MEDIA_DRIVER_DW54=true restores media-driver's value.
++ * Measurements: hackintosh docs/reports/b580-hevc-tu1-ab-20261103.md section 7. */
++DEBUG_GET_ONCE_BOOL_OPTION(hevc_tu1_media_driver_dw54, "ANV_HEVC_TU1_MEDIA_DRIVER_DW54", false)
++
++static uint32_t
++anv_h265_cmd2_dw54_xe2(uint32_t target_usage)
++{
++   if (target_usage == 1 && !debug_get_option_hevc_tu1_media_driver_dw54())
++      return hevc_vdenc_cmd2_dw54_xe2[4];
++   return hevc_vdenc_cmd2_dw54_xe2[target_usage];
+ }
++#endif
+ 
+ #if GFX_VER >= 20
+ /* PAK RDOQ: media-driver's Xe2_HPM HEVC VDEnc settings enable it for every target usage but 7
+@@ -3342,7 +3364,7 @@
+       cmd2.Values52 |= hevc_vdenc_cmd2_dw51_xe2[target_usage];
+       cmd2.Values53 |= hevc_vdenc_cmd2_dw52_xe2[target_usage];
+       cmd2.Values54 |= hevc_vdenc_cmd2_dw53_xe2[target_usage];
+-      cmd2.Values55 |= hevc_vdenc_cmd2_dw54_xe2[target_usage];
++      cmd2.Values55 |= anv_h265_cmd2_dw54_xe2(target_usage);
+ #else
+       cmd2.Values7  |= hevc_vdenc_cmd2_dw7[pic_type][num_l0_is0][low_delay][0][1];
+       cmd2.Values8  |= hevc_vdenc_cmd2_dw8_gen125[pic_type][target_usage][low_delay];

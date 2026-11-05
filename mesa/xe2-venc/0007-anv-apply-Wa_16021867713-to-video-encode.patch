@@ -1,0 +1,27 @@
+From 1b40df248bf097d964bdc6c87afa8c2fa68233f0 Mon Sep 17 00:00:00 2001
+From: "Emil J. Tywoniak" <emil@tywoniak.eu>
+Date: Thu, 15 Oct 2026 00:41:48 +0200
+Subject: [PATCH 07/18] anv: apply Wa_16021867713 to video encode
+
+---
+ src/intel/vulkan/genX_cmd_video_enc.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/src/intel/vulkan/genX_cmd_video_enc.c b/src/intel/vulkan/genX_cmd_video_enc.c
+index a5832df2359..53ff7da8eb2 100644
+--- a/src/intel/vulkan/genX_cmd_video_enc.c
++++ b/src/intel/vulkan/genX_cmd_video_enc.c
+@@ -256,6 +256,10 @@ anv_video_emit_vd_control_state(struct anv_cmd_buffer *cmd)
+ {
+    anv_batch_emit(&cmd->batch, GENX(VD_CONTROL_STATE), v) {
+       v.PipelineInitialization = true;
++#if GFX_VER >= 20
++      /* Wa_16021867713 */
++      v.VDBOXPipelineArchitectureClockgateDisable = true;
++#endif
+    }
+ }
+ #endif
+-- 
+2.54.0 (Apple Git-157)
+

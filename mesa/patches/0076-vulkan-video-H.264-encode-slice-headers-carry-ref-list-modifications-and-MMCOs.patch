@@ -1,0 +1,144 @@
+vulkan/video: H.264 encode slice headers carry the reference list modifications and MMCOs
+
+vk_video_encode_h264_slice_header() wrote ref_pic_list_modification_flag_l0/l1 from the application but no
+modification operations after it (assert(0) TODO, and no terminating modification_of_pic_nums_idc 3), and always wrote
+adaptive_ref_pic_marking_mode_flag 0. With B frames used as references (B pyramid) FFmpeg reorders the lists and
+unmarks the pictures that left its DPB with MMCO 1, so every such slice header was corrupt: libavcodec reports
+"illegal reordering_of_pic_nums_idc" / "reference count overflow", and the decoder's sliding window keeps other
+references than the encoder (PSNR ~18 dB, drift). Write ref_pic_list_modification() and dec_ref_pic_marking() per
+H.264 7.3.3.1 / 7.3.3.3 (as radv_video_enc.c does), closing each list with its end code whether or not the
+application passed it, and the IDR flags from the picture info.
+B580 (anv), FFmpeg h264_vulkan with Intel's AVC default GOP (GopRefDist 4, B pyramid): streams decode without errors
+and bit-exact on libavcodec and the B580 VideoToolbox decoder; mediakit BD-rate vs the flat 2-B GOP -1.5..-4.1% PSNR-Y.
+
+diff --git a/src/vulkan/runtime/vk_video.c b/src/vulkan/runtime/vk_video.c
+index 0f0b6603a00..a1993530aba 100644
+--- a/src/vulkan/runtime/vk_video.c
++++ b/src/vulkan/runtime/vk_video.c
+@@ -2492,6 +2492,57 @@ vk_video_encode_h265_pps(const StdVideoH265PictureParameterSet *pps,
+    *data_size_ptr += vl_bitstream_get_byte_count(&enc);
+ }
+ 
++/* ref_pic_list_modification() for one list (H.264 7.3.3.1). The operations come from the application;
++ * the list is closed with modification_of_pic_nums_idc == 3 whether or not the application passed the
++ * end entry itself.
++ */
++static void
++h264_encode_ref_list_mods(struct vl_bitstream_encoder *enc,
++                          const StdVideoEncodeH264RefListModEntry *ops,
++                          unsigned count)
++{
++   for (unsigned i = 0; ops && i < count; i++) {
++      const StdVideoEncodeH264RefListModEntry *op = &ops[i];
++      if (op->modification_of_pic_nums_idc == STD_VIDEO_H264_MODIFICATION_OF_PIC_NUMS_IDC_END)
++         break;
++      vl_bitstream_exp_golomb_ue(enc, op->modification_of_pic_nums_idc);
++      if (op->modification_of_pic_nums_idc == STD_VIDEO_H264_MODIFICATION_OF_PIC_NUMS_IDC_SHORT_TERM_SUBTRACT ||
++          op->modification_of_pic_nums_idc == STD_VIDEO_H264_MODIFICATION_OF_PIC_NUMS_IDC_SHORT_TERM_ADD)
++         vl_bitstream_exp_golomb_ue(enc, op->abs_diff_pic_num_minus1);
++      else if (op->modification_of_pic_nums_idc == STD_VIDEO_H264_MODIFICATION_OF_PIC_NUMS_IDC_LONG_TERM)
++         vl_bitstream_exp_golomb_ue(enc, op->long_term_pic_num);
++   }
++   vl_bitstream_exp_golomb_ue(enc, STD_VIDEO_H264_MODIFICATION_OF_PIC_NUMS_IDC_END);
++}
++
++/* dec_ref_pic_marking() memory management control operations (H.264 7.3.3.3), closed with
++ * memory_management_control_operation == 0 whether or not the application passed the end entry.
++ */
++static void
++h264_encode_mmcos(struct vl_bitstream_encoder *enc,
++                  const StdVideoEncodeH264RefPicMarkingEntry *ops,
++                  unsigned count)
++{
++   for (unsigned i = 0; ops && i < count; i++) {
++      const StdVideoEncodeH264RefPicMarkingEntry *op = &ops[i];
++      const StdVideoH264MemMgmtControlOp mmco = op->memory_management_control_operation;
++      if (mmco == STD_VIDEO_H264_MEM_MGMT_CONTROL_OP_END)
++         break;
++      vl_bitstream_exp_golomb_ue(enc, mmco);
++      if (mmco == STD_VIDEO_H264_MEM_MGMT_CONTROL_OP_UNMARK_SHORT_TERM ||
++          mmco == STD_VIDEO_H264_MEM_MGMT_CONTROL_OP_MARK_LONG_TERM)
++         vl_bitstream_exp_golomb_ue(enc, op->difference_of_pic_nums_minus1);
++      if (mmco == STD_VIDEO_H264_MEM_MGMT_CONTROL_OP_UNMARK_LONG_TERM)
++         vl_bitstream_exp_golomb_ue(enc, op->long_term_pic_num);
++      if (mmco == STD_VIDEO_H264_MEM_MGMT_CONTROL_OP_MARK_LONG_TERM ||
++          mmco == STD_VIDEO_H264_MEM_MGMT_CONTROL_OP_MARK_CURRENT_AS_LONG_TERM)
++         vl_bitstream_exp_golomb_ue(enc, op->long_term_frame_idx);
++      if (mmco == STD_VIDEO_H264_MEM_MGMT_CONTROL_OP_SET_MAX_LONG_TERM_INDEX)
++         vl_bitstream_exp_golomb_ue(enc, op->max_long_term_frame_idx_plus1);
++   }
++   vl_bitstream_exp_golomb_ue(enc, STD_VIDEO_H264_MEM_MGMT_CONTROL_OP_END);
++}
++
+ void
+ vk_video_encode_h264_slice_header(const StdVideoEncodeH264PictureInfo *pic_info,
+                                   const StdVideoH264SequenceParameterSet *sps,
+@@ -2576,12 +2627,9 @@ vk_video_encode_h264_slice_header(const StdVideoEncodeH264PictureInfo *pic_info,
+ 
+       vl_bitstream_put_bits(&enc, 1, pic_info->pRefLists->flags.ref_pic_list_modification_flag_l0);
+ 
+-      if (pic_info->pRefLists->flags.ref_pic_list_modification_flag_l0) {
+-         assert(0);
+-         /* TODO */
+-         for (unsigned i = 0; i < pic_info->pRefLists->refList0ModOpCount; i++) {
+-         }
+-      }
++      if (pic_info->pRefLists->flags.ref_pic_list_modification_flag_l0)
++         h264_encode_ref_list_mods(&enc, pic_info->pRefLists->pRefList0ModOperations,
++                                   pic_info->pRefLists->refList0ModOpCount);
+    } else if (slice_type == STD_VIDEO_H264_SLICE_TYPE_B) {
+       vl_bitstream_put_bits(&enc, 1, slice_header->flags.direct_spatial_mv_pred_flag);
+       vl_bitstream_put_bits(&enc, 1, slice_header->flags.num_ref_idx_active_override_flag);
+@@ -2592,18 +2640,14 @@ vk_video_encode_h264_slice_header(const StdVideoEncodeH264PictureInfo *pic_info,
+       }
+ 
+       vl_bitstream_put_bits(&enc, 1, pic_info->pRefLists->flags.ref_pic_list_modification_flag_l0);
+-      if (pic_info->pRefLists->flags.ref_pic_list_modification_flag_l0) {
+-         assert(0);
+-         for (unsigned i = 0; i < pic_info->pRefLists->refList0ModOpCount; i++) {
+-         }
+-      }
++      if (pic_info->pRefLists->flags.ref_pic_list_modification_flag_l0)
++         h264_encode_ref_list_mods(&enc, pic_info->pRefLists->pRefList0ModOperations,
++                                   pic_info->pRefLists->refList0ModOpCount);
+ 
+       vl_bitstream_put_bits(&enc, 1, pic_info->pRefLists->flags.ref_pic_list_modification_flag_l1);
+-      if (pic_info->pRefLists->flags.ref_pic_list_modification_flag_l1) {
+-         assert(0);
+-         for (unsigned i = 0; i < pic_info->pRefLists->refList1ModOpCount; i++) {
+-         }
+-      }
++      if (pic_info->pRefLists->flags.ref_pic_list_modification_flag_l1)
++         h264_encode_ref_list_mods(&enc, pic_info->pRefLists->pRefList1ModOperations,
++                                   pic_info->pRefLists->refList1ModOpCount);
+    }
+ 
+    if ((pps->flags.weighted_pred_flag && (slice_type == STD_VIDEO_H264_SLICE_TYPE_P)) ||
+@@ -2615,15 +2659,20 @@ vk_video_encode_h264_slice_header(const StdVideoEncodeH264PictureInfo *pic_info,
+    /* dec_ref_pic_marking */
+    /* nal_ref_idc != 0 */
+    if (slice_type != STD_VIDEO_H264_SLICE_TYPE_B || pic_info->flags.is_reference) {
+-      unsigned char no_output_of_prior_pics_flag = 0;
+-      unsigned char long_term_reference_flag = 0;
+-      unsigned char adaptive_ref_pic_marking_mode_flag = 0;
+-
+       if (pic_info->flags.IdrPicFlag) {
+-         vl_bitstream_put_bits(&enc, 1, no_output_of_prior_pics_flag);
+-         vl_bitstream_put_bits(&enc, 1, long_term_reference_flag);
++         vl_bitstream_put_bits(&enc, 1, pic_info->flags.no_output_of_prior_pics_flag);
++         vl_bitstream_put_bits(&enc, 1, pic_info->flags.long_term_reference_flag);
+       } else {
+-         vl_bitstream_put_bits(&enc, 1, adaptive_ref_pic_marking_mode_flag);
++         /* The application's memory management operations (FFmpeg unmarks the pictures that left its
++          * DPB with MMCO 1) must reach the stream, or the decoder's sliding window keeps a different
++          * set of references than the encoder and every later reference list diverges.
++          */
++         const StdVideoEncodeH264ReferenceListsInfo *lists = pic_info->pRefLists;
++         const bool adaptive = pic_info->flags.adaptive_ref_pic_marking_mode_flag &&
++                               lists && lists->refPicMarkingOpCount;
++         vl_bitstream_put_bits(&enc, 1, adaptive);
++         if (adaptive)
++            h264_encode_mmcos(&enc, lists->pRefPicMarkingOperations, lists->refPicMarkingOpCount);
+       }
+    }
+ 

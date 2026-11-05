@@ -1,0 +1,992 @@
+diff --git a/src/intel/genxml/xe2.xml b/src/intel/genxml/xe2.xml
+index 6440375ac7f..ce440893e8d 100644
+--- a/src/intel/genxml/xe2.xml
++++ b/src/intel/genxml/xe2.xml
+@@ -319,6 +319,13 @@
+     <field name="Constant Cache" dword="1" bits="29:29" type="bool" />
+     <field name="Barrier ID Address" dword="2" bits="63:3" type="address" />
+   </struct>
++  <struct name="VD_CONTROL_STATE_BODY" length="2">
++    <field name="Pipeline Initialization" dword="0" bits="0:0" type="bool" />
++    <field name="VDBOX Pipeline Architecture Clockgate Disable" dword="0" bits="1:1" type="bool" />
++    <field name="Scalable Mode Pipe Lock" dword="1" bits="0:0" type="bool" />
++    <field name="Scalable Mode Pipe Unlock" dword="1" bits="1:1" type="bool" />
++    <field name="Memory Implicit Flush" dword="1" bits="2:2" type="bool" />
++  </struct>
+   <instruction name="3DSTATE_3D_MODE" bias="2" length="5" engine="render">
+     <field name="DWord Length" dword="0" bits="7:0" type="uint" default="3" />
+     <field name="3D Command Sub Opcode" dword="0" bits="23:16" type="uint" default="30" />
+@@ -1158,6 +1165,9 @@
+     <field name="Sequence Enable Inter Intra Compound Flag" dword="2" bits="19:19" type="bool" />
+     <field name="Sequence Enable Masked Compound Flag" dword="2" bits="20:20" type="bool" />
+     <field name="Sequence Enable Joint Compound Flag" dword="2" bits="21:21" type="bool" />
++    <field name="Tail Present Flag" dword="2" bits="22:22" type="bool" />
++    <field name="Header Present Flag" dword="2" bits="23:23" type="bool" />
++    <field name="Enable Bitstream Stitching In Hardware" dword="2" bits="24:24" type="bool" />
+     <field name="Allow Screen Content Tools Flag" dword="3" bits="0:0" type="bool" />
+     <field name="Force Integer MV Flag" dword="3" bits="1:1" type="bool" />
+     <field name="Allow Warped Motion Flag" dword="3" bits="2:2" type="bool" />
+@@ -1166,7 +1176,8 @@
+     <field name="Frame Level Loop Restoration Filter Enable" dword="3" bits="6:6" type="bool" />
+     <field name="Apply Film Grain Flag" dword="3" bits="7:7" type="bool" />
+     <field name="Large Scale Tile Enable Flag" dword="3" bits="8:8" type="bool" />
+-    <field name="Post CDEF Filtered Recon Pixels Writeout En" dword="3" bits="14:14" type="bool" />
++    <field name="Post CDEF Filtered Recon Pixels Writeout Enable" dword="3" bits="14:14" type="bool" />
++    <field name="Post Wiener Filtered Pixel Streamout Enable" dword="3" bits="15:15" type="bool" />
+     <field name="Frame Type" dword="3" bits="17:16" type="uint" />
+     <field name="Intra Only Flag" dword="3" bits="19:19" type="bool" />
+     <field name="Error Resilient Mode Flag" dword="3" bits="22:22" type="bool" />
+@@ -1450,6 +1461,39 @@
+     <field name="Original Source Pixel Prefetch Length" dword="6" bits="9:7" type="uint" />
+     <field name="Original Source Pixel Prefetch Enable" dword="6" bits="10:10" type="bool" />
+   </instruction>
++  <instruction name="AVP_SURFACE_STATE" bias="2" length="5" engine="video">
++    <field name="DWord Length" dword="0" bits="11:0" type="uint" default="3" />
++    <field name="SubOpcode" dword="0" bits="22:16" type="uint" default="1" />
++    <field name="Media Command Opcode" dword="0" bits="26:23" type="uint" default="3" />
++    <field name="Pipeline" dword="0" bits="28:27" type="uint" default="2" />
++    <field name="Command Type" dword="0" bits="31:29" type="uint" default="3" />
++    <field name="Surface Pitch Minus 1" dword="1" bits="15:0" type="uint" />
++    <field name="Surface ID" dword="1" bits="31:28" type="uint" />
++    <field name="Y Offset for UCb" dword="2" bits="14:0" type="uint" />
++    <field name="Surface Format" dword="2" bits="31:27" type="uint" prefix="AVP">
++      <value name="P010_VARIANT" value="3" />
++      <value name="PLANAR_420_8" value="4" />
++      <value name="P010" value="13" />
++    </field>
++    <field name="Default Alpha Value" dword="3" bits="15:0" type="uint" />
++    <field name="Y Offset for VCr" dword="3" bits="31:16" type="uint" />
++    <field name="Memory Compression Enable for Intra Frame" dword="4" bits="0:0" type="bool" />
++    <field name="Memory Compression Enable for Last Frame" dword="4" bits="1:1" type="bool" />
++    <field name="Memory Compression Enable for Last2 Frame" dword="4" bits="2:2" type="bool" />
++    <field name="Memory Compression Enable for Last3 Frame" dword="4" bits="3:3" type="bool" />
++    <field name="Memory Compression Enable for Golden Frame" dword="4" bits="4:4" type="bool" />
++    <field name="Memory Compression Enable for BwdRef Frame" dword="4" bits="5:5" type="bool" />
++    <field name="Memory Compression Enable for AltRef2 Frame" dword="4" bits="6:6" type="bool" />
++    <field name="Memory Compression Enable for AltRef Frame" dword="4" bits="7:7" type="bool" />
++    <field name="Compression Type for Intra Frame" dword="4" bits="8:8" type="bool" />
++    <field name="Compression Type for Last Frame" dword="4" bits="9:9" type="bool" />
++    <field name="Compression Type for Last2 Frame" dword="4" bits="10:10" type="bool" />
++    <field name="Compression Type for Last3 Frame" dword="4" bits="11:11" type="bool" />
++    <field name="Compression Type for Golden Frame" dword="4" bits="12:12" type="bool" />
++    <field name="Compression Type for BwdRef Frame" dword="4" bits="13:13" type="bool" />
++    <field name="Compression Type for AltRef2 Frame" dword="4" bits="14:14" type="bool" />
++    <field name="Compression Type for AltRef Frame" dword="4" bits="15:15" type="bool" />
++  </instruction>
+   <instruction name="AVP_TILE_CODING" bias="2" length="7" engine="video">
+     <field name="DWord Length" dword="0" bits="11:0" type="uint" default="5" />
+     <field name="SubOpcode" dword="0" bits="22:16" type="uint" default="21" />
+diff --git a/src/intel/vulkan/anv_physical_device.c b/src/intel/vulkan/anv_physical_device.c
+index a0040da6393..0e4a754bd5a 100644
+--- a/src/intel/vulkan/anv_physical_device.c
++++ b/src/intel/vulkan/anv_physical_device.c
+@@ -518,7 +518,8 @@ get_device_extensions(const struct anv_physical_device *device,
+       .KHR_video_encode_queue                = video_encode_enabled,
+       .KHR_video_encode_h264                 = VIDEO_CODEC_H264ENC && video_encode_enabled,
+       .KHR_video_encode_h265                 = device->info.ver >= 12 && VIDEO_CODEC_H265ENC && video_encode_enabled,
+-      .KHR_video_encode_av1                  = device->info.verx10 == 125 && VIDEO_CODEC_AV1ENC && video_encode_enabled,
++      .KHR_video_encode_av1                  = (device->info.verx10 == 125 || device->info.verx10 == 200) &&
++                                               VIDEO_CODEC_AV1ENC && video_encode_enabled,
+       .KHR_video_maintenance1                = (video_decode_enabled &&
+                                                (VIDEO_CODEC_H264DEC || VIDEO_CODEC_H265DEC)) ||
+                                                (video_encode_enabled &&
+@@ -3499,7 +3500,7 @@ void anv_GetPhysicalDeviceQueueFamilyProperties2(
+                if (queue_family->queueFlags & VK_QUEUE_VIDEO_ENCODE_BIT_KHR) {
+                   prop->videoCodecOperations |= VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR |
+                                                 VK_VIDEO_CODEC_OPERATION_ENCODE_H265_BIT_KHR;
+-                  if (pdevice->info.verx10 == 125)
++                  if (pdevice->info.verx10 == 125 || pdevice->info.verx10 == 200)
+                      prop->videoCodecOperations |= VK_VIDEO_CODEC_OPERATION_ENCODE_AV1_BIT_KHR;
+                }
+                break;
+diff --git a/src/intel/vulkan/anv_private.h b/src/intel/vulkan/anv_private.h
+index f9e8986d561..2137bf728aa 100644
+--- a/src/intel/vulkan/anv_private.h
++++ b/src/intel/vulkan/anv_private.h
+@@ -7159,6 +7159,11 @@ enum anv_vid_mem_av1_types {
+    ANV_VID_MEM_AV1_DBD_BUFFER,
+    ANV_VID_MEM_AV1_TILE_SIZE_STREAMOUT,
+    ANV_VID_MEM_AV1_ENCODE_TILE_BITSTREAM_ACCUM,
++   /* Xe2 (Xe_LPM+ media) VDEnc buffers for AV1 encode */
++   ANV_VID_MEM_AV1_ENCODE_VDENC_INTRA_ROW_STORE,
++   ANV_VID_MEM_AV1_ENCODE_VDENC_TILE_ROW_STORE,
++   ANV_VID_MEM_AV1_ENCODE_VDENC_CU_COUNT_STREAMOUT,
++   ANV_VID_MEM_AV1_ENCODE_VDENC_STATS,
+    ANV_VID_MEM_AV1_MAX,
+ };
+ 
+diff --git a/src/intel/vulkan/anv_video.c b/src/intel/vulkan/anv_video.c
+index 01cf1239b58..2c08c1490f6 100644
+--- a/src/intel/vulkan/anv_video.c
++++ b/src/intel/vulkan/anv_video.c
+@@ -303,7 +303,7 @@ video_profile_supported(struct anv_physical_device *pdevice,
+       const struct VkVideoEncodeAV1ProfileInfoKHR *av1_enc_profile =
+          vk_find_struct_const(profile->pNext, VIDEO_ENCODE_AV1_PROFILE_INFO_KHR);
+ 
+-      if (pdevice->info.verx10 != 125)
++      if (pdevice->info.verx10 != 125 && pdevice->info.verx10 != 200)
+          return VK_ERROR_VIDEO_PROFILE_CODEC_NOT_SUPPORTED_KHR;
+ 
+       if (av1_enc_profile->stdProfile != STD_VIDEO_AV1_PROFILE_MAIN)
+@@ -1264,6 +1264,33 @@ get_av1_video_session_mem_reqs(struct anv_device *dev,
+       case ANV_VID_MEM_AV1_ENCODE_TILE_BITSTREAM_ACCUM:
+          buffer_size = 1;
+          break;
++      /* Sizes in 64-byte units, from media-driver Av1VdencPktXe_Lpm_Plus_Base::AllocateResources and
++       * Av1VdencPkt::AllocateResources for the largest frame (4096x4096, 64x64 superblocks, 10-bit). */
++      case ANV_VID_MEM_AV1_ENCODE_VDENC_INTRA_ROW_STORE:
++         /* m_resMfdIntraRowStoreScratchBuffer: width in SB * 4 * 64 cache lines (10-bit) */
++         if (dev->info->ver < 20 || !(vid->vk.op & VK_VIDEO_CODEC_OPERATION_ENCODE_AV1_BIT_KHR))
++            continue;
++         buffer_size = DIV_ROUND_UP(4096, 64) * 4 * 64;
++         break;
++      case ANV_VID_MEM_AV1_ENCODE_VDENC_TILE_ROW_STORE:
++         /* m_vdencTileRowStoreBuffer: ceil(width / 32) * 2 cache lines */
++         if (dev->info->ver < 20 || !(vid->vk.op & VK_VIDEO_CODEC_OPERATION_ENCODE_AV1_BIT_KHR))
++            continue;
++         buffer_size = DIV_ROUND_UP(4096, 32) * 2;
++         break;
++      case ANV_VID_MEM_AV1_ENCODE_VDENC_CU_COUNT_STREAMOUT:
++         /* m_resCumulativeCuCountStreamoutBuffer: width in SB * height in SB * 4 bytes */
++         if (dev->info->ver < 20 || !(vid->vk.op & VK_VIDEO_CODEC_OPERATION_ENCODE_AV1_BIT_KHR))
++            continue;
++         buffer_size = DIV_ROUND_UP(DIV_ROUND_UP(4096, 64) * DIV_ROUND_UP(4096, 64) * 4, 64);
++         break;
++      case ANV_VID_MEM_AV1_ENCODE_VDENC_STATS:
++         /* VDEnc statistics streamout: the tile-slice state offsets each tile by 19 cache lines; up to 128 tiles
++          * (media-driver binds its tile statistics buffer here whether or not frame statistics are streamed) */
++         if (dev->info->ver < 20 || !(vid->vk.op & VK_VIDEO_CODEC_OPERATION_ENCODE_AV1_BIT_KHR))
++            continue;
++         buffer_size = 19 * 128;
++         break;
+       default:
+          assert(0);
+          break;
+diff --git a/src/intel/vulkan/av1_vdenc_tables.h b/src/intel/vulkan/av1_vdenc_tables.h
+index 6cfc43181d2..1bc6fadba92 100644
+--- a/src/intel/vulkan/av1_vdenc_tables.h
++++ b/src/intel/vulkan/av1_vdenc_tables.h
+@@ -504,6 +504,253 @@ static const uint32_t av1_vdenc_cmd2_dws[] = {
+    0x8000fc, 0xb10080, 0x300aa, 0xd30069, 0xe000e9, 0x940003,
+    0x56004d, 0x9500fd, 0x17002d, 0xfd001f, 0x2006c, 0x800080,
+ };
++#if GFX_VER >= 20
++/* Xe2 AV1 VDENC_CMD2 settings, from media-driver (encode_av1_vdenc_const_settings_xe2_hpm_open.h, the open source
++ * variant of EncodeAv1VdencConstSettingsXe2_Hpm::SetVdencCmd2Settings), ORed into the command's dwords. Indices:
++ * target usage (0..7), low delay, frame_type, number of L0/L1 references.
++ */
++static const uint32_t av1_vdenc_cmd2_xe2_dw2[8][4] = {
++   { 0x43, 0x43, 0x43, 0x43 },
++   { 0x43, 0x43, 0x43, 0x43 },
++   { 0x43, 0x3, 0x43, 0x3 },
++   { 0x43, 0x43, 0x43, 0x43 },
++   { 0x43, 0x3, 0x43, 0x3 },
++   { 0x43, 0x43, 0x43, 0x43 },
++   { 0x3, 0x3, 0x3, 0x3 },
++   { 0x3, 0x3, 0x3, 0x3 },
++};
++static const uint32_t av1_vdenc_cmd2_xe2_dw5 = 0xc0a080;
++static const uint32_t av1_vdenc_cmd2_xe2_dw6 = 0xe0080200;
++static const uint32_t av1_vdenc_cmd2_xe2_dw7[2][4] = {
++   { 0x64003, 0x64003, 0x64003, 0x64003 },
++   { 0xe4003, 0xe4003, 0x64003, 0x64003 },
++};
++static const uint32_t av1_vdenc_cmd2_xe2_dw8[8][2][4] = {
++   {
++      { 0, 0, 0, 0 },
++      { 0, 0, 0, 0 },
++   },
++   {
++      { 0, 0, 0, 0 },
++      { 0, 0, 0, 0 },
++   },
++   {
++      { 0, 0xfffdfcaa, 0, 0xfffdfcaa },
++      { 0, 0xfffdccaa, 0, 0xfffdccaa },
++   },
++   {
++      { 0, 0, 0, 0 },
++      { 0, 0, 0, 0 },
++   },
++   {
++      { 0, 0x55550000, 0, 0x55550000 },
++      { 0, 0x55550000, 0, 0x55550000 },
++   },
++   {
++      { 0, 0, 0, 0 },
++      { 0, 0, 0, 0 },
++   },
++   {
++      { 0, 0x55550000, 0, 0x55550000 },
++      { 0, 0x55550000, 0, 0x55550000 },
++   },
++   {
++      { 0, 0x55550000, 0, 0x55550000 },
++      { 0, 0x55550000, 0, 0x55550000 },
++   },
++};
++static const uint32_t av1_vdenc_cmd2_xe2_dw9[8][2][4] = {
++   {
++      { 0x840000, 0x840000, 0x840000, 0x840000 },
++      { 0x840000, 0x840000, 0x840000, 0x840000 },
++   },
++   {
++      { 0x840000, 0x840000, 0x840000, 0x840000 },
++      { 0x840000, 0x840000, 0x840000, 0x840000 },
++   },
++   {
++      { 0x840000, 0x84fcff, 0x840000, 0x84fcff },
++      { 0x840000, 0x84ffff, 0x840000, 0x84ffff },
++   },
++   {
++      { 0x830000, 0x830000, 0x830000, 0x830000 },
++      { 0x830000, 0x830000, 0x830000, 0x830000 },
++   },
++   {
++      { 0x830000, 0x830000, 0x830000, 0x830000 },
++      { 0x830000, 0x830000, 0x830000, 0x830000 },
++   },
++   {
++      { 0x830000, 0x830000, 0x830000, 0x830000 },
++      { 0x830000, 0x830000, 0x830000, 0x830000 },
++   },
++   {
++      { 0x630000, 0x630000, 0x630000, 0x630000 },
++      { 0x630000, 0x630000, 0x630000, 0x630000 },
++   },
++   {
++      { 0x320000, 0x320000, 0x320000, 0x320000 },
++      { 0x320000, 0x320000, 0x320000, 0x320000 },
++   },
++};
++static const uint32_t av1_vdenc_cmd2_xe2_dw11[2][4][4] = {
++   {
++      { 0, 0, 0, 0 },
++      { 0, 0, 0, 0 },
++      { 0, 0x80000000, 0, 0 },
++      { 0x80000000, 0, 0, 0 },
++   },
++   {
++      { 0, 0, 0, 0 },
++      { 0, 0, 0, 0 },
++      { 0, 0x80000000, 0, 0 },
++      { 0x80000000, 0, 0, 0x80000000 },
++   },
++};
++static const uint32_t av1_vdenc_cmd2_xe2_dw12 = 0xffffffff;
++static const uint32_t av1_vdenc_cmd2_xe2_dw14 = 0x1f40000;
++static const uint32_t av1_vdenc_cmd2_xe2_dw15 = 0x13881388;
++static const uint32_t av1_vdenc_cmd2_xe2_dw16 = 0xf000000;
++static const uint32_t av1_vdenc_cmd2_xe2_dw17 = 0x3e8;
++static const uint32_t av1_vdenc_cmd2_xe2_dw18 = 0x80000;
++static const uint32_t av1_vdenc_cmd2_xe2_dw19 = 0x98000040;
++static const uint32_t av1_vdenc_cmd2_xe2_dw20 = 0xffff;
++static const uint32_t av1_vdenc_cmd2_xe2_dw27 = 0xffff0000;
++static const uint32_t av1_vdenc_cmd2_xe2_dw28 = 0x7d00fa0;
++static const uint32_t av1_vdenc_cmd2_xe2_dw29 = 0x2bc0bb8;
++static const uint32_t av1_vdenc_cmd2_xe2_dw30 = 0x32003e8;
++static const uint32_t av1_vdenc_cmd2_xe2_dw31 = 0x1f4012c;
++static const uint32_t av1_vdenc_cmd2_xe2_dw32 = 0x190;
++static const uint32_t av1_vdenc_cmd2_xe2_dw35 = 0x800;
++static const uint32_t av1_vdenc_cmd2_xe2_dw37 = 0x40;
++static const uint32_t av1_vdenc_cmd2_xe2_dw39 = 0x8000fc;
++static const uint32_t av1_vdenc_cmd2_xe2_dw40 = 0xb10080;
++static const uint32_t av1_vdenc_cmd2_xe2_dw41 = 0x300aa;
++static const uint32_t av1_vdenc_cmd2_xe2_dw42 = 0xd30069;
++static const uint32_t av1_vdenc_cmd2_xe2_dw43 = 0xe000e9;
++static const uint32_t av1_vdenc_cmd2_xe2_dw44 = 0x940003;
++static const uint32_t av1_vdenc_cmd2_xe2_dw45 = 0x56004d;
++static const uint32_t av1_vdenc_cmd2_xe2_dw46 = 0x9500fd;
++static const uint32_t av1_vdenc_cmd2_xe2_dw47 = 0x17002d;
++static const uint32_t av1_vdenc_cmd2_xe2_dw48 = 0xfd001f;
++static const uint32_t av1_vdenc_cmd2_xe2_dw49 = 0x2006c;
++static const uint32_t av1_vdenc_cmd2_xe2_dw50 = 0x800080;
++static const uint32_t av1_vdenc_cmd2_xe2_dw51[8][4] = {
++   { 0x33331552, 0x33331552, 0x33331552, 0x33331552 },
++   { 0x33331552, 0x33331552, 0x33331552, 0x33331552 },
++   { 0x33331552, 0x3431552, 0x33331552, 0x3431552 },
++   { 0x22223552, 0x22223552, 0x22223552, 0x22223552 },
++   { 0x22223552, 0x22223552, 0x22223552, 0x22223552 },
++   { 0x22223552, 0x22223552, 0x22223552, 0x22223552 },
++   { 0x22227152, 0x22227152, 0x22227152, 0x22227152 },
++   { 0x12127006, 0x12127006, 0x12127006, 0x12127006 },
++};
++static const uint32_t av1_vdenc_cmd2_xe2_dw52[8] = { 0x77f5bdb, 0x77f5bdb, 0x77f5bdb, 0x72d5959, 0x72d5959, 0x72d5959, 0x929595a, 0x9294a5a };
++static const uint32_t av1_vdenc_cmd2_xe2_dw53[8] = { 0xffffffff, 0xffffffff, 0xffffffff, 0xff000000, 0xff000000, 0xff000000, 0x80000000, 0x8000 };
++static const uint32_t av1_vdenc_cmd2_xe2_dw54[8] = { 0x1000000, 0x1000000, 0x1000000, 0xc5000000, 0xc5000000, 0xc5000000, 0xbc000004, 0xbd00000c };
++static const uint32_t av1_vdenc_cmd2_xe2_dw56[2][4][4] = {
++   {
++      { 0, 0, 0, 0 },
++      { 0, 0, 0, 0 },
++      { 0, 0x300, 0, 0 },
++      { 0x300, 0, 0, 0 },
++   },
++   {
++      { 0, 0, 0, 0 },
++      { 0, 0, 0, 0 },
++      { 0, 0x300, 0, 0 },
++      { 0x300, 0, 0, 0x300 },
++   },
++};
++/* media-driver encode_av1_rounding_table.h: Par65Values (624 entries) */
++static const int8_t av1_vdenc_cmd2_xe2_rounding[624] = {
++   -21, -21, -21, -21, -21, -21, -21, -21, -25, -25, -25, -25, -25, -25, -25, -25, -25, -25, -25,
++   -25, -25, -25, -25, -25, -25, -25, -25, -25, -25, -25, -25, -25, -25, -25, -25, -25, -25, -25,
++   -25, -25, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -13, -13, -13, -13, -13,
++   -13, -13, -13, -13, -13, -13, -13, -9, -9, -9, -9, -9, -9, -9, -9, -9, -9, -9, -9, -9, -9, -9,
++   -9, -9, -9, -9, -9, -5, -5, -5, -5, -5, -5, -5, -5, -5, -5, -5, -5, -1, -1, -1, -1, -1, -1, -1,
++   -1, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13,
++   -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -9,
++   -9, -9, -9, -9, -9, -9, -9, -9, -9, -9, -9, -5, -5, -5, -5, -13, -13, -13, -13, -13, -13, -13,
++   -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13,
++   -9, -9, -9, -9, -9, -9, -9, -9, -9, -9, -9, -9, -9, -9, -9, -9, -5, -5, -5, -5, -5, -5, -1, -1,
++   -1, -1, -17, -17, -17, -17, -17, -17, -17, -17, -17, -17, -17, -17, -17, -17, -17, -17, -17,
++   -17, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13,
++   -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -9, -9, -9, -9, -9, -9, -13, -13, -13, -13,
++   -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13,
++   -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -9, -9, -9, -9, -9, -9, -5, -5, -5, -5,
++   -5, -5, -1, -1, -1, -1, -1, -1, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21,
++   -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -17, -17, -17,
++   -17, -17, -17, -17, -17, -17, -17, -17, -17, -17, -17, -17, -17, -17, -17, -17, -17, -17, -17,
++   -17, -17, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21,
++   -21, -21, -21, -21, -17, -17, -17, -17, -17, -17, -17, -17, -17, -17, -17, -17, -17, -17, -17,
++   -17, -17, -17, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -21, -21, -21,
++   -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21,
++   -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -17, -17, -17, -17, -17,
++   -17, -17, -17, -17, -17, -17, -17, -17, -17, -17, -17, -21, -21, -21, -21, -21, -21, -21, -21,
++   -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21,
++   -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -17, -17,
++   -17, -17, -17, -17, -17, -17, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21,
++   -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21,
++   -21, -21, -21, -21, -17, -17, -17, -17, -17, -17, -17, -17, -17, -17, -17, -17, -13, -13, -13,
++   -13, -21, -21, -21, -21, -21, -21, -21, -21, -25, -25, -25, -25, -25, -25, -25, -25, -25, -25,
++   -25, -25, -25, -25, -25, -25, -25, -25, -25, -25, -25, -25, -25, -25, -25, -25, -25, -25, -25,
++   -25, -25, -25, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21, -21,
++};
++#endif /* GFX_VER >= 20 */
++
++#if GFX_VER >= 20
++/* AVP_PIC_STATE rdmult on Xe_LPM+/Xe2 (media-driver Av1BasicFeatureXe_Lpm_Plus_Base, RdMultLUT in
++ * codec_def_encode_av1.h), indexed by [10-bit][base_q_idx].
++ */
++static const uint32_t av1_avp_rdmult_xe2[2][256] = {
++   {
++      58, 234, 234, 297, 366, 443, 528, 528, 619, 718, 825, 938, 1059, 1188, 1323, 1323, 1466, 1617,
++      1774, 1939, 2112, 2291, 2478, 2478, 2673, 2874, 3083, 3300, 3523, 3754, 3754, 3993, 4238, 4491,
++      4752, 5019, 5294, 5294, 5577, 5866, 6163, 6468, 6779, 6779, 7098, 7425, 7758, 8099, 8448, 8448,
++      8803, 9166, 9537, 9914, 10299, 10299, 10692, 11091, 11498, 11913, 11913, 12334, 12763, 13200,
++      13643, 14094, 14094, 14553, 15018, 15491, 15972, 15972, 16459, 16954, 17457, 17966, 17966, 18483,
++      19008, 19539, 20078, 20078, 20625, 21178, 21739, 22308, 22308, 22883, 23466, 24057, 24057, 24654,
++      25259, 25872, 26491, 26491, 27753, 28394, 29700, 31034, 31713, 33091, 33792, 35214, 35937, 37403,
++      38148, 39658, 40425, 41979, 42768, 44366, 45177, 46819, 47652, 49338, 50193, 51054, 52800, 53683,
++      55473, 57291, 59139, 61017, 62923, 65838, 67818, 69828, 71866, 73934, 76032, 78158, 80314, 82500,
++      84714, 86958, 89232, 91534, 95043, 98618, 101038, 104723, 108474, 111012, 114873, 118800, 121454,
++      125491, 128219, 132366, 135168, 139425, 145203, 149614, 154091, 158634, 163243, 167918, 172659,
++      177466, 182339, 187278, 193966, 199059, 205953, 211200, 216513, 223699, 229166, 234699, 242179,
++      249777, 257491, 265323, 271274, 279312, 287466, 295738, 304128, 312634, 321258, 330000, 338858,
++      350097, 359219, 368459, 380174, 389678, 399300, 411491, 423866, 433898, 446603, 459492, 472563,
++      485818, 499257, 512878, 526683, 540672, 554843, 572091, 586666, 604398, 619377, 637593, 656073,
++      674817, 693825, 713097, 732633, 755758, 779243, 799659, 827291, 851854, 876777, 905699, 935091,
++      964953, 999108, 1029966, 1065243, 1105137, 1145763, 1187123, 1229217, 1276366, 1328814, 1382318,
++      1436878, 1501866, 1568292, 1636154, 1715472, 1796666, 1884993, 1986218, 2090091, 2202291, 2323258,
++      2459457, 2605713, 2768923, 2943658, 3137291, 3344091, 3579194, 3829774, 4104334, 4420548, 4756843,
++      5140138, 5565354, 6026254, 6544618,
++   },
++   {
++      4, 19, 23, 39, 52, 66, 92, 111, 143, 180, 220, 265, 314, 367, 424, 506, 573, 644, 745, 825, 939,
++      1060, 1155, 1289, 1394, 1541, 1695, 1856, 1982, 2156, 2338, 2527, 2723, 2926, 3084, 3300, 3524,
++      3755, 3993, 4239, 4492, 4686, 4952, 5225, 5506, 5794, 6089, 6315, 6623, 6938, 7261, 7591, 7843,
++      8186, 8536, 8894, 9167, 9537, 9915, 10300, 10593, 10991, 11396, 11705, 12123, 12441, 12872, 13310,
++      13644, 14095, 14438, 14902, 15373, 15731, 16215, 16583, 17080, 17457, 17967, 18354, 18876, 19273,
++      19674, 20215, 20625, 21179, 21599, 22023, 22595, 23029, 23614, 24057, 24505, 25108, 25565, 26026,
++      26961, 28073, 29044, 30031, 31204, 32227, 33266, 34322, 35575, 36667, 37775, 38900, 40041, 41199,
++      42373, 43564, 44771, 45995, 47235, 48492, 49765, 51055, 52361, 53684, 55023, 57063, 58907, 61017,
++      63164, 65104, 67321, 69323, 71610, 73675, 76032, 78159, 80315, 82775, 84994, 87241, 89518, 92115,
++      95044, 98318, 101648, 104724, 108160, 111651, 114873, 118141, 121789, 125153, 128563, 132019,
++      135873, 140141, 144839, 149245, 153716, 158254, 163244, 167919, 172660, 177467, 181931, 188108,
++      193967, 199487, 205519, 211640, 217852, 223700, 229625, 236093, 243123, 250256, 257978, 265324,
++      272273, 279818, 287467, 296260, 304656, 313706, 322345, 331101, 339974, 350097, 359794, 370205,
++      380175, 390875, 401117, 412721, 424490, 435793, 447884, 459492, 472564, 485819, 499257, 512879,
++      526684, 541376, 556985, 572092, 587400, 604399, 621640, 639123, 656073, 675604, 694623, 714715,
++      735094, 756591, 779244, 802230, 827292, 852739, 878571, 907523, 936018, 966835, 999108, 1032884,
++      1068210, 1106144, 1145764, 1187124, 1232404, 1279614, 1331023, 1384571, 1441473, 1503040, 1568292,
++      1639831, 1716726, 1799234, 1888939, 1986219, 2090092, 2205134, 2329100, 2465467, 2610352, 2772111,
++      2946945, 3140684, 3349346, 3581006, 3831649, 4112097, 4424575, 4763110, 5142310, 5567614,
++      4289813442, 4290334454,
++   },
++};
++#endif /* GFX_VER >= 20 */
++
+ #endif
+ 
+ #endif /* _AV1_VDENC_TABLES_H_ */
+diff --git a/src/intel/vulkan/genX_cmd_video.c b/src/intel/vulkan/genX_cmd_video.c
+index 58b563ea506..56966906c77 100644
+--- a/src/intel/vulkan/genX_cmd_video.c
++++ b/src/intel/vulkan/genX_cmd_video.c
+@@ -142,6 +142,15 @@ genX(CmdControlVideoCodingKHR)(VkCommandBuffer commandBuffer,
+          rc->idr_period = h264_rc->idrPeriod;
+          rc->consecutive_b_frames = h264_rc->consecutiveBFrameCount;
+          rc->rc_flags = h264_rc->flags;
++      } else {
++         const VkVideoEncodeAV1RateControlInfoKHR *av1_rc =
++            vk_find_struct_const(pCodingControlInfo->pNext, VIDEO_ENCODE_AV1_RATE_CONTROL_INFO_KHR);
++         if (av1_rc) {
++            rc->gop_frame_count = av1_rc->gopFrameCount;
++            rc->idr_period = av1_rc->keyFramePeriod;
++            rc->consecutive_b_frames = av1_rc->consecutiveBipredictiveFrameCount;
++            rc->rc_flags = av1_rc->flags;
++         }
+       }
+ 
+       /* The HuC BRC only picks up the rate control parameters in its init
+diff --git a/src/intel/vulkan/genX_cmd_video_enc.c b/src/intel/vulkan/genX_cmd_video_enc.c
+index a8f7a13102b..91b47ef7242 100644
+--- a/src/intel/vulkan/genX_cmd_video_enc.c
++++ b/src/intel/vulkan/genX_cmd_video_enc.c
+@@ -4102,11 +4102,34 @@ anv_h265_encode_video(struct anv_cmd_buffer *cmd, const VkVideoEncodeInfoKHR *en
+ #define AVP_BITSTREAM_BYTECOUNT_TILE_NOHEADER_REG 0x1C2B4C
+ #define AVP_BITSTREAM_BYTECOUNT_TILE_REG          0x1C2B48
+ 
++#if GFX_VER >= 20
++/* Xe2's VDBoxes sit in the separate media GT, where VCS0's absolute MMIO addresses above do not apply: read the AVP
++ * byte counts relative to the engine the batch runs on (media-driver remaps them the same way) into scratch dwords of
++ * the AV1 encode scratch buffer, and do the math from there.
++ */
++#define AVP_BITSTREAM_BYTECOUNT_TILE_NOHEADER_OFFSET 0x2B4C
++#define AVP_BITSTREAM_BYTECOUNT_TILE_OFFSET          0x2B48
++
++static struct mi_value
++anv_av1_read_avp_reg(struct anv_cmd_buffer *cmd, struct anv_video_session *vid,
++                     uint32_t offset, uint32_t scratch_offset)
++{
++   struct anv_address dst =
++      anv_address_add(ANV_VID_MEM_ADDR(vid, ANV_VID_MEM_AV1_ENCODE_TILE_BITSTREAM_ACCUM), scratch_offset);
++   anv_batch_emit(&cmd->batch, GENX(MI_STORE_REGISTER_MEM), srm) {
++      srm.RegisterAddress = offset;
++      srm.AddCSMMIOStartOffset = true;
++      srm.MemoryAddress = dst;
++   }
++   return mi_mem32(dst);
++}
++#endif
++
+ static void
+ anv_av1_encode_video(struct anv_cmd_buffer *cmd, const VkVideoEncodeInfoKHR *enc_info)
+ {
+-   /* TODO: AV1 VDEnc encoding is only validated on DG2 (gfx 12.5) for now */
+-#if GFX_VERx10 == 125
++   /* AV1 VDEnc encoding: DG2 (gfx 12.5) and Xe2 (Battlemage) */
++#if GFX_VERx10 == 125 || GFX_VERx10 == 200
+    ANV_FROM_HANDLE(anv_buffer, dst_buffer, enc_info->dstBuffer);
+    struct anv_video_session *vid = cmd->video.vid;
+    struct vk_video_session_parameters *params = cmd->video.params;
+@@ -4185,6 +4208,9 @@ anv_av1_encode_video(struct anv_cmd_buffer *cmd, const VkVideoEncodeInfoKHR *enc
+ 
+    bool low_delay = true;
+    uint32_t num_ref_l0 = 0, num_ref_l1 = 0;
++   /* the L0/L1 reference pictures the VDEnc reads (Xe2 programs them and their 4x/8x downscaled copies) */
++   const struct anv_image_view *l0_iv[3] = { NULL, NULL, NULL }, *l1_iv = NULL;
++   uint32_t l0_layer[3] = { 0, 0, 0 }, l1_layer = 0;
+    int8_t poc_l0[4] = { 1, 2, 3, 4 };
+    int8_t poc_l1[4] = { -1, -2, -3, -4 };
+    uint8_t frame_idx_l0[3] = { 0, 0, 0 };
+@@ -4216,11 +4242,15 @@ anv_av1_encode_video(struct anv_cmd_buffer *cmd, const VkVideoEncodeInfoKHR *enc
+             if (num_ref_l1 < 1) {
+                poc_l1[0] = -diff;
+                frame_idx_l1 = slot;
++               l1_iv = ref_name_iv[i];
++               l1_layer = ref_name_layer[i];
+                num_ref_l1++;
+             }
+          } else if (num_ref_l0 < 3) {
+             poc_l0[num_ref_l0] = -diff;
+             frame_idx_l0[num_ref_l0] = slot;
++            l0_iv[num_ref_l0] = ref_name_iv[i];
++            l0_layer[num_ref_l0] = ref_name_layer[i];
+             num_ref_l0++;
+          }
+       }
+@@ -4256,6 +4286,10 @@ anv_av1_encode_video(struct anv_cmd_buffer *cmd, const VkVideoEncodeInfoKHR *enc
+       vdenc_pipe_mode.SourceChromaTLBPrefetchEnable = false;
+       vdenc_pipe_mode.HzShift32Minus1Src = 0;
+       vdenc_pipe_mode.PrefetchOffsetforSource = 0;
++#if GFX_VER >= 20
++      /* media-driver Av1BasicFeature: randomAccess = !lowDelay */
++      vdenc_pipe_mode.IsRandomAccess = !low_delay;
++#endif
+    }
+ 
+    anv_batch_emit(&cmd->batch, GENX(VDENC_SRC_SURFACE_STATE), vdenc_surface) {
+@@ -4286,7 +4320,16 @@ anv_av1_encode_video(struct anv_cmd_buffer *cmd, const VkVideoEncodeInfoKHR *enc
+          recon_img->planes[0].primary_surface.isl.row_pitch_B;
+    }
+ 
++#if GFX_VER >= 20
++   /* Xe2 always runs the VDEnc's 4x/8x downscale and HME stages: describe the downscaled surfaces (media-driver
++    * Av1BasicFeature VDENC_DS_REF_SURFACE_STATE; the encode DPB images carry them, anv_image.c) and give the
++    * VDEnc somewhere to write them below. Without, it wrote through null addresses.
++    */
++   anv_vdenc_emit_ds_ref_surface_state(cmd,
++      anv_video_get_enc_ds_layout(recon_img->vk.extent.width, recon_img->vk.extent.height), true);
++#else
+    /* TODO: VDENC_DS_REF_SURFACE_STATE (8X/4X downscaled) - needs DS scratch surface allocation */
++#endif
+ 
+    anv_batch_emit(&cmd->batch, GENX(VDENC_PIPE_BUF_ADDR_STATE), vdenc_buf) {
+       vdenc_buf.DSFWDREF0.PictureFields = ANV_VID_PIC(cmd->device, NULL);
+@@ -4349,6 +4392,44 @@ anv_av1_encode_video(struct anv_cmd_buffer *cmd, const VkVideoEncodeInfoKHR *enc
+          ANV_VID_PIC(cmd->device, NULL);
+       vdenc_buf.Additional4XDSFWDREF.PictureFields =
+          ANV_VID_PIC(cmd->device, NULL);
++
++#if GFX_VER >= 20
++      /* Xe2: the buffers media-driver binds for AV1 (Av1VdencPkt / Av1VdencPktXe_Lpm_Plus_Base /
++       * Av1ReferenceFrames VDENC_PIPE_BUF_ADDR_STATE and the mhw packing): this frame's 8x/4x downscaled output,
++       * the L0 references and their downscaled copies (BwdRef0 for a random access L1 reference), the VDEnc intra
++       * and tile row stores and the cumulative CU count streamout the tile-slice state enables.
++       */
++#define VID_PIC_SET(field, addr) \
++      do { vdenc_buf.field.Address = (addr); vdenc_buf.field.PictureFields = ANV_VID_PIC(cmd->device, (addr).bo); } while (0)
++      VID_PIC_SET(ScaledReferenceSurface8X, anv_image_ds_8x_address(recon_iv, recon_array_layer));
++      VID_PIC_SET(ScaledReferenceSurface4X, anv_image_ds_4x_address(recon_iv, recon_array_layer));
++      if (!is_intra) {
++         if (l0_iv[0]) VID_PIC_SET(FWDREF0, anv_image_dpb_address(l0_iv[0], l0_layer[0]));
++         if (l0_iv[1]) VID_PIC_SET(FWDREF1, anv_image_dpb_address(l0_iv[1], l0_layer[1]));
++         if (l0_iv[2]) VID_PIC_SET(FWDREF2, anv_image_dpb_address(l0_iv[2], l0_layer[2]));
++         if (l0_iv[0]) {
++            VID_PIC_SET(DSFWDREF0, anv_image_ds_8x_address(l0_iv[0], l0_layer[0]));
++            VID_PIC_SET(DSFWDREF04X, anv_image_ds_4x_address(l0_iv[0], l0_layer[0]));
++         }
++         if (l0_iv[1]) {
++            VID_PIC_SET(DSFWDREF1, anv_image_ds_8x_address(l0_iv[1], l0_layer[1]));
++            VID_PIC_SET(DSFWDREF14X, anv_image_ds_4x_address(l0_iv[1], l0_layer[1]));
++            if (num_ref_l0 == 2 && num_ref_l1 == 1)
++               VID_PIC_SET(Additional4XDSFWDREF, anv_image_ds_4x_address(l0_iv[1], l0_layer[1]));
++         }
++         if (!low_delay && l1_iv) {
++            VID_PIC_SET(BWDREF0, anv_image_dpb_address(l1_iv, l1_layer));
++            VID_PIC_SET(DSBWDREF0, anv_image_ds_8x_address(l1_iv, l1_layer));
++            VID_PIC_SET(DSBWDREF04X, anv_image_ds_4x_address(l1_iv, l1_layer));
++         }
++      }
++      VID_PIC_SET(IntraPredictionRowStoreBuffer, ANV_VID_MEM_ADDR(vid, ANV_VID_MEM_AV1_ENCODE_VDENC_INTRA_ROW_STORE));
++      VID_PIC_SET(VDEncTileRowStoreBuffer, ANV_VID_MEM_ADDR(vid, ANV_VID_MEM_AV1_ENCODE_VDENC_TILE_ROW_STORE));
++      VID_PIC_SET(VDEncCumulativeCUCountStreamOutSurface,
++                  ANV_VID_MEM_ADDR(vid, ANV_VID_MEM_AV1_ENCODE_VDENC_CU_COUNT_STREAMOUT));
++      VID_PIC_SET(VDEncStatisticsStreamOut, ANV_VID_MEM_ADDR(vid, ANV_VID_MEM_AV1_ENCODE_VDENC_STATS));
++#undef VID_PIC_SET
++#endif
+    }
+ 
+    /* Multi-tile scaffold (phase 1): the per-tile block runs once for now.
+@@ -4385,6 +4466,10 @@ anv_av1_encode_video(struct anv_cmd_buffer *cmd, const VkVideoEncodeInfoKHR *enc
+    for (uint32_t tile_idx = 0; tile_idx < num_tiles; tile_idx++) {
+       anv_batch_emit(&cmd->batch, GENX(AVP_VD_CONTROL_STATE), v) {
+          v.VDControlState.PipelineInitialization = true;
++#if GFX_VER >= 20
++         /* Wa_16021867713 */
++         v.VDControlState.VDBOXPipelineArchitectureClockgateDisable = true;
++#endif
+       }
+ 
+       anv_batch_emit(&cmd->batch, GENX(MFX_WAIT), mfx) {
+@@ -4430,6 +4515,11 @@ anv_av1_encode_video(struct anv_cmd_buffer *cmd, const VkVideoEncodeInfoKHR *enc
+ 
+             avp_surface.SurfacePitchMinus1 = img_->planes[0].primary_surface.isl.row_pitch_B - 1;
+             avp_surface.SurfaceFormat = is_10bit ? AVP_P010 : AVP_PLANAR_420_8;
++#if GFX_VER >= 20
++            /* Av1BasicFeatureXe_Lpm_Plus_Base: 10-bit recon/reference surfaces are P010 variant, sources P010 */
++            if (is_10bit && img_ == recon_img)
++               avp_surface.SurfaceFormat = AVP_P010_VARIANT;
++#endif
+             avp_surface.YOffsetforUCb = img_->planes[1].primary_surface.memory_range.offset /
+                img_->planes[0].primary_surface.isl.row_pitch_B;
+             avp_surface.YOffsetforVCr = avp_surface.YOffsetforUCb;
+@@ -4449,7 +4539,11 @@ anv_av1_encode_video(struct anv_cmd_buffer *cmd, const VkVideoEncodeInfoKHR *enc
+ 
+                avp_surface.SurfaceID = 6 + r;
+                avp_surface.SurfacePitchMinus1 = img_->planes[0].primary_surface.isl.row_pitch_B - 1;
++#if GFX_VER >= 20
++               avp_surface.SurfaceFormat = is_10bit ? AVP_P010_VARIANT : AVP_PLANAR_420_8;
++#else
+                avp_surface.SurfaceFormat = is_10bit ? AVP_P010 : AVP_PLANAR_420_8;
++#endif
+                avp_surface.YOffsetforUCb = img_->planes[1].primary_surface.memory_range.offset /
+                   img_->planes[0].primary_surface.isl.row_pitch_B;
+                avp_surface.YOffsetforVCr = avp_surface.YOffsetforUCb;
+@@ -4490,15 +4584,29 @@ anv_av1_encode_video(struct anv_cmd_buffer *cmd, const VkVideoEncodeInfoKHR *enc
+                else
+                   buf.ReferencePictureAddress[1 + name] =
+                      anv_image_dpb_address(recon_iv, recon_array_layer);
++
++               /* Each reference's own MV buffer (written when it was the current frame) */
++               if (ref_name_iv[name])
++                  buf.CollocatedMVTemporalBufferAddress[1 + name] =
++                     anv_image_dmv_top_address(ref_name_iv[name], ref_name_layer[name]);
+             }
+          }
+ 
++         /* media-driver (Av1ReferenceFrames AVP_PIPE_BUF_ADDR_STATE): slot 0 is the current frame's MV
++          * buffer, and any collocated MV slot without a reference gets the current frame's MV buffer
++          * ("error concealment") so the AVP never sees a null address there.
++          */
++         for (uint32_t i = 0; i < ARRAY_SIZE(buf.CollocatedMVTemporalBufferAddress); i++) {
++            if (!buf.CollocatedMVTemporalBufferAddress[i].bo)
++               buf.CollocatedMVTemporalBufferAddress[i] = buf.CurrentFrameMVWriteBufferAddress;
++         }
++
+          buf.ReferencePictureAttributes =
+             ANV_VID_ATTR(cmd->device, buf.ReferencePictureAddress[0].bo,
+                          .TiledResourceMode = TRMODE_TILEF);
+ 
+          buf.CollocatedMVTemporalBufferAttributes =
+-            ANV_VID_ATTR(cmd->device, NULL);
++            ANV_VID_ATTR(cmd->device, buf.CollocatedMVTemporalBufferAddress[0].bo);
+ 
+          if (pic_info->flags.allow_intrabc) {
+             buf.IntraBCDecodedOutputFrameBufferAddress =
+@@ -4635,6 +4743,18 @@ anv_av1_encode_video(struct anv_cmd_buffer *cmd, const VkVideoEncodeInfoKHR *enc
+             ANV_VID_ATTR(cmd->device, NULL);
+          buf.PostCDEFPixelsBufferAddressAttributes =
+             ANV_VID_ATTR(cmd->device, NULL);
++#if GFX_VER >= 20
++         /* Xe2's film grain and loop restoration alignment buffers: unused by the encoder (no film grain synthesis,
++          * loop restoration off), attributes still need a valid MOCS. */
++         buf.LoopRestorationFilterTileColumnAlignmentReadWriteBufferAddressAttributes =
++            ANV_VID_ATTR(cmd->device, NULL);
++         buf.FilmGrainInjectedOutputFrameBufferAddressAttributes =
++            ANV_VID_ATTR(cmd->device, NULL);
++         buf.FilmGrainSampleTemplateAddressAttributes =
++            ANV_VID_ATTR(cmd->device, NULL);
++         buf.FilmGrainTileColumnDataReadWriteBufferAddressAttributes =
++            ANV_VID_ATTR(cmd->device, NULL);
++#endif
+       }
+ 
+       anv_batch_emit(&cmd->batch, GENX(AVP_IND_OBJ_BASE_ADDR_STATE), ind) {
+@@ -4695,7 +4815,17 @@ anv_av1_encode_video(struct anv_cmd_buffer *cmd, const VkVideoEncodeInfoKHR *enc
+ 
+          /* Loop restoration is not supported by the encoder HW, so keep it disabled. */
+          pic.FrameLevelLoopRestorationFilterEnable = false;
++#if GFX_VER >= 20
++         /* media-driver enables the post-CDEF pixel writeout only when post-CDEF pixels are used as references
++          * (Av1ReferenceFrames m_encUsePostCdefAsRef, off by default), and binds PostCDEFPixelsBuffer then; here
++          * that buffer is not bound, so the writeout went to a null address.
++          */
++         pic.PostCDEFFilteredReconPixelsWriteoutEnable = false;
++         /* Xe_LPM+/Xe2: Av1BasicFeatureXe_Lpm_Plus_Base programs rdmult from the q index */
++         pic.rdmult = av1_avp_rdmult_xe2[is_10bit][base_q_idx];
++#else
+          pic.PostCDEFFilteredReconPixelsWriteoutEnable = true;
++#endif
+          pic.FrameType = pic_info->frame_type;
+          pic.IntraOnlyFlag = intra_only;
+          pic.ErrorResilientModeFlag = pic_info->flags.error_resilient_mode;
+@@ -5071,6 +5201,94 @@ anv_av1_encode_video(struct anv_cmd_buffer *cmd, const VkVideoEncodeInfoKHR *enc
+          wo.CrWeightsBackwardReference0 = 1;
+       }
+ 
++#if GFX_VER >= 20
++      /* Xe2 VDENC_CMD1 (39 dwords): media-driver's EncodeAv1VdencConstSettingsXe2_Hpm::SetVdencCmd1Settings
++       * parameters for target usage 4, packed the way mhw::vdbox::vdenc lays them out (the common DW1-DW32 fields
++       * plus the Xe2_HPM DW9[31:24], DW31-32[31:24] and DW33-DW38 ones). Parameters 8 to 15 are 4-entry arrays on
++       * Xe2: entry 0 in DW10/DW11, entries 1 to 3 in DW33 to DW38.
++       */
++      {
++         static const uint8_t par4[12] = { 3, 9, 14, 19, 24, 29, 34, 39, 44, 49, 54, 60 };
++         static const uint8_t par5[24] = { 41, 29, 29, 26, 9, 7, 7, 6, 42, 30, 30, 27, 10, 7, 7, 6,
++                                           43, 31, 31, 29, 10, 8, 8, 7 };
++         static const uint8_t par2[8] = { 0, 2, 3, 5, 6, 8, 9, 11 };
++         static const uint8_t par3[12] = { 4, 14, 24, 34, 44, 54, 64, 74, 84, 94, 104, 114 };
++         uint8_t p[96] = { 0 };
++         uint8_t p8[4], p9[4], p10[4], p11[4], p12[4], p13[4], p14[4], p15[4];
++
++         p11[0] = 0;
++         p15[0] = 0;
++         p10[0] = is_intra ? 0x00 : 0x05;
++         p14[0] = is_intra ? 0x00 : 0x15;
++         p[45] = is_intra ? 0x14 : 0x0c;
++         for (unsigned i = 47; i <= 50; i++) p[i] = 0x05;
++         for (unsigned i = 55; i <= 58; i++) p[i] = 0x12;
++         for (unsigned i = 67; i <= 70; i++) p[i] = 0x16;
++         for (unsigned i = 83; i <= 86; i++) p[i] = 0x1a;
++         p[34] = 0x15;
++         p[36] = 0x15;
++         for (unsigned i = 51; i <= 54; i++) p[i] = 0x0c;
++         for (unsigned i = 59; i <= 66; i++) p[i] = 0x10;
++         for (unsigned i = 71; i <= 82; i++) p[i] = 0x10;
++         p[95] = 0x32;
++         p[93] = 0x18;
++         /* target usage 4: intra frames clear entry 0 of parameters 8, 9, 12 and 13 */
++         p8[0] = is_intra ? 0 : 0x05;
++         p9[0] = is_intra ? 0 : 0x06;
++         p12[0] = is_intra ? 0 : 0x17;
++         p13[0] = is_intra ? 0 : 0x1a;
++         for (unsigned i = 1, j = 0; i < 4; i++) {
++            p15[i] = par5[j++]; p14[i] = par5[j++]; p13[i] = par5[j++]; p12[i] = par5[j++];
++            p11[i] = par5[j++]; p10[i] = par5[j++]; p9[i] = par5[j++]; p8[i] = par5[j++];
++         }
++         if (is_intra) {
++            p[23] = 0x2a; p[37] = 0x2f; p[38] = 0x10; p[39] = 0x10; p[42] = 0x3a; p[43] = 0x14;
++            p[40] = 0x1e; p[41] = 0x1e; p[44] = 0x00; p[46] = 0x00;
++         } else {
++            p[6] = 0x03; p[5] = 0x06; p[7] = 0x0a; p[17] = 0x13; p[19] = 0x12; p[20] = 0x0f; p[21] = 0x04;
++            p[37] = 0x17; p[38] = 0x18; p[39] = 0x1b; p[40] = 0x29;
++            p[16] = 0x5c; p[18] = 0x5c; p[22] = 0x04; p[23] = 0x36; p[41] = 0x44; p[42] = 0x25; p[43] = 0x25;
++            p[87] = 0x14; p[88] = 0x14; p[89] = 0x14;
++            p[44] = low_delay ? 0x00 : 0x03;
++            p[46] = low_delay ? 0x00 : 0x0c;
++         }
++
++#define B4(b0, b1, b2, b3) \
++   ((uint32_t)(b0) | (uint32_t)(b1) << 8 | (uint32_t)(b2) << 16 | (uint32_t)(b3) << 24)
++         uint32_t v[38] = { 0 };
++         v[0] = B4(par2[0], par2[1], par2[2], par2[3]);
++         v[1] = B4(par2[4], par2[5], par2[6], par2[7]);
++         for (unsigned i = 0; i < 3; i++) {
++            v[2 + i] = B4(par3[4 * i], par3[4 * i + 1], par3[4 * i + 2], par3[4 * i + 3]);
++            v[5 + i] = B4(par4[4 * i], par4[4 * i + 1], par4[4 * i + 2], par4[4 * i + 3]);
++         }
++         v[8]  = B4(p[5], p[6], p[7], p[95]);                    /* DW9 */
++         v[9]  = B4(p8[0], p12[0], p9[0], p13[0]);               /* DW10 */
++         v[10] = B4(p10[0], p14[0], p11[0], p15[0]);             /* DW11 */
++         for (unsigned i = 0; i < 7; i++)                        /* DW12-DW18: parameters 16-43 */
++            v[11 + i] = B4(p[16 + 4 * i], p[17 + 4 * i], p[18 + 4 * i], p[19 + 4 * i]);
++         v[18] = B4(0, p[44], p[45], p[46]);                     /* DW19 */
++         v[19] = B4(p[47], p[48], p[49], p[50]);                 /* DW20 */
++         v[20] = B4(p[51], p[52], p[53], p[54]);                 /* DW21 */
++         v[21] = av1_vdenc_cmd1_par0[is_intra ? 0 : 1][base_q_idx] |
++                 (uint32_t)av1_vdenc_cmd1_par1[is_intra ? 0 : 1][base_q_idx] << 16;   /* DW22 */
++         for (unsigned i = 0; i < 8; i++)                        /* DW23-DW30: parameters 55-86 */
++            v[22 + i] = B4(p[55 + 4 * i], p[56 + 4 * i], p[57 + 4 * i], p[58 + 4 * i]);
++         v[30] = B4(p[87], p[88], p[89], p[94]);                 /* DW31 */
++         v[31] = B4(p[90], p[91], p[92], p[93]);                 /* DW32 */
++         v[32] = B4(p11[1], p15[3], p15[2], p15[1]);             /* DW33 */
++         v[33] = B4(p14[2], p14[1], p11[3], p11[2]);             /* DW34 */
++         v[34] = B4(p10[3], p10[2], p10[1], p14[3]);             /* DW35 */
++         v[35] = B4(p9[1], p13[3], p13[2], p13[1]);              /* DW36 */
++         v[36] = B4(p12[2], p12[1], p9[3], p9[2]);               /* DW37 */
++         v[37] = B4(p8[3], p8[2], p8[1], p12[3]);                /* DW38 */
++#undef B4
++         anv_batch_emit(&cmd->batch, GENX(VDENC_CMD1), cmd1) {
++            for (unsigned i = 0; i < ARRAY_SIZE(v); i++)
++               cmd1.Values[i] = v[i];
++         }
++      }
++#else
+       /* VDENC_CMD1: 32-dword rate-distortion cost/lambda state. v[N] packs
+        * command dword N+1. Every lane is a fixed cost constant except the two
+        * 16-bit values in dw22, which are indexed by the frame QP. */
+@@ -5131,6 +5349,8 @@ anv_av1_encode_video(struct anv_cmd_buffer *cmd, const VkVideoEncodeInfoKHR *enc
+             cmd1.Values[i] = v[i];
+       }
+ 
++#endif
++
+       anv_batch_emit(&cmd->batch, GENX(VDENC_HEVC_VP9_TILE_SLICE_STATE), til) {
+          bool tile_enable = true;
+          uint32_t tile_w_pix = MIN2(tile_w_sb * sb_size,
+@@ -5173,6 +5393,12 @@ anv_av1_encode_video(struct anv_cmd_buffer *cmd, const VkVideoEncodeInfoKHR *enc
+ 
+          /* AV1_I=0/P=1/B=2/GPB=3. */
+          uint32_t picture_type;
++#if GFX_VER >= 20
++         /* no Wa_22011549751 on Xe2: a key frame is an I picture (Av1ReferenceFrames VDENC_CMD2) */
++         if (pic_info->frame_type == STD_VIDEO_AV1_FRAME_TYPE_KEY)
++            picture_type = 0;
++         else
++#endif
+          if (is_intra)
+             picture_type = 1;
+          else if (frame_info->predictionMode <= VK_VIDEO_ENCODE_AV1_PREDICTION_MODE_SINGLE_REFERENCE_KHR)
+@@ -5203,6 +5429,10 @@ anv_av1_encode_video(struct anv_cmd_buffer *cmd, const VkVideoEncodeInfoKHR *enc
+          cmd2.POCNumberForRefid3InL1 = poc_l1[3];
+          cmd2.NumRefIdxL0MinusOne = num_ref_l0 > 0 ? num_ref_l0 - 1 : 0;
+          cmd2.NumRefIdxL1MinusOne = num_ref_l1 > 0 ? num_ref_l1 - 1 : 0;
++#if GFX_VER >= 20
++         if (picture_type == 3)   /* GPB: L1 mirrors L0 (Av1ReferenceFrames numRefL1 = numRefL0) */
++            cmd2.NumRefIdxL1MinusOne = num_ref_l0 > 0 ? num_ref_l0 - 1 : 0;
++#endif
+ 
+          cmd2.MinQp = 0;
+          cmd2.MaxQp = 255;
+@@ -5215,6 +5445,53 @@ anv_av1_encode_video(struct anv_cmd_buffer *cmd, const VkVideoEncodeInfoKHR *enc
+          cmd2.Values24 = base_q_idx * 0x01010101u;
+          cmd2.Values25 = base_q_idx * 0x01010101u;
+ 
++#if GFX_VER >= 20
++         uint32_t tu = 4, frame_type = is_intra ? 0 : pic_info->frame_type;
++         uint32_t l0_ref = MIN2(num_ref_l0, 3), l1_ref = MIN2(num_ref_l1, 3);
++
++         /* Xe2: media-driver's EncodeAv1VdencConstSettingsXe2_Hpm VDENC_CMD2 settings (open source variant). */
++         uint32_t data[57] = { 0 };
++         data[2]  = av1_vdenc_cmd2_xe2_dw2[tu][frame_type];
++         data[5]  = av1_vdenc_cmd2_xe2_dw5;
++         data[6]  = av1_vdenc_cmd2_xe2_dw6;
++         data[7]  = av1_vdenc_cmd2_xe2_dw7[low_delay][l0_ref];
++         data[8]  = av1_vdenc_cmd2_xe2_dw8[tu][low_delay][frame_type];
++         data[9]  = av1_vdenc_cmd2_xe2_dw9[tu][low_delay][frame_type];
++         data[11] = av1_vdenc_cmd2_xe2_dw11[low_delay][l0_ref][l1_ref];
++         data[12] = av1_vdenc_cmd2_xe2_dw12;
++         data[14] = av1_vdenc_cmd2_xe2_dw14;
++         data[15] = av1_vdenc_cmd2_xe2_dw15;
++         data[16] = av1_vdenc_cmd2_xe2_dw16;
++         data[17] = av1_vdenc_cmd2_xe2_dw17;
++         data[18] = av1_vdenc_cmd2_xe2_dw18;
++         data[19] = av1_vdenc_cmd2_xe2_dw19;
++         data[20] = av1_vdenc_cmd2_xe2_dw20;
++         data[27] = av1_vdenc_cmd2_xe2_dw27;
++         data[28] = av1_vdenc_cmd2_xe2_dw28;
++         data[29] = av1_vdenc_cmd2_xe2_dw29;
++         data[30] = av1_vdenc_cmd2_xe2_dw30;
++         data[31] = av1_vdenc_cmd2_xe2_dw31;
++         data[32] = av1_vdenc_cmd2_xe2_dw32;
++         data[35] = av1_vdenc_cmd2_xe2_dw35;
++         data[37] = av1_vdenc_cmd2_xe2_dw37;
++         data[39] = av1_vdenc_cmd2_xe2_dw39;
++         data[40] = av1_vdenc_cmd2_xe2_dw40;
++         data[41] = av1_vdenc_cmd2_xe2_dw41;
++         data[42] = av1_vdenc_cmd2_xe2_dw42;
++         data[43] = av1_vdenc_cmd2_xe2_dw43;
++         data[44] = av1_vdenc_cmd2_xe2_dw44;
++         data[45] = av1_vdenc_cmd2_xe2_dw45;
++         data[46] = av1_vdenc_cmd2_xe2_dw46;
++         data[47] = av1_vdenc_cmd2_xe2_dw47;
++         data[48] = av1_vdenc_cmd2_xe2_dw48;
++         data[49] = av1_vdenc_cmd2_xe2_dw49;
++         data[50] = av1_vdenc_cmd2_xe2_dw50;
++         data[51] = av1_vdenc_cmd2_xe2_dw51[tu][frame_type];
++         data[52] = av1_vdenc_cmd2_xe2_dw52[tu];
++         data[53] = av1_vdenc_cmd2_xe2_dw53[tu];
++         data[54] = av1_vdenc_cmd2_xe2_dw54[tu];
++         data[56] = av1_vdenc_cmd2_xe2_dw56[low_delay][l0_ref][l1_ref];
++#else
+          uint32_t tu = 4, frame_type = is_intra ? 0 : pic_info->frame_type;
+          uint32_t l0_ref = num_ref_l0, l1_ref = num_ref_l1;
+          uint32_t l1_ctrl_not0 = reference_select;
+@@ -5239,6 +5516,7 @@ anv_av1_encode_video(struct anv_cmd_buffer *cmd, const VkVideoEncodeInfoKHR *enc
+          for (unsigned i = 0; i < 30; i++)
+             data[dws_idx[i]] |= av1_vdenc_cmd2_dws[i];
+ 
++#endif
+          cmd2.Values2  = data[2];
+          cmd2.Values5  = data[5];
+          cmd2.Values6  = data[6];
+@@ -5283,10 +5561,44 @@ anv_av1_encode_video(struct anv_cmd_buffer *cmd, const VkVideoEncodeInfoKHR *enc
+          cmd2.Values55 = data[54];
+          cmd2.Values57 = data[56];
+ 
++#if GFX_VER >= 20
++         /* Xe2 replaces fixed rounding with media-driver's look-up table rounding (Av1BasicFeatureXe2_Hpm::Update,
++          * Av1EncodeRoundingTable): a deadzone pair picked from the frame's q index, GOP structure and position.
++          */
++         uint32_t param_intra, param_inter;
++         {
++            uint32_t rdm = MIN2((base_q_idx + 2) / 5, 51);
++            uint32_t gop_ref_dist = vid->rc.consecutive_b_frames + 1;
++            uint32_t pos = gop_ref_dist ? pic_info->order_hint % gop_ref_dist : 0;
++            bool single_ref_dist = gop_ref_dist <= 1;
++            int idx;
++            if (pic_info->frame_type == STD_VIDEO_AV1_FRAME_TYPE_KEY)
++               idx = 0;
++            else if (!low_delay)
++               idx = 6;
++            else if (single_ref_dist && gop_ref_dist < 8)
++               idx = 1;
++            else
++               idx = gop_ref_dist < 8 ? (pos == 0 ? 2 : 3) : (pos == 0 ? 4 : 5);
++            uint32_t inter_i, intra_i;
++            if (idx == 0) {
++               inter_i = intra_i = rdm;
++            } else if (idx == 5 || idx == 6) {
++               inter_i = rdm + 260;
++               intra_i = rdm + 520;
++            } else {
++               inter_i = rdm + idx * 52;
++               intra_i = rdm + 624 - (7 - idx) * 52;
++            }
++            param_inter = (uint8_t)~av1_vdenc_cmd2_xe2_rounding[inter_i] >> 2 & 0xf;
++            param_intra = (uint8_t)~av1_vdenc_cmd2_xe2_rounding[intra_i] >> 2 & 0xf;
++         }
++#else
+          /* CQP uses fixedRounding = intra 6 / inter 2.
+           * TODO: adaptiveRounding derives param_inter from the previous frame
+           * statistics streamout. */
+          uint32_t param_intra = 6, param_inter = 2;
++#endif
+          cmd2.Values32 = data[32] |
+                          param_inter << 16 | param_inter << 20 |
+                          param_intra << 24 | param_intra << 28;
+@@ -5298,6 +5610,29 @@ anv_av1_encode_video(struct anv_cmd_buffer *cmd, const VkVideoEncodeInfoKHR *enc
+                          param_intra << 8 | param_intra << 12 |
+                          param_inter << 16 | param_inter << 20;
+ 
++#if GFX_VER >= 20
++         /* reference search order, media-driver Av1ReferenceFrames VDENC_CMD2 (default mapping): none for I
++          * pictures; P: LAST, GOLDEN, ALTREF; B: LAST, LAST2, LAST3 / BWDREF; GPB: LAST, LAST2, LAST3 /
++          * BWDREF, ALTREF2, ALTREF (one reference: BWDREF / ALTREF)
++          */
++         enum { LAST = 1, LAST2, LAST3, GOLDEN, BWD, ALT2, ALT };
++         uint8_t rid[2][4] = { { 0 } };
++         uint32_t nl0 = MIN2(num_ref_l0, 3);
++         if (picture_type == 1) {
++            static const uint8_t p[3] = { LAST, GOLDEN, ALT };
++            for (uint32_t i = 0; i < nl0; i++) rid[0][i] = p[i];
++         } else if (picture_type == 3) {
++            static const uint8_t l0[3] = { LAST, LAST2, LAST3 }, l1[3] = { BWD, ALT2, ALT };
++            if (nl0 == 1) { rid[0][0] = BWD; rid[1][0] = ALT; }
++            else for (uint32_t i = 0; i < nl0; i++) { rid[0][i] = l0[i]; rid[1][i] = l1[i]; }
++         } else if (picture_type == 2) {
++            static const uint8_t l0[3] = { LAST, LAST2, LAST3 };
++            for (uint32_t i = 0; i < nl0; i++) rid[0][i] = l0[i];
++            rid[1][0] = BWD;
++         }
++         cmd2.AV1L0RefID0 = rid[0][0]; cmd2.AV1L0RefID1 = rid[0][1]; cmd2.AV1L0RefID2 = rid[0][2]; cmd2.AV1L0RefID3 = rid[0][3];
++         cmd2.AV1L1RefID0 = rid[1][0]; cmd2.AV1L1RefID1 = rid[1][1]; cmd2.AV1L1RefID2 = rid[1][2]; cmd2.AV1L1RefID3 = rid[1][3];
++#else
+          cmd2.AV1L0RefID0 = 1;
+          cmd2.AV1L1RefID0 = 1;
+          cmd2.AV1L0RefID1 = 1;
+@@ -5306,6 +5641,7 @@ anv_av1_encode_video(struct anv_cmd_buffer *cmd, const VkVideoEncodeInfoKHR *enc
+          cmd2.AV1L1RefID2 = 1;
+          cmd2.AV1L0RefID3 = 1;
+          cmd2.AV1L1RefID3 = 1;
++#endif
+       }
+ 
+       anv_batch_emit(&cmd->batch, GENX(VDENC_WALKER_STATE), walker) {
+@@ -5339,7 +5675,12 @@ anv_av1_encode_video(struct anv_cmd_buffer *cmd, const VkVideoEncodeInfoKHR *enc
+       struct anv_address tile_bs_accum =
+          ANV_VID_MEM_ADDR(vid, ANV_VID_MEM_AV1_ENCODE_TILE_BITSTREAM_ACCUM);
+       mi_builder_set_mocs(&ab, anv_mocs_for_address(cmd->device, &tile_bs_accum));
++#if GFX_VER >= 20
++      struct mi_value cur =
++         anv_av1_read_avp_reg(cmd, vid, AVP_BITSTREAM_BYTECOUNT_TILE_OFFSET, 16);
++#else
+       struct mi_value cur = mi_reg32(AVP_BITSTREAM_BYTECOUNT_TILE_REG);
++#endif
+       if (tile_idx == 0)
+          mi_store(&ab, mi_mem32(tile_bs_accum), cur);
+       else
+@@ -5383,7 +5724,11 @@ anv_av1_encode_video(struct anv_cmd_buffer *cmd, const VkVideoEncodeInfoKHR *enc
+       tile_bytes = mi_isub(&b, mi_mem32(tile_bs_accum), mi_imm(tg_payload_prefix));
+    } else {
+       tile_bytes =
++#if GFX_VER >= 20
++         mi_value_to_gpr(&b, anv_av1_read_avp_reg(cmd, vid, AVP_BITSTREAM_BYTECOUNT_TILE_NOHEADER_OFFSET, 20));
++#else
+          mi_value_to_gpr(&b, mi_reg32(AVP_BITSTREAM_BYTECOUNT_TILE_NOHEADER_REG));
++#endif
+    }
+    struct mi_value leb0 =
+       mi_ior(&b, mi_iand(&b, mi_value_ref(&b, tile_bytes), mi_imm(0x7f)),
+@@ -5409,7 +5754,7 @@ anv_av1_encode_video(struct anv_cmd_buffer *cmd, const VkVideoEncodeInfoKHR *enc
+       mi_ior(&b, mi_ior(&b, leb0, leb1), mi_ior(&b, leb2, leb3));
+    mi_store(&b, mi_mem32(tg_leb128_addr), leb128);
+ 
+-#endif // GFX_VERx10 == 125
++#endif // GFX_VERx10 == 125 || GFX_VERx10 == 200
+ }
+ 
+ static void

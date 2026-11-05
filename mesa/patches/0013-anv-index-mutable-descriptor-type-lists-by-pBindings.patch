@@ -1,0 +1,49 @@
+From: Yusuf İhsan KILINÇ <78423442+yusufklncc@users.noreply.github.com>
+Date: Thu, 29 Oct 2026 15:20:00 +0300
+Subject: [PATCH 13] anv: index the mutable descriptor type lists by pBindings
+ index, not binding number
+
+VkMutableDescriptorTypeCreateInfoEXT::pMutableDescriptorTypeLists[i]
+describes pBindings[i] of the VkDescriptorSetLayoutCreateInfo it chains
+to (radv and nvk index it so, and so does anv's own
+GetDescriptorSetLayoutSupport). anv_CreateDescriptorSetLayout walks the
+bindings sorted by binding number and looked the list up with that
+number b instead of the pBindings index (info_idx). With sparse or
+unordered binding numbers a mutable binding got another binding's list,
+or none when b >= mutableDescriptorTypeListCount, which sizes it for
+every descriptor type: a sampler state in the sampler heap and the
+largest surface size.
+
+Seen with a layout whose mutable storage-image band sits at binding
+numbers 480-607 with 321 lists: every set took 160 sampler states instead
+of 32, so a descriptor pool sized from the same lists (which pools index
+correctly, by pPoolSizes index) held a fifth of its maxSets
+(VK_ERROR_OUT_OF_POOL_MEMORY at 51 of 256 sets).
+
+Generated-by: LLM
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/intel/vulkan/anv_descriptor_set.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/intel/vulkan/anv_descriptor_set.c b/src/intel/vulkan/anv_descriptor_set.c
+--- a/src/intel/vulkan/anv_descriptor_set.c
++++ b/src/intel/vulkan/anv_descriptor_set.c
+@@ -838,7 +838,7 @@
+          anv_descriptor_data_for_mutable_type(device->physical,
+                                               set_layout->binding_mode,
+                                               pCreateInfo->flags,
+-                                              mutable_info, b) :
++                                              mutable_info, info_idx) :
+          anv_descriptor_data_for_type(device->physical,
+                                       set_layout->binding_mode,
+                                       pCreateInfo->flags,
+@@ -907,7 +907,7 @@
+       if (binding->descriptorType == VK_DESCRIPTOR_TYPE_MUTABLE_EXT) {
+          anv_descriptor_size_for_mutable_type(
+             device->physical, set_layout->binding_mode,
+-            pCreateInfo->flags, mutable_info, b,
++            pCreateInfo->flags, mutable_info, info_idx,
+             &set_layout->binding[b].descriptor_data_surface_size,
+             &descriptor_data_sampler_size);
+       } else {

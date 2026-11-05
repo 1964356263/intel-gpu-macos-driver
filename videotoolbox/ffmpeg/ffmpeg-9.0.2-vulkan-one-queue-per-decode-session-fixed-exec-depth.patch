@@ -1,0 +1,71 @@
+FFmpeg 9.0.2: vulkan: one queue per video decode session, a fixed exec depth of 4
+
+Backports of upstream FFmpeg 1d14f9f8 ("vulkan: decouple execution pool depths from queue and thread counts",
+Lynne, 2026-07-19: async_depth = FF_VK_DEFAULT_EXEC_CONTEXTS (4), plus the thread count for thread-safe hwaccels)
+and of upstream master's queue rule in ff_vk_exec_pool_init (libavutil/vulkan.c: pin_queue for video queue families,
+e->qi = phase % qf->num): all contexts of one decode pool use one queue, pools take the family's queues in turn.
+9.0.2 spread a session's contexts over the queues (e->qi = i % qf->num), so consecutive pictures - which depend on
+each other - alternated between two queues, and every picture waited for the previous one across queues (on the
+B580: a kernel round trip per picture). Only video DECODE families are pinned here; encode is unchanged.
+
+--- a/libavcodec/vulkan_decode.c
++++ b/libavcodec/vulkan_decode.c
+@@ -1437,14 +1437,13 @@
+         session_create.flags = VK_VIDEO_SESSION_CREATE_INLINE_SESSION_PARAMETERS_BIT_KHR;
+ #endif
+ 
+-    /* Create decode exec context for this specific main thread.
+-     * 2 async contexts per thread was experimentally determined to be optimal
+-     * for a majority of streams. */
+-    async_depth = 2*ctx->qf->num;
+-    /* We don't need more than 2 per thread context */
+-    async_depth = FFMIN(async_depth, 2*avctx->thread_count);
+-    /* Make sure there are enough async contexts for each thread */
+-    async_depth = FFMAX(async_depth, avctx->thread_count);
++    /* Create the decode exec context.
++     * A small fixed depth is enough to keep the GPU fed, as submissions are
++     * serialized for hardware decoding; thread-safe hwaccels submit from
++     * every frame thread concurrently, and need a context per thread. */
++    async_depth = 4;
++    if (ffhwaccel(avctx->hwaccel)->caps_internal & HWACCEL_CAP_THREAD_SAFE)
++        async_depth = FFMAX(async_depth, avctx->thread_count);
+ 
+     err = ff_vk_exec_pool_init(s, ctx->qf, &ctx->exec_pool,
+                                async_depth, 0, 0, 0, profile);
+--- a/libavutil/vulkan.c
++++ b/libavutil/vulkan.c
+@@ -354,6 +354,9 @@
+     pool->pool_size = 0;
+ }
+ 
++/* Video decode exec pools taken so far: the queue the next one is pinned to */
++static atomic_uint exec_pool_phase;
++
+ int ff_vk_exec_pool_init(FFVulkanContext *s, AVVulkanDeviceQueueFamily *qf,
+                          FFVkExecPool *pool, int nb_contexts,
+                          int nb_queries, VkQueryType query_type, int query_64bit,
+@@ -488,6 +491,9 @@
+     }
+ #endif
+ 
++    const int pin_queue = !!(qf->flags & VK_QUEUE_VIDEO_DECODE_BIT_KHR);
++    const unsigned phase = pin_queue ? atomic_fetch_add(&exec_pool_phase, 1) : 0;
++
+     /* Init contexts */
+     for (int i = 0; i < pool->pool_size; i++) {
+         FFVkExecContext *e = &pool->contexts[i];
+@@ -515,8 +521,12 @@
+         /* Command buffer */
+         e->buf = pool->cmd_bufs[i];
+ 
+-        /* Queue index distribution */
+-        e->qi = i % qf->num;
++        /* Queue index distribution. A video decode pool belongs to one
++         * session, whose pictures depend on each other: all its contexts go
++         * to one queue (spread over the family they only added cross-queue
++         * waits between consecutive pictures), and sessions take the queues
++         * in turn. */
++        e->qi = pin_queue ? phase % qf->num : i % qf->num;
+         e->qf = qf->idx;
+         VkDeviceQueueInfo2 qinfo = {
+             .sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_INFO_2,

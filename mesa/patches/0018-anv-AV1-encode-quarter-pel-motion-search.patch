@@ -1,0 +1,31 @@
+anv: AV1 encode on Xe2: quarter-pel motion search and media-driver's reference id defaults (on top of 0017)
+
+VDENC_CMD2 SubPelMode was never programmed, so the VDEnc searched integer motion vectors only. media-driver's
+VDENC_CMD2 parameters default to subPelMode 3 (quarter pel) and no AV1 feature changes it. 1080p60 BBB, CQP
+q index 120: 18.2 -> 7.2 Mbit/s with 36.3 -> 38.3 dB; VBR 2/4/8 Mbit/s: +2.1/+2.9/+4.0 dB (now -0.6/-0.4/+0.2 dB
+against HEVC at the same rate). Applies to the gen12.5 path too, which had the same omission.
+The AV1 reference ids of unused list entries keep media-driver's default (LAST) instead of 0.
+
+--- a/src/intel/vulkan/genX_cmd_video_enc.c	2026-10-29 17:22:31
++++ b/src/intel/vulkan/genX_cmd_video_enc.c	2026-10-29 17:17:00
+@@ -5591,6 +5591,10 @@
+          cmd2.POCNumberForRefid3InL1 = poc_l1[3];
+          cmd2.NumRefIdxL0MinusOne = num_ref_l0 > 0 ? num_ref_l0 - 1 : 0;
+          cmd2.NumRefIdxL1MinusOne = num_ref_l1 > 0 ? num_ref_l1 - 1 : 0;
++         /* quarter-pel motion search: media-driver's VDENC_CMD2 parameter default (subPelMode = 3), which no AV1
++          * feature changes. Left at 0 the VDEnc searches integer positions only (1080p60 BBB at q index 120:
++          * 18.2 Mbit/s and 36.3 dB against 7.2 Mbit/s and 38.3 dB). */
++         cmd2.SubPelMode = 3;
+ #if GFX_VER >= 20
+          if (picture_type == 3)   /* GPB: L1 mirrors L0 (Av1ReferenceFrames numRefL1 = numRefL0) */
+             cmd2.NumRefIdxL1MinusOne = num_ref_l0 > 0 ? num_ref_l0 - 1 : 0;
+@@ -5778,7 +5782,8 @@
+           * BWDREF, ALTREF2, ALTREF (one reference: BWDREF / ALTREF)
+           */
+          enum { LAST = 1, LAST2, LAST3, GOLDEN, BWD, ALT2, ALT };
+-         uint8_t rid[2][4] = { { 0 } };
++         /* entries without a reference keep media-driver's default, LAST */
++         uint8_t rid[2][4] = { { LAST, LAST, LAST, LAST }, { LAST, LAST, LAST, LAST } };
+          uint32_t nl0 = MIN2(num_ref_l0, 3);
+          if (picture_type == 1) {
+             static const uint8_t p[3] = { LAST, GOLDEN, ALT };

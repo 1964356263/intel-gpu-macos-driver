@@ -1,0 +1,184 @@
+anv: AV1 encode BRC picks the CDEF parameters (Xe2)
+
+With CDEF enabled in the sequence header (FFmpeg 0001: under rate control, as with VAAPI), media-driver lets the
+HuC BRC update kernel choose the CDEF parameters (Av1Brc: UPD_EnableCDEFUpdate when enable_cdef and not intra block
+copy) and reads them back from the output AVP_INLOOP_FILTER_STATE (DW5: cdef_bits 29:28). cdef_params() is
+4 + 12 << cdef_bits bits (5.9.19), so with the kernel's choice the frame header has one of 4 lengths per loop filter
+variant of 0016: pack all (up to 8), capture DW5 next to the loop filter levels, and run the padding / tile group
+header / leb128 sub-batch whose loop filter and cdef_bits checks (MI_CONDITIONAL_BATCH_BUFFER_END) both hold.
+
+--- a/src/intel/vulkan/genX_cmd_video_enc.c
++++ b/src/intel/vulkan/genX_cmd_video_enc.c
+@@ -4296,6 +4296,9 @@
+       /* media-driver: the kernel picks the loop filter levels for the base_q_idx it chooses, except for intra
+        * block copy frames, which have no loop filter (5.9.2) */
+       brc.lf_update = !pic_info->flags.allow_intrabc;
++      /* media-driver Av1Brc: the kernel also picks the CDEF parameters when the sequence enables CDEF (5.9.19:
++       * no cdef_params() with intra block copy) */
++      brc.cdef_update = seq_hdr->flags.enable_cdef && !pic_info->flags.allow_intrabc;
+       brc.slb_in = anv_cmd_buffer_alloc_temporary_state(cmd, 4096, 4096);
+       brc.pak_insert_in = anv_cmd_buffer_alloc_temporary_state(cmd, 4096, 4096);
+       brc.update_dmem = anv_cmd_buffer_alloc_temporary_state(cmd, sizeof(struct anv_huc_av1_brc_update_dmem), 64);
+@@ -4324,6 +4327,8 @@
+       anv_av1_brc_emit_huc_update(cmd, &brc);
+       if (brc.lf_update)
+          anv_av1_brc_capture_lf_levels(cmd, &brc);
++      if (brc.cdef_update)
++         anv_av1_brc_capture_cdef_bits(cmd, &brc);
+    }
+    struct anv_batch brc_parent;
+ #endif
+@@ -4503,7 +4508,7 @@
+    struct anv_address tg_leb128_addr;
+    uint32_t tg_payload_prefix = 0;
+ #if GFX_VER >= 20
+-   struct anv_address brc_tg_leb128_addr[2] = { 0 };
++   struct anv_address brc_tg_leb128_addr[8] = { 0 };
+ #endif
+    const StdVideoAV1TileInfo *ti = pic_info->pTileInfo;
+    uint32_t num_tile_cols = ti ? ti->TileCols : 1;
+@@ -5249,16 +5254,26 @@
+          uint32_t last_bits = (hdr_size & 3) ? (hdr_size & 3) * 8 : 32;
+ #if GFX_VER >= 20
+          /* With the kernel's loop filter back-annotation the header carries loop_filter_level[2..3] only when
+-          * the levels it picks for luma are not both zero (5.9.11), so it comes out in one of two lengths: pack
+-          * both to know them. */
+-         size_t brc_hdr_size[2] = { hdr_size, hdr_size };
+-         if (brc.enabled && brc.lf_update) {
+-            for (uint32_t v = 0; v < 2; v++) {
++          * the levels it picks for luma are not both zero (5.9.11), and with its CDEF update cdef_params() is
++          * 4 + 12 << cdef_bits bits for the cdef_bits it picks (5.9.19): pack every combination to know their
++          * lengths. Variant index = lf * cdef_variants + cdef_bits. */
++         const uint32_t lf_variants = brc.enabled && brc.lf_update ? 2 : 1;
++         const uint32_t cdef_variants = brc.enabled && brc.cdef_update ? 4 : 1;
++         size_t brc_hdr_size[8] = { hdr_size, hdr_size, hdr_size, hdr_size, hdr_size, hdr_size, hdr_size, hdr_size };
++         if (lf_variants * cdef_variants > 1) {
++            for (uint32_t v = 0; v < lf_variants * cdef_variants; v++) {
+                StdVideoEncodeAV1PictureInfo pi = *pic_info;
+                StdVideoAV1LoopFilter lf = pic_info->pLoopFilter ? *pic_info->pLoopFilter :
+                                           (StdVideoAV1LoopFilter) { 0 };
+-               lf.loop_filter_level[0] = lf.loop_filter_level[1] = v;
+-               pi.pLoopFilter = &lf;
++               StdVideoAV1CDEF cdef = pic_info->pCDEF ? *pic_info->pCDEF : (StdVideoAV1CDEF) { 0 };
++               if (lf_variants > 1) {
++                  lf.loop_filter_level[0] = lf.loop_filter_level[1] = v / cdef_variants;
++                  pi.pLoopFilter = &lf;
++               }
++               if (cdef_variants > 1) {
++                  cdef.cdef_bits = v % cdef_variants;
++                  pi.pCDEF = &cdef;
++               }
+                struct vk_video_av1_frame_hdr_layout l = { .obu_size_bytes = ANV_AV1_BRC_OBU_SIZE_BYTES };
+                uint32_t tmp[128];
+                brc_hdr_size[v] = 0;
+@@ -5301,8 +5316,7 @@
+           */
+          uint32_t num_variants = 1;
+ #if GFX_VER >= 20
+-         if (brc.enabled && brc.lf_update)
+-            num_variants = 2;
++         num_variants = lf_variants * cdef_variants;
+ #endif
+          for (uint32_t v = 0; v < num_variants; v++) {
+             size_t vhdr_size = hdr_size;
+@@ -5312,7 +5326,10 @@
+                vhdr_size = brc_hdr_size[v];
+                if (!anv_video_begin_sub_batch(cmd, 256, &lf_variant))
+                   return;
+-               anv_av1_brc_emit_lf_variant_check(cmd, v);
++               if (lf_variants > 1)
++                  anv_av1_brc_emit_lf_variant_check(cmd, v / cdef_variants);
++               if (cdef_variants > 1)
++                  anv_av1_brc_emit_cdef_variant_check(cmd, v % cdef_variants);
+             }
+ #endif
+             uint32_t pad_len = (4 - ((vhdr_size + 1) & 3)) & 3;
+@@ -5970,15 +5987,19 @@
+    struct mi_value leb128 =
+       mi_ior(&b, mi_ior(&b, leb0, leb1), mi_ior(&b, leb2, leb3));
+ #if GFX_VER >= 20
+-   if (brc.enabled && brc.lf_update) {
++   if (brc.enabled && (brc.lf_update || brc.cdef_update)) {
+       /* the leb128 goes to whichever header length the kernel produced, see the padding above */
++      const uint32_t lf_v = brc.lf_update ? 2 : 1, cdef_v = brc.cdef_update ? 4 : 1;
+       struct anv_address leb_tmp = anv_av1_brc_scratch_addr(vid, ANV_AV1_BRC_SCRATCH_LEB128);
+       mi_store(&b, mi_mem32(leb_tmp), leb128);
+-      for (uint32_t v = 0; v < 2; v++) {
++      for (uint32_t v = 0; v < lf_v * cdef_v; v++) {
+          struct anv_video_sub_batch lf_variant;
+          if (!anv_video_begin_sub_batch(cmd, 256, &lf_variant))
+             return;
+-         anv_av1_brc_emit_lf_variant_check(cmd, v);
++         if (lf_v > 1)
++            anv_av1_brc_emit_lf_variant_check(cmd, v / cdef_v);
++         if (cdef_v > 1)
++            anv_av1_brc_emit_cdef_variant_check(cmd, v % cdef_v);
+          struct mi_builder vb;
+          mi_builder_init(&vb, cmd->device->info, &cmd->batch);
+          mi_builder_set_mocs(&vb, anv_mocs_for_address(cmd->device, &brc_tg_leb128_addr[v]));
+--- a/src/intel/vulkan/genX_huc_brc_av1.h
++++ b/src/intel/vulkan/genX_huc_brc_av1.h
+@@ -249,6 +249,7 @@
+ 
+ /* Driver scratch dwords in ANV_VID_MEM_AV1_ENCODE_BRC_DATA, past the 64 bytes the kernel writes there */
+ #define ANV_AV1_BRC_SCRATCH_LF_LEVELS  2048 /* AVP_INLOOP_FILTER_STATE DW1 as the kernel wrote it, then a mask */
++#define ANV_AV1_BRC_SCRATCH_CDEF_BITS  2056 /* AVP_INLOOP_FILTER_STATE DW5 as the kernel wrote it, then a mask */
+ #define ANV_AV1_BRC_SCRATCH_LEB128     2064 /* the tile group obu_size leb128 */
+ 
+ /* Per-frame BRC state the AV1 encode records against. */
+@@ -256,6 +257,8 @@
+    bool enabled;
+    /* the kernel back-annotates the loop filter levels (header length then known only on the GPU) */
+    bool lf_update;
++   /* the kernel picks the CDEF parameters, cdef_bits included (header length then known only on the GPU) */
++   bool cdef_update;
+    struct anv_av1_brc_slb_layout layout;
+    struct anv_state slb_in;
+    struct anv_state pak_insert_in;
+@@ -330,6 +333,36 @@
+    mi_builder_set_mocs(&b, anv_mocs_for_address(cmd->device, &dst));
+    mi_store(&b, mi_mem32(dst), mi_mem32(anv_av1_brc_slb_out_addr(vid, brc->layout.inloop_filter_offset + 4)));
+    mi_store(&b, mi_mem32(anv_address_add(dst, 4)), mi_imm(0xfff));
++}
++
++/* After the update kernel ran: keep the CDEF word it put in the output AVP_INLOOP_FILTER_STATE (DW5: strengths
++ * 0-3, cdef_bits 29:28, damping 31:30; media-driver readBRCMetaDataFromSLBB) with a cdef_bits compare mask behind. */
++static void
++anv_av1_brc_capture_cdef_bits(struct anv_cmd_buffer *cmd, const struct anv_av1_brc_frame *brc)
++{
++   struct anv_video_session *vid = cmd->video.vid;
++   struct anv_address dst = anv_av1_brc_scratch_addr(vid, ANV_AV1_BRC_SCRATCH_CDEF_BITS);
++   struct mi_builder b;
++
++   mi_builder_init(&b, cmd->device->info, &cmd->batch);
++   mi_builder_set_mocs(&b, anv_mocs_for_address(cmd->device, &dst));
++   mi_store(&b, mi_mem32(dst), mi_mem32(anv_av1_brc_slb_out_addr(vid, brc->layout.inloop_filter_offset + 20)));
++   mi_store(&b, mi_mem32(anv_address_add(dst, 4)), mi_imm(0x30000000));
++}
++
++/* A second level batch command that ends the batch unless the kernel chose @cdef_bits (cdef_params() is
++ * 4 + 12 << cdef_bits bits long, 5.9.19). */
++static void
++anv_av1_brc_emit_cdef_variant_check(struct anv_cmd_buffer *cmd, uint32_t cdef_bits)
++{
++   anv_batch_emit(&cmd->batch, GENX(MI_CONDITIONAL_BATCH_BUFFER_END), cbbe) {
++      cbbe.CompareOperation = MADEqualIDD;
++      cbbe.EndCurrentBatchBufferLevel = true;
++      cbbe.CompareSemaphore = 1;
++      cbbe.CompareMaskMode = CompareMaskModeEnabled;
++      cbbe.CompareDataDword = cdef_bits << 28;
++      cbbe.CompareAddress = anv_av1_brc_scratch_addr(cmd->video.vid, ANV_AV1_BRC_SCRATCH_CDEF_BITS);
++   }
+ }
+ 
+ /* First command of a second level batch that only applies when the kernel's luma loop filter levels are both
+@@ -578,7 +611,8 @@
+    dmem->UPD_PrimaryRefFrame = 0;
+    dmem->UPD_SegOn = 0;
+    dmem->UPD_IsFrameOBU = 0;
+-   dmem->UPD_EnableCDEFUpdate = 0;
++   /* media-driver Av1Brc: CDEF update whenever the sequence enables CDEF (not with intra block copy) */
++   dmem->UPD_EnableCDEFUpdate = brc->cdef_update;
+    dmem->UPD_CDEFParamsBitOffset = brc->hdr.cdef_bit_offset;
+    dmem->UPD_CDEFParamsSizeInBits = brc->hdr.cdef_size_in_bits;
+    dmem->UPD_EnableLFUpdate = brc->lf_update;

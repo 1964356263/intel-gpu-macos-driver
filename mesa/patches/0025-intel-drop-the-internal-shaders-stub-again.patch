@@ -1,0 +1,337 @@
+intel: drop -Dintel-internal-shaders=stub again (reverts "intel: add -Dintel-internal-shaders=stub to build anv without
+mesa-clc and glslang", 0004)
+
+The stub was for bringing ANV up on macOS without mesa-clc and glslang. With them built for the host (LLVM/clang 23.1.2,
+SPIRV-LLVM-Translator 23.1.2: a native mesa_clc and vtn_bindgen2, found with -Dmesa-clc=system), ANV's internal shaders
+are built as upstream builds them, and what aborted under the stub works: query copies on the GPU (libanv_query_copy,
+heavily used by DXVK), blorp's indirect memory-to-image copies, image size queries on indirect descriptors (resinfo,
+robustness2), indirect draw generation, the fp64 library and ASTC emulation. The Vulkan CTS hit 22+25+ SIGABRTs on those
+(dEQP-VK.renderpasses.dynamic_rendering...random, api.copy_and_blit, robustness2 sampled images).
+
+diff -ruN a/meson.build b/meson.build
+--- a/meson.build	2026-10-29 23:02:48
++++ b/meson.build	2026-10-29 23:02:49
+@@ -301,12 +301,7 @@
+ endif
+ 
+ with_intel_vk = _vulkan_drivers.contains('intel')
+-with_intel_vk_shaders = with_intel_vk and get_option('intel-internal-shaders') == 'enabled'
+-with_intel_shaders_stub = with_intel_vk and not with_intel_vk_shaders
+ with_intel_hasvk = _vulkan_drivers.contains('intel_hasvk')
+-if with_intel_shaders_stub and (with_intel_hasvk or with_gallium_iris or with_gallium_crocus)
+-  error('-Dintel-internal-shaders=stub only works with the intel Vulkan driver alone')
+-endif
+ with_amd_vk = _vulkan_drivers.contains('amd')
+ with_freedreno_vk = _vulkan_drivers.contains('freedreno')
+ with_panfrost_vk = _vulkan_drivers.contains('panfrost')
+@@ -390,7 +385,7 @@
+ ].contains(true)
+ 
+ with_intel_vk_rt = get_option('intel-rt') \
+-   .disable_auto_if(not with_intel_vk_shaders) \
++   .disable_auto_if(not with_intel_vk) \
+    .disable_if(sizeof_pointer != '8', \
+                error_message: 'Intel Ray Tracing requires 64-bit architectures') \
+   .allowed()
+@@ -736,7 +731,7 @@
+   pre_args += '-DHAVE_GALLIUM_D3D12_VIDEO'
+ endif
+ 
+-with_bvh = with_amd_vk or with_intel_vk_shaders or with_swrast_vk or with_freedreno_vk
++with_bvh = with_amd_vk or with_intel_vk or with_swrast_vk or with_freedreno_vk
+ _glslang_preamble_version = '12.2'
+ 
+ # GLSL has interesting version output and Meson doesn't parse it correctly as of
+@@ -1039,7 +1034,7 @@
+ endif
+ 
+ with_driver_using_cl = [
+-  with_gallium_iris, with_gallium_crocus, with_intel_vk_shaders, with_intel_hasvk,
++  with_gallium_iris, with_gallium_crocus, with_intel_vk, with_intel_hasvk,
+   with_gallium_asahi, with_asahi_vk, with_tools.contains('asahi'),
+   with_gallium_panfrost, with_panfrost_vk,
+   with_gallium_rusticl,
+diff -ruN a/meson.options b/meson.options
+--- a/meson.options	2026-10-29 23:02:48
++++ b/meson.options	2026-10-29 23:02:49
+@@ -736,18 +736,6 @@
+ )
+ 
+ option(
+-  'intel-internal-shaders',
+-  type : 'combo',
+-  value : 'enabled',
+-  choices : ['enabled', 'stub'],
+-  description : 'Build ANV\'s internal shaders (needs mesa-clc and glslang). ' +
+-                '"stub" leaves them out for bring-up on hosts without those ' +
+-                'tools: indirect draw generation, shader query copies, DGC, ' +
+-                'image size queries on indirect descriptors and the fp64 ' +
+-                'library then abort when used.'
+-)
+-
+-option(
+   'intel-elk',
+   type : 'boolean',
+   value : true,
+diff -ruN a/src/intel/blorp/meson.build b/src/intel/blorp/meson.build
+--- a/src/intel/blorp/meson.build	2026-10-29 23:02:48
++++ b/src/intel/blorp/meson.build	2026-10-29 23:02:49
+@@ -5,11 +5,6 @@
+   'blorp_shaders.cl',
+ )
+ 
+-if with_intel_shaders_stub
+-  idep_blorp_shaders = declare_dependency(
+-    include_directories : include_directories('stub'),
+-  )
+-else
+ blorp_shaders_spv = custom_target(
+   input : blorp_shader_files,
+   output : 'blorp_shaders.spv',
+@@ -36,7 +31,6 @@
+   sources : [blorp_shaders],
+   include_directories : include_directories('.'),
+ )
+-endif
+ 
+ files_libblorp = files(
+   'blorp.c',
+diff -ruN a/src/intel/blorp/stub/blorp_shaders.h b/src/intel/blorp/stub/blorp_shaders.h
+--- a/src/intel/blorp/stub/blorp_shaders.h	2026-10-29 23:02:48
++++ b/src/intel/blorp/stub/blorp_shaders.h	1970-01-01 02:00:00
+@@ -1,39 +0,0 @@
+-/* Copyright © 2026 Intel Corporation
+- * SPDX-License-Identifier: MIT
+- */
+-
+-/* Stand-in for the blorp_shaders.h that vtn_bindgen2 generates from
+- * blorp_shaders.cl, used with -Dintel-internal-shaders=stub (no mesa-clc).
+- * blorp_check_in_bounds() is small enough to build by hand; the indirect
+- * copy shaders abort.
+- */
+-
+-#pragma once
+-
+-#include <stdlib.h>
+-#include "compiler/nir/nir_builder.h"
+-#include "util/log.h"
+-
+-static inline nir_def *
+-blorp_check_in_bounds(nir_builder *b, nir_def *bounds_rect, nir_def *pos)
+-{
+-   nir_def *x = nir_channel(b, pos, 0), *y = nir_channel(b, pos, 1);
+-
+-   return nir_iand(b,
+-                   nir_iand(b, nir_uge(b, x, nir_channel(b, bounds_rect, 0)),
+-                               nir_ult(b, x, nir_channel(b, bounds_rect, 1))),
+-                   nir_iand(b, nir_uge(b, y, nir_channel(b, bounds_rect, 2)),
+-                               nir_ult(b, y, nir_channel(b, bounds_rect, 3))));
+-}
+-
+-static inline void
+-blorp_shaders_missing(const char *name)
+-{
+-   mesa_loge("blorp was built without internal shaders (%s)", name);
+-   abort();
+-}
+-
+-#define blorp_copy_memory_indirect_shader(b, ...) \
+-   blorp_shaders_missing("blorp_copy_memory_indirect_shader")
+-#define blorp_copy_memory_to_image_indirect_shader(b, ...) \
+-   blorp_shaders_missing("blorp_copy_memory_to_image_indirect_shader")
+diff -ruN a/src/intel/shaders/meson.build b/src/intel/shaders/meson.build
+--- a/src/intel/shaders/meson.build	2026-10-29 23:02:48
++++ b/src/intel/shaders/meson.build	2026-10-29 23:02:49
+@@ -1,17 +1,7 @@
+ # Copyright © 2023 Intel Corporation
+ # SPDX-License-Identifier: MIT
+ 
+-intel_float64_spv_h = []
+-if with_intel_shaders_stub
+-  # -Dintel-internal-shaders=stub: no mesa-clc/glslang outputs, only the
+-  # shared header.
+-  idep_intel_shaders = declare_dependency(
+-    include_directories : include_directories('.'),
+-  )
+-  subdir_done()
+-endif
+-
+-if with_intel_vk_shaders
++if with_intel_vk
+   intel_float64_spv_h = custom_target(
+     'float64_spv.h',
+     input : [glsl2spirv, float64_glsl_file],
+diff -ruN a/src/intel/vulkan/anv_astc_emu.c b/src/intel/vulkan/anv_astc_emu.c
+--- a/src/intel/vulkan/anv_astc_emu.c	2026-10-29 23:02:48
++++ b/src/intel/vulkan/anv_astc_emu.c	2026-10-29 23:02:49
+@@ -341,9 +341,6 @@
+                           VkImageView dst_view,
+                           VkRect2D rect)
+ {
+-#if !ANV_ASTC_EMU
+-   UNREACHABLE("built without ASTC emulation");
+-#else
+    struct anv_device *device = cmd_buffer->device;
+    struct anv_device_astc_emu *astc_emu = &device->astc_emu;
+    VkCommandBuffer cmd_buffer_ = anv_cmd_buffer_to_handle(cmd_buffer);
+@@ -415,7 +412,6 @@
+                                            1);
+ 
+    anv_push_descriptor_set_finish(&push_set);
+-#endif
+ }
+ 
+ void
+@@ -496,7 +492,6 @@
+    if (device->physical->flush_astc_ldr_void_extent_denorms)
+       simple_mtx_init(&astc_emu->mutex, mtx_plain);
+ 
+-#if ANV_ASTC_EMU
+    if (device->physical->emu_astc_ldr) {
+       result = vk_texcompress_astc_init(
+          &device->vk, &device->vk.alloc, VK_NULL_HANDLE,
+@@ -509,7 +504,6 @@
+                                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)),
+          });
+    }
+-#endif
+ 
+    return result;
+ }
+@@ -529,10 +523,8 @@
+       simple_mtx_destroy(&astc_emu->mutex);
+    }
+ 
+-#if ANV_ASTC_EMU
+    if (astc_emu->texcompress) {
+       vk_texcompress_astc_finish(&device->vk, &device->vk.alloc,
+                                  astc_emu->texcompress);
+    }
+-#endif
+ }
+diff -ruN a/src/intel/vulkan/anv_cmd_buffer.c b/src/intel/vulkan/anv_cmd_buffer.c
+--- a/src/intel/vulkan/anv_cmd_buffer.c	2026-10-29 23:02:48
++++ b/src/intel/vulkan/anv_cmd_buffer.c	2026-10-29 23:02:49
+@@ -1459,13 +1459,11 @@
+    anv_cmd_buffer_update_addr(cmd_buffer, anv_address_from_u64(dstAddr), size, data);
+ }
+ 
+-#if ANV_SUPPORT_RT
+ void
+ anv_cmd_flush_buffer_write_cp(VkCommandBuffer commandBuffer)
+ {
+    vk_bvh_build_barrier_transfer_to_compute(commandBuffer);
+ }
+-#endif
+ 
+ void
+ anv_cmd_dispatch_unaligned(VkCommandBuffer commandBuffer,
+diff -ruN a/src/intel/vulkan/anv_formats.c b/src/intel/vulkan/anv_formats.c
+--- a/src/intel/vulkan/anv_formats.c	2026-10-29 23:02:48
++++ b/src/intel/vulkan/anv_formats.c	2026-10-29 23:02:49
+@@ -1248,12 +1248,10 @@
+             flags |= VK_FORMAT_FEATURE_2_STORAGE_WRITE_WITHOUT_FORMAT_BIT;
+       }
+ 
+-#if ANV_SUPPORT_RT
+       if (devinfo->has_ray_tracing) {
+          if (vk_acceleration_struct_vtx_format_supported(vk_format))
+             flags |= VK_FORMAT_FEATURE_ACCELERATION_STRUCTURE_VERTEX_BUFFER_BIT_KHR;
+       }
+-#endif
+    }
+ 
+    if (vbo_format != ISL_FORMAT_UNSUPPORTED) {
+diff -ruN a/src/intel/vulkan/anv_internal_kernels.c b/src/intel/vulkan/anv_internal_kernels.c
+--- a/src/intel/vulkan/anv_internal_kernels.c	2026-10-29 23:02:48
++++ b/src/intel/vulkan/anv_internal_kernels.c	2026-10-29 23:02:49
+@@ -37,20 +37,6 @@
+ #include "anv_internal_kernels.h"
+ #include "anv_nir.h"
+ 
+-#if ANV_INTERNAL_SHADERS_STUB
+-/* Built with -Dintel-internal-shaders=stub: the NIR builders generated from
+- * src/intel/shaders are missing. Anything that would call them aborts.
+- */
+-#undef anv_genX
+-#define anv_genX(devinfo, thing) anv_internal_shaders_missing(#thing)
+-
+-static nir_def *(*
+-anv_internal_shaders_missing(const char *name))(nir_builder *b, ...)
+-{
+-   mesa_loge("ANV was built without internal shaders (%s)", name);
+-   abort();
+-}
+-#else
+ #include "intel_gfx90_shaders_binding.h"
+ #include "intel_gfx110_shaders_binding.h"
+ #include "intel_gfx120_shaders_binding.h"
+@@ -58,7 +44,6 @@
+ #include "intel_gfx200_shaders_binding.h"
+ #include "intel_gfx300_shaders_binding.h"
+ #include "intel_gfx350_shaders_binding.h"
+-#endif
+ 
+ nir_def *
+ anv_resinfo(nir_builder *b,
+diff -ruN a/src/intel/vulkan/anv_physical_device.c b/src/intel/vulkan/anv_physical_device.c
+--- a/src/intel/vulkan/anv_physical_device.c	2026-10-29 23:02:48
++++ b/src/intel/vulkan/anv_physical_device.c	2026-10-29 23:02:49
+@@ -3158,8 +3158,7 @@
+    device->has_astc_ldr =
+       isl_format_supports_sampling(&device->info,
+                                    ISL_FORMAT_ASTC_LDR_2D_4X4_FLT16);
+-   if (ANV_ASTC_EMU && !device->has_astc_ldr &&
+-       device->drirc.features.require_astc)
++   if (!device->has_astc_ldr && device->drirc.features.require_astc)
+       device->emu_astc_ldr = true;
+    if (devinfo.ver == 9 && !intel_device_info_is_9lp(&devinfo)) {
+       device->flush_astc_ldr_void_extent_denorms =
+diff -ruN a/src/intel/vulkan/anv_util.c b/src/intel/vulkan/anv_util.c
+--- a/src/intel/vulkan/anv_util.c	2026-10-29 23:02:48
++++ b/src/intel/vulkan/anv_util.c	2026-10-29 23:02:49
+@@ -38,9 +38,7 @@
+ 
+ #include "compiler/brw/brw_nir_rt.h"
+ #include "compiler/jay/jay.h"
+-#if !ANV_INTERNAL_SHADERS_STUB
+ #include "shaders/float64_spv.h"
+-#endif
+ 
+ #ifdef NO_REGEX
+ typedef int regex_t;
+@@ -788,10 +786,6 @@
+ 
+       /* The shader found, no need to call spirv_to_nir() again. */
+       if (!device->fp64_nir) {
+-#if ANV_INTERNAL_SHADERS_STUB
+-         mesa_loge("ANV was built without internal shaders (fp64 library)");
+-         abort();
+-#else
+          const struct spirv_capabilities spirv_caps = {
+             .Addresses = true,
+             .Float64 = true,
+@@ -825,7 +819,6 @@
+          anv_device_upload_nir(device, device->internal_cache, nir, blake3);
+ 
+          device->fp64_nir = nir;
+-#endif
+       }
+    }
+ 
+diff -ruN a/src/intel/vulkan/meson.build b/src/intel/vulkan/meson.build
+--- a/src/intel/vulkan/meson.build	2026-10-29 23:02:49
++++ b/src/intel/vulkan/meson.build	2026-10-29 23:02:49
+@@ -42,12 +42,6 @@
+   include_directories : inc_anv,
+ )
+ 
+-if not with_intel_vk_shaders
+-  anv_flags += '-DANV_INTERNAL_SHADERS_STUB=1'
+-endif
+-# vk_texcompress_astc.c is only built with glslang.
+-anv_flags += '-DANV_ASTC_EMU=@0@'.format(prog_glslang.found().to_int())
+-
+ bvh_spv = []
+ if with_intel_vk_rt
+   subdir('bvh')

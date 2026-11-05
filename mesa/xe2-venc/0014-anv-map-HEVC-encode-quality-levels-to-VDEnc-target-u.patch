@@ -1,0 +1,140 @@
+From 572154b530bf41ecae7f2641092976a8247bd85c Mon Sep 17 00:00:00 2001
+From: "Emil J. Tywoniak" <emil@tywoniak.eu>
+Date: Sat, 17 Oct 2026 02:28:00 +0200
+Subject: [PATCH 14/18] anv: map HEVC encode quality levels to VDEnc target
+ usage
+
+The target usage was fixed to 4. Expose three encode quality levels for
+HEVC and pick the target usage from the level the application sets
+with vkCmdControlVideoCodingKHR, fastest first like RADV does:
+
+  level 0: target usage 7 (speed)
+  level 1: target usage 4 (balanced, the previous fixed value)
+  level 2: target usage 1 (quality)
+
+On a B580 at 1152x4608, target usage 7 takes about half the video
+engine time of 4 per frame for about 0.3 dB of PSNR, which matters for
+low latency streaming.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_014zf3d6ZuUHNvTB81JRfHds
+---
+ src/intel/vulkan/anv_private.h        |  2 ++
+ src/intel/vulkan/anv_video.c          |  4 +++-
+ src/intel/vulkan/genX_cmd_video.c     | 10 ++++++++++
+ src/intel/vulkan/genX_cmd_video_enc.c | 25 ++++++++++++++++---------
+ 4 files changed, 31 insertions(+), 10 deletions(-)
+
+diff --git a/src/intel/vulkan/anv_private.h b/src/intel/vulkan/anv_private.h
+index e6cce651a98..05446e7c2a4 100644
+--- a/src/intel/vulkan/anv_private.h
++++ b/src/intel/vulkan/anv_private.h
+@@ -7035,6 +7035,7 @@ struct anv_vid_mem {
+ #define ANV_VIDEO_H264_MAX_NUM_REF_FRAME 16
+ #define ANV_VIDEO_H265_MAX_NUM_REF_FRAME 16
+ #define ANV_VIDEO_H265_HCP_NUM_REF_FRAME 8
++#define ANV_H265_ENCODE_QUALITY_LEVELS 3
+ #define ANV_MAX_H265_CTB_SIZE 64
+ #define ANV_MAX_VP9_CTB_SIZE 64
+ #define ANV_VP9_SCALE_FACTOR_SHIFT 14
+@@ -7242,6 +7243,7 @@ struct anv_video_session {
+ 
+    bool cdf_initialized;
+    VkVideoEncodeRateControlModeFlagBitsKHR rc_mode;
++   uint32_t quality_level;
+    struct anv_video_rc_state rc;
+ 
+    /* the decoder needs some private memory allocations */
+diff --git a/src/intel/vulkan/anv_video.c b/src/intel/vulkan/anv_video.c
+index fe465a67d18..a0e5ffd4642 100644
+--- a/src/intel/vulkan/anv_video.c
++++ b/src/intel/vulkan/anv_video.c
+@@ -450,7 +450,9 @@ anv_GetPhysicalDeviceVideoCapabilitiesKHR(VkPhysicalDevice physicalDevice,
+       }
+ 
+       enc_caps->maxRateControlLayers = 1;
+-      enc_caps->maxQualityLevels = 1;
++      enc_caps->maxQualityLevels =
++         pVideoProfile->videoCodecOperation == VK_VIDEO_CODEC_OPERATION_ENCODE_H265_BIT_KHR ?
++         ANV_H265_ENCODE_QUALITY_LEVELS : 1;
+       enc_caps->encodeInputPictureGranularity.width = 32;
+       enc_caps->encodeInputPictureGranularity.height = 32;
+       enc_caps->supportedEncodeFeedbackFlags =
+diff --git a/src/intel/vulkan/genX_cmd_video.c b/src/intel/vulkan/genX_cmd_video.c
+index ba871765039..58b563ea506 100644
+--- a/src/intel/vulkan/genX_cmd_video.c
++++ b/src/intel/vulkan/genX_cmd_video.c
+@@ -73,6 +73,16 @@ genX(CmdControlVideoCodingKHR)(VkCommandBuffer commandBuffer,
+ 
+       if (pCodingControlInfo->flags &  VK_VIDEO_CODING_CONTROL_ENCODE_RATE_CONTROL_BIT_KHR)
+          cmd_buffer->video.vid->rc.frame_counter = 0;
++
++      cmd_buffer->video.vid->quality_level = 0;
++   }
++
++   if (pCodingControlInfo->flags & VK_VIDEO_CODING_CONTROL_ENCODE_QUALITY_LEVEL_BIT_KHR) {
++      const VkVideoEncodeQualityLevelInfoKHR *quality_info =
++         vk_find_struct_const(pCodingControlInfo->pNext, VIDEO_ENCODE_QUALITY_LEVEL_INFO_KHR);
++
++      if (quality_info)
++         cmd_buffer->video.vid->quality_level = quality_info->qualityLevel;
+    }
+ 
+    if (pCodingControlInfo->flags &  VK_VIDEO_CODING_CONTROL_ENCODE_RATE_CONTROL_BIT_KHR) {
+diff --git a/src/intel/vulkan/genX_cmd_video_enc.c b/src/intel/vulkan/genX_cmd_video_enc.c
+index 91af084cc03..db43a8f6a37 100644
+--- a/src/intel/vulkan/genX_cmd_video_enc.c
++++ b/src/intel/vulkan/genX_cmd_video_enc.c
+@@ -2102,6 +2102,15 @@ anv_h265_frame_info(const VkVideoEncodeInfoKHR *enc_info)
+    return vk_find_struct_const(enc_info->pNext, VIDEO_ENCODE_H265_PICTURE_INFO_KHR);
+ }
+ 
++static uint32_t
++anv_h265_target_usage(const struct anv_cmd_buffer *cmd)
++{
++   static const uint8_t target_usage[ANV_H265_ENCODE_QUALITY_LEVELS] = { 7, 4, 1 };
++
++   return target_usage[MIN2(cmd->video.vid->quality_level,
++                            ANV_H265_ENCODE_QUALITY_LEVELS - 1)];
++}
++
+ static const StdVideoH265VideoParameterSet *
+ anv_h265_vps(struct anv_cmd_buffer *cmd, const VkVideoEncodeInfoKHR *enc_info)
+ {
+@@ -3048,17 +3057,16 @@ anv_h265_emit_vdenc_cmd2(struct anv_cmd_buffer *cmd,
+ #endif
+ 
+ #if GFX_VERx10 >= 125
+-      /* Target usage is fixed to 4. The last two lookup indices are
+-       * pps_curr_pic_ref_enabled_flag, which is not supported here, and
+-       * Wa_22011549751, which is in effect and also decides the intra
+-       * reference indices below.
++      /* Target usage comes from the quality level. The last two lookup
++       * indices are pps_curr_pic_ref_enabled_flag, which is not supported
++       * here, and Wa_22011549751, which is in effect and also decides the
++       * intra reference indices below.
+        *
+-       * TODO: Target usage from the quality level;
+-       * poc from the ref structure for hierarchical B;
++       * TODO: poc from the ref structure for hierarchical B;
+        * port the dw51/dw53 LUTs; derive data[19]/data[23] for inter.
+        */
+       uint32_t pic_type = anv_vdenc_h265_picture_type(frame_info->pStdPictureInfo->pic_type);
+-      uint32_t target_usage = 4;
++      uint32_t target_usage = anv_h265_target_usage(cmd);
+       uint32_t low_delay = is_low_delay;
+       uint32_t num_l0_is0 = pic_type == 0 ? 1 : (ref_lists->num_ref_idx_l0_active_minus1 == 0);
+ 
+@@ -3148,8 +3156,7 @@ anv_h265_emit_vdenc_cmd2(struct anv_cmd_buffer *cmd,
+       }
+ #else
+       uint32_t pic_type = anv_vdenc_h265_picture_type(frame_info->pStdPictureInfo->pic_type);
+-      /* TODO: target usage is fixed to 4 ("Normal mode"). */
+-      uint32_t target_usage = 4;
++      uint32_t target_usage = anv_h265_target_usage(cmd);
+ 
+       /* TODO Hierarchy-dependent rounding offsets. */
+       uint32_t round_intra = 10;
+-- 
+2.54.0 (Apple Git-157)
+

@@ -1,0 +1,227 @@
+anv: H.264 HuC BRC patches the slice states too (SLBB layout as media-driver, gen125+)
+
+media-driver puts the slice states behind the image-state group in the BRC second level batch (AvcHucBrcUpdatePkt::
+ConstructImageStateReadBuffer: image group + BBE, cache line aligned, then per slice MFX_AVC_SLICE_STATE +
+VDENC_AVC_SLICE_STATE + BBE; UPD_SLBB_Size = aligned image group, UPD_NumSlicesForRounding = slices) and runs each
+slice's group from the kernel's output (AvcVdencPkt::SendSlice), so the HuC applies its QP dependent rounding to the
+slices. ANV kept the slice states in the primary batch. The output slice groups are seeded with the driver's own
+first, so the PAK always runs complete states.
+1080p60 VBR 3/6/12 Mbit/s against x264 medium: Netflix Aerial BD-rate +10.5% -> +9.2% (PSNR-Y), +17.7% -> +16.3%
+(VMAF); DrivingPOV +30.6% -> +29.9%, +12.7% -> +12.3%.
+
+--- a/src/intel/vulkan/genX_cmd_video_enc.c
++++ b/src/intel/vulkan/genX_cmd_video_enc.c
+@@ -1660,9 +1660,12 @@
+ 
+ static void
+ anv_h264_emit_mfx_avc_slice_state(struct anv_cmd_buffer *cmd,
++                                  struct anv_batch *batch,
+                                   const VkVideoEncodeInfoKHR *enc_info,
+                                   uint32_t slice_id)
+ {
++   if (!batch)
++      batch = &cmd->batch;
+    const struct VkVideoEncodeH264PictureInfoKHR *frame_info = anv_h264_frame_info(enc_info);
+    const StdVideoH264SequenceParameterSet *sps = anv_h264_sps(cmd, enc_info);
+    const StdVideoH264PictureParameterSet *pps = anv_h264_pps(cmd, enc_info);
+@@ -1684,7 +1687,7 @@
+    unsigned w_in_mb = sps->pic_width_in_mbs_minus1 + 1;
+    unsigned h_in_mb = sps->pic_height_in_map_units_minus1 + 1;
+ 
+-   anv_batch_emit(&cmd->batch, GENX(MFX_AVC_SLICE_STATE), avc_slice) {
++   anv_batch_emit(batch, GENX(MFX_AVC_SLICE_STATE), avc_slice) {
+       avc_slice.SliceType = slice_type;
+ 
+       if (slice_type != STD_VIDEO_H264_SLICE_TYPE_I && weight_table) {
+@@ -1809,16 +1812,19 @@
+ #if GFX_VERx10 >= 125
+ static void
+ anv_h264_emit_vdenc_avc_slice_state(struct anv_cmd_buffer *cmd,
++                                    struct anv_batch *batch,
+                                     const VkVideoEncodeInfoKHR *enc_info,
+                                     uint32_t slice_id)
+ {
++   if (!batch)
++      batch = &cmd->batch;
+    const struct VkVideoEncodeH264PictureInfoKHR *frame_info = anv_h264_frame_info(enc_info);
+    const VkVideoEncodeH264NaluSliceInfoKHR *nalu = &frame_info->pNaluSliceEntries[slice_id];
+    const StdVideoEncodeH264SliceHeader *slice_header = nalu->pStdSliceHeader;
+    uint32_t slice_type = slice_header->slice_type % 5;
+    const StdVideoEncodeH264WeightTable*      weight_table =  slice_header->pWeightTable;
+ 
+-   anv_batch_emit(&cmd->batch, GENX(VDENC_AVC_SLICE_STATE), slice_state) {
++   anv_batch_emit(batch, GENX(VDENC_AVC_SLICE_STATE), slice_state) {
+       slice_state.RoundIntra = 5;
+       slice_state.RoundIntraEnable = true;
+       if (slice_type == STD_VIDEO_H264_SLICE_TYPE_I) {
+@@ -1882,6 +1888,22 @@
+     * up yet (fresh session or after a RESET), so run the init pass. */
+    if (vid->rc.frame_counter == 0)
+       anv_h264_brc_emit_huc_init(cmd, frame_info);
++#if GFX_VERx10 >= 125
++   /* Seed the output slice groups with the driver's own, so the PAK still runs complete slice states should the
++    * kernel leave them untouched (as the AV1 path seeds its SLBB). */
++   {
++      struct mi_builder b;
++      mi_builder_init(&b, cmd->device->info, &cmd->batch);
++      struct anv_address out = anv_address_add(ANV_VID_MEM_ADDR(vid, ANV_VID_MEM_BRC_EXEC_SLB),
++                                               ANV_H264_BRC_SLB_SLICES_OFFSET);
++      mi_builder_set_mocs(&b, anv_mocs_for_address(cmd->device, &out));
++      mi_memcpy(&b, out,
++                anv_address_add(anv_cmd_buffer_temporary_state_address(cmd, brc_input_slb),
++                                ANV_H264_BRC_SLB_SLICES_OFFSET),
++                frame_info->naluSliceEntryCount * ANV_H264_BRC_SLB_SLICE_SIZE);
++      anv_video_emit_mi_flush_dw(cmd, true);
++   }
++#endif
+    anv_h264_brc_emit_huc_update(cmd, frame_info, 0, brc_input_slb);
+ 
+    /* The encode PAK reads the HuC-patched image state from the SLBB. */
+@@ -1973,8 +1995,16 @@
+ 
+ #if GFX_VER >= 12
+    if (brc_enabled) {
++#if GFX_VERx10 >= 125
++      if (frame_info->naluSliceEntryCount > ANV_H264_BRC_SLB_MAX_SLICES)
++         return;
+       brc_input_slb = anv_cmd_buffer_alloc_temporary_state(cmd,
++         align(ANV_H264_BRC_SLB_SLICES_OFFSET +
++               frame_info->naluSliceEntryCount * ANV_H264_BRC_SLB_SLICE_SIZE, 4096), 4096);
++#else
++      brc_input_slb = anv_cmd_buffer_alloc_temporary_state(cmd,
+          align(ANV_H264_BRC_SLB_SIZE, 4096), 4096);
++#endif
+       if (brc_input_slb.map == NULL)
+          return;
+ 
+@@ -2002,12 +2032,29 @@
+    for (uint32_t slice_id = 0; slice_id < frame_info->naluSliceEntryCount; slice_id++) {
+       anv_h264_emit_mfx_avc_ref_idx_state(cmd, enc_info, slice_id, dpb_idx);
+       anv_h264_emit_mfx_avc_weightoffset_state(cmd, enc_info, slice_id);
+-      anv_h264_emit_mfx_avc_slice_state(cmd, enc_info, slice_id);
++#if GFX_VERx10 >= 125
++      if (brc_enabled) {
++         /* the slice's MFX_AVC_SLICE_STATE + VDENC_AVC_SLICE_STATE as the HuC patched them (media-driver
++          * AvcVdencPkt::SendSlice), then the header and the rest as without BRC */
++         anv_batch_emit(&cmd->batch, GENX(MI_BATCH_BUFFER_START), bbs) {
++            bbs.SecondLevelBatchBuffer = Secondlevelbatch;
++            bbs.AddressSpaceIndicator = ASI_PPGTT;
++            bbs.BatchBufferStartAddress =
++               anv_address_add(ANV_VID_MEM_ADDR(vid, ANV_VID_MEM_BRC_EXEC_SLB),
++                               ANV_H264_BRC_SLB_SLICES_OFFSET + slice_id * ANV_H264_BRC_SLB_SLICE_SIZE);
++         }
++         anv_h264_emit_slice_header(cmd, enc_info, slice_id);
++         anv_vdenc_emit_weightsoffsets_state(cmd, NULL, false);
++      } else
++#endif
++      {
++      anv_h264_emit_mfx_avc_slice_state(cmd, NULL, enc_info, slice_id);
+       anv_h264_emit_slice_header(cmd, enc_info, slice_id);
+       anv_vdenc_emit_weightsoffsets_state(cmd, NULL, false);
+ #if GFX_VERx10 >= 125
+-      anv_h264_emit_vdenc_avc_slice_state(cmd, enc_info, slice_id);
++      anv_h264_emit_vdenc_avc_slice_state(cmd, NULL, enc_info, slice_id);
+ #endif
++      }
+       anv_h264_emit_vdenc_walker_state(cmd, enc_info, slice_id);
+       anv_vdenc_emit_vd_pipeline_flush(cmd);
+    }
+--- a/src/intel/vulkan/genX_huc_brc.h
++++ b/src/intel/vulkan/genX_huc_brc.h
+@@ -286,6 +286,19 @@
+      GENX(VDENC_AVC_IMG_STATE_length) + GENX(MI_BATCH_BUFFER_END_length)) * 4)
+ #endif
+ 
++#if GFX_VERx10 >= 125
++/* media-driver (AvcHucBrcUpdatePkt::ConstructImageStateReadBuffer, AvcEncodeBRC::GetVdencOneSliceStateSize): the
++ * slice states follow the image-state group in the SLBB, from the next cache line, one MFX_AVC_SLICE_STATE +
++ * VDENC_AVC_SLICE_STATE + MI_BATCH_BUFFER_END per slice, so the HuC patches their QP dependent rounding too
++ * (UPD_NumSlicesForRounding), and the PAK runs each slice's group from the kernel's output.
++ */
++#define ANV_H264_BRC_SLB_SLICES_OFFSET  align(ANV_H264_BRC_SLB_SIZE, 64)
++#define ANV_H264_BRC_SLB_SLICE_SIZE \
++   ((GENX(MFX_AVC_SLICE_STATE_length) + GENX(VDENC_AVC_SLICE_STATE_length) + \
++     GENX(MI_BATCH_BUFFER_END_length)) * 4)
++#define ANV_H264_BRC_SLB_MAX_SLICES     256
++#endif
++
+ /* 4-4 (exp/mantissa) LUT compression, from media-driver */
+ static uint8_t
+ anv_h264_brc_map44_lut(uint32_t v, uint8_t max)
+@@ -603,7 +616,11 @@
+ 
+    dmem->UPD_WidthInMB_U16 = sps->pic_width_in_mbs_minus1 + 1;
+    dmem->UPD_HeightInMB_U16 = sps->pic_height_in_map_units_minus1 + 1;
++#if GFX_VERx10 >= 125
++   dmem->UPD_SLBB_Size_U16 = ANV_H264_BRC_SLB_SLICES_OFFSET;   /* media-driver: the image group, cache line aligned */
++#else
+    dmem->UPD_SLBB_Size_U16 = ANV_H264_BRC_SLB_SIZE;
++#endif
+    dmem->UPD_AvcImgStateOffset_U16 = 0;
+    dmem->UPD_PAKPassNum_U8 = pass;
+    /* One PAK pass: the encode never runs the kernel's re-encode pass, see INIT_SinglePassOnly */
+@@ -652,6 +669,18 @@
+ anv_h264_emit_vdenc_img_state(struct anv_cmd_buffer *cmd,
+                               struct anv_batch *batch,
+                               const VkVideoEncodeInfoKHR *enc_info);
++static void
++anv_h264_emit_mfx_avc_slice_state(struct anv_cmd_buffer *cmd,
++                                  struct anv_batch *batch,
++                                  const VkVideoEncodeInfoKHR *enc_info,
++                                  uint32_t slice_id);
++#if GFX_VERx10 >= 125
++static void
++anv_h264_emit_vdenc_avc_slice_state(struct anv_cmd_buffer *cmd,
++                                    struct anv_batch *batch,
++                                    const VkVideoEncodeInfoKHR *enc_info,
++                                    uint32_t slice_id);
++#endif
+ 
+ #if GFX_VERx10 >= 125
+ static void
+@@ -703,6 +732,20 @@
+    anv_batch_emit(&slb, GENX(MI_BATCH_BUFFER_END), bbe);
+ 
+    assert((uint32_t)(slb.next - slb.start) == ANV_H264_BRC_SLB_SIZE);
++
++#if GFX_VERx10 >= 125
++   /* the slice groups from the next cache line on (the zeroed gap is MI_NOOP) */
++   const struct VkVideoEncodeH264PictureInfoKHR *frame_info =
++      vk_find_struct_const(enc_info->pNext, VIDEO_ENCODE_H264_PICTURE_INFO_KHR);
++   for (uint32_t slice_id = 0; slice_id < frame_info->naluSliceEntryCount; slice_id++) {
++      const uint32_t off = ANV_H264_BRC_SLB_SLICES_OFFSET + slice_id * ANV_H264_BRC_SLB_SLICE_SIZE;
++      slb.next = (char *)slb.start + off;
++      anv_h264_emit_mfx_avc_slice_state(cmd, &slb, enc_info, slice_id);
++      anv_h264_emit_vdenc_avc_slice_state(cmd, &slb, enc_info, slice_id);
++      anv_batch_emit(&slb, GENX(MI_BATCH_BUFFER_END), bbe);
++      assert((uint32_t)((char *)slb.next - (char *)slb.start) == off + ANV_H264_BRC_SLB_SLICE_SIZE);
++   }
++#endif
+ }
+ 
+ #define ANV_HUC_AVC_BRC_REENCODE_MASK  (1u << 31)
+@@ -900,6 +943,10 @@
+ 
+    memset(dmem_state.map, 0, dmem_size);
+    anv_h264_brc_fill_update_dmem(cmd, sps, pic_type, pass, dmem_state.map);
++#if GFX_VERx10 >= 125
++   /* media-driver AvcEncodeBRC::GetAdaptiveRoundingNumSlices: the kernel patches each slice group's rounding */
++   ((struct anv_huc_avc_brc_update_dmem *)dmem_state.map)->UPD_NumSlicesForRounding = frame_info->naluSliceEntryCount;
++#endif
+ 
+    /* Overlay the previous frame's PAK MMIO outputs (frame byte count, image
+     * status, slice count) that were staged into the persistent PAK info
+--- a/src/intel/vulkan/anv_video.c
++++ b/src/intel/vulkan/anv_video.c
+@@ -873,8 +873,10 @@
+        *           VDENC_AVC_IMG_STATE(80) + BBE(4) = 260
+        * Choose the worse one.
+        */
++      /* plus the slice groups behind it on gen125+ (genX_huc_brc.h ANV_H264_BRC_SLB_SLICES_OFFSET): up to 256
++       * slices of MFX_AVC_SLICE_STATE + VDENC_AVC_SLICE_STATE + BBE, at most 128 bytes each */
+       if (vid->vk.op & VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR)
+-         return align64(260, 4096);
++         return align64(320 + 256 * 128, 4096);
+       /* AV1 keeps its HuC output SLBB in ANV_VID_MEM_AV1_ENCODE_BRC_SLB_OUT */
+       if (vid->vk.op & VK_VIDEO_CODEC_OPERATION_ENCODE_AV1_BIT_KHR)
+          return 4096;

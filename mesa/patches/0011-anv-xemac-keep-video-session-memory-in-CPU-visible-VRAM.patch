@@ -1,0 +1,59 @@
+From: Yusuf İhsan KILINÇ <78423442+yusufklncc@users.noreply.github.com>
+Date: Thu, 29 Oct 2026 13:40:00 +0300
+Subject: [PATCH 11] anv: xemac: keep video session memory in CPU-visible VRAM
+
+The xemac port offers only host-visible memory types for video session
+memory (the driver CPU-maps it and the kernel cannot migrate a VRAM BO
+into the BAR window on a CPU fault). On a dGPU the first host-visible
+type is system memory, and that is what applications (FFmpeg's
+ff_vk_alloc_mem, any "first matching type" allocator) pick, so the MFX/
+VDEnc/HCP row-store, MV and statistics buffers were in system RAM and
+every per-macroblock / per-CTU access crossed PCIe.
+
+Offer only the CPU-visible VRAM types when there are any; system memory
+stays the fallback (and the kernel still places a BO in system memory
+when the CPU-visible window is full).
+
+Arc B580, 1080p, 600 frames, CQP: H.264 encode 3.21 s -> 0.95 s
+(187 -> 630 fps), HEVC encode 0.90 s -> 0.52 s (660 -> 1150 fps);
+H.264 and AV1 decode output unchanged (framemd5 identical).
+
+Applies on top of 0010 (src/mesa-venc) and on src/mesa-video.
+---
+ src/intel/vulkan/anv_video.c | 20 +++++++++++++++-----
+ 1 file changed, 15 insertions(+), 5 deletions(-)
+
+diff --git a/src/intel/vulkan/anv_video.c b/src/intel/vulkan/anv_video.c
+index a41f7c62517..01cf1239b58 100644
+--- a/src/intel/vulkan/anv_video.c
++++ b/src/intel/vulkan/anv_video.c
+@@ -1304,14 +1304,24 @@ anv_GetVideoSessionMemoryRequirementsKHR(VkDevice _device,
+ #ifdef HAVE_XEMAC
+    /* The driver CPU-maps session memory (anv_video_zero_mem, anv_init_av1_cdf_tables). xe's TTM moves a VRAM BO
+     * into the CPU-visible window on a CPU fault; xemac's kernel cannot, so a BO placed past the BAR window failed
+-    * GEM_MMAP_OFFSET and AV1 setup returned VK_ERROR_MEMORY_MAP_FAILED. Offer only host-visible types (CPU-visible
+-    * VRAM first among them on a dGPU). */
+-   uint32_t host_visible = 0;
++    * GEM_MMAP_OFFSET and AV1 setup returned VK_ERROR_MEMORY_MAP_FAILED. Offer only host-visible types, and on a
++    * dGPU only the CPU-visible VRAM ones: the engines touch the row-store and statistics buffers in here per
++    * macroblock / CTU, and with system memory being the first host-visible type an app picks it, so every access
++    * crossed PCIe (B580, 1080p: H.264 encode 3.4x slower, HEVC encode 1.75x). A full CPU-visible window still
++    * falls back to system memory in the kernel.
++    */
++   const VkMemoryPropertyFlags vis_vram = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
++   uint32_t host_visible = 0, visible_vram = 0;
+    for (uint32_t i = 0; i < device->physical->memory.type_count; i++) {
+-      if (device->physical->memory.types[i].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)
++      const VkMemoryPropertyFlags f = device->physical->memory.types[i].propertyFlags;
++      if (f & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)
+          host_visible |= 1u << i;
++      if ((f & vis_vram) == vis_vram)
++         visible_vram |= 1u << i;
+    }
+-   if (memory_types & host_visible)
++   if (memory_types & visible_vram)
++      memory_types &= visible_vram;
++   else if (memory_types & host_visible)
+       memory_types &= host_visible;
+ #endif
+ 

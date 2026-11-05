@@ -1,0 +1,40 @@
+From 80809902254f58ab391455fff2c2aa12b190d18c Mon Sep 17 00:00:00 2001
+From: "Emil J. Tywoniak" <emil@tywoniak.eu>
+Date: Sat, 17 Oct 2026 02:35:11 +0200
+Subject: [PATCH 16/18] anv: bound HEVC encode bitstream writes to the
+ destination range
+
+HCP_IND_OBJ_BASE_ADDR_STATE never programmed the PAK-BSE access upper
+bound, so a frame larger than dstBufferRange was written past the end
+of the range the application handed in. Program the bound to the end
+of the range, rounded down to a page.
+
+Checked by forcing a 64 KiB bound with frames of over 1 MiB: the PAK
+stops at the bound and the engine keeps going, without a hang.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_014zf3d6ZuUHNvTB81JRfHds
+---
+ src/intel/vulkan/genX_cmd_video_enc.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/src/intel/vulkan/genX_cmd_video_enc.c b/src/intel/vulkan/genX_cmd_video_enc.c
+index 15625fb52eb..8095c0481ec 100644
+--- a/src/intel/vulkan/genX_cmd_video_enc.c
++++ b/src/intel/vulkan/genX_cmd_video_enc.c
+@@ -2455,6 +2455,12 @@ anv_h265_emit_hcp_ind_obj_base_addr_state(struct anv_cmd_buffer *cmd,
+             anv_address_add(dst_buffer->address, align(enc_info->dstBufferOffset, 4096));
+       indirect.HCPPAKBSEObjectAddressAttributes =
+          ANV_VID_ATTR(cmd->device, indirect.HCPPAKBSEObjectBaseAddress.bo);
++      /* TODO: report VK_QUERY_RESULT_STATUS_INSUFFICIENT_BITSTREAM_BUFFER_RANGE_KHR */
++      struct anv_address bse_end =
++         anv_address_add(dst_buffer->address,
++                         enc_info->dstBufferOffset + enc_info->dstBufferRange);
++      bse_end.offset = ROUND_DOWN_TO(bse_end.offset, 4096);
++      indirect.HCPPAKBSEObjectAccessUpperBound = bse_end;
+ 
+       indirect.HCPVP9PAKCompressedHeaderSyntaxStreamInAddressAttributes =
+          ANV_VID_ATTR(cmd->device, NULL);
+-- 
+2.54.0 (Apple Git-157)
+

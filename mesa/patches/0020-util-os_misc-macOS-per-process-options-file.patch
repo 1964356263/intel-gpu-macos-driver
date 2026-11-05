@@ -1,0 +1,105 @@
+util/os_misc: macOS per-process options file as a fallback to getenv() (like Android's properties)
+
+Processes started by a launcher (Minecraft from TLauncher: java) or system daemons get no environment we can set, so
+INTEL_MEASURE, INTEL_DEBUG, ANV_DEBUG, MESA_VK_WSI_* could not be used on them. os_get_option() now falls back, on
+macOS and for non-secure lookups only, to /tmp/mesa-options-<getprogname()>: NAME=VALUE lines, '#' comments, read once
+at the first lookup, and only when the file is a regular file owned by the process's effective user and not writable by
+group or others (nobody can set options for another user's processes or the window server's). Example:
+  printf 'INTEL_MEASURE=rt,file=/tmp/mc.csv,start=3000,count=300\nMESA_VK_WSI_FPS_LOG=/tmp/mc-fps.log\n' > /tmp/mesa-options-java
+
+diff --git a/src/util/os_misc.c b/src/util/os_misc.c
+index ea738396032..d0757468069 100644
+--- a/src/util/os_misc.c
++++ b/src/util/os_misc.c
+@@ -216,6 +216,79 @@ os_get_android_option(const char *name)
+ }
+ #endif
+ 
++#if DETECT_OS_APPLE
++#  include <stdlib.h>
++#  include <sys/stat.h>
++#  include <fcntl.h>
++#  include <unistd.h>
++
++/**
++ * macOS: options for processes whose environment cannot be set (a game
++ * started by a launcher, a system daemon), as a fallback to getenv(), the
++ * way Android falls back to its property system.
++ *
++ * The file /tmp/mesa-options-<program name> (getprogname(), e.g. "java")
++ * holds NAME=VALUE lines ('#' starts a comment).  It is read once, when the
++ * first option is looked up, and only if it is a regular file owned by the
++ * process's effective user and not writable by group or others, so nobody
++ * can set options for another user's processes (or the window server's).
++ */
++#define MESA_APPLE_OPTIONS_MAX 64
++static struct { char *name, *value; } apple_options[MESA_APPLE_OPTIONS_MAX];
++static unsigned apple_option_count;
++
++static void
++os_load_apple_options(void)
++{
++   char path[256];
++   snprintf(path, sizeof(path), "/tmp/mesa-options-%s", getprogname());
++
++   int fd = open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
++   if (fd < 0)
++      return;
++   struct stat st;
++   FILE *f = NULL;
++   if (fstat(fd, &st) == 0 && S_ISREG(st.st_mode) && st.st_uid == geteuid() &&
++       !(st.st_mode & (S_IWGRP | S_IWOTH)))
++      f = fdopen(fd, "r");
++   if (!f) {
++      close(fd);
++      return;
++   }
++
++   char line[1024];
++   while (apple_option_count < MESA_APPLE_OPTIONS_MAX &&
++          fgets(line, sizeof(line), f)) {
++      char *p = line;
++      while (*p == ' ' || *p == '\t')
++         p++;
++      if (*p == '#' || *p == '\0')
++         continue;
++      p[strcspn(p, "\r\n")] = '\0';
++      char *eq = strchr(p, '=');
++      if (!eq || eq == p)
++         continue;
++      *eq = '\0';
++      apple_options[apple_option_count].name = strdup(p);
++      apple_options[apple_option_count].value = strdup(eq + 1);
++      apple_option_count++;
++   }
++   fclose(f);
++}
++
++static const char *
++os_get_apple_option(const char *name)
++{
++   static util_once_flag once = UTIL_ONCE_FLAG_INIT;
++   util_call_once(&once, os_load_apple_options);
++   for (unsigned i = 0; i < apple_option_count; i++) {
++      if (!strcmp(apple_options[i].name, name))
++         return apple_options[i].value;
++   }
++   return NULL;
++}
++#endif
++
+ #if DETECT_OS_WINDOWS
+ 
+ /* getenv doesn't necessarily reflect changes to the environment
+@@ -249,6 +322,11 @@ os_get_option_internal(const char *name, bool use_secure_getenv)
+    if (!opt) {
+       opt = os_get_android_option(name);
+    }
++#endif
++#if DETECT_OS_APPLE
++   if (!opt && !use_secure_getenv) {
++      opt = os_get_apple_option(name);
++   }
+ #endif
+    return opt;
+ }

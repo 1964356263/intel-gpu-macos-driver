@@ -1,0 +1,32 @@
+anv/xemac: VK_MEMORY_UNMAP_RESERVE_BIT_EXT leaves the range reserved without a hole in between
+
+anv_device_unmap_bo(replace = true) took the BO mapping down (xemac_munmap) and then mmap(MAP_FIXED, PROT_NONE) over
+the range it had left unmapped. On macOS 15 an mmap(MAP_FIXED) over an unmapped gap kills the process: EXC_GUARD,
+GUARD_TYPE_VIRT_MEMORY, DEALLOC_GAP at the placed address (vkplaced, in anv_UnmapMemory2). With replace, xemac now does
+both in one step (xemac_munmap_reserve: the placed view is overwritten in place with a PROT_NONE reservation, so the
+range is never a hole). Needs the xemac of xemac-placed-map-mach_vm_remap.patch (second version).
+
+diff --git a/src/intel/vulkan/anv_allocator.c b/src/intel/vulkan/anv_allocator.c
+index 6c811f94761..e503e462d18 100644
+--- a/src/intel/vulkan/anv_allocator.c
++++ b/src/intel/vulkan/anv_allocator.c
+@@ -1929,7 +1929,18 @@ anv_device_unmap_bo(struct anv_device *device,
+    VG(VALGRIND_FREELIKE_BLOCK(map, 0));
+ 
+ #ifdef HAVE_XEMAC
+-   /* BO mappings are the kernel extension's; it takes them down. */
++   /* BO mappings are the kernel extension's; it takes them down. With
++    * replace, it leaves the range reserved itself: unmapping first and then
++    * mmap(MAP_FIXED) over the hole is killed with EXC_GUARD (DEALLOC_GAP) on
++    * macOS 15.
++    */
++   if (replace) {
++      if (xemac_munmap_reserve(map, map_size) != 0) {
++         return vk_errorf(device, VK_ERROR_MEMORY_MAP_FAILED,
++                          "Failed to map over original mapping");
++      }
++      return VK_SUCCESS;
++   }
+    xemac_munmap(map, map_size);
+ #endif
+    if (replace) {

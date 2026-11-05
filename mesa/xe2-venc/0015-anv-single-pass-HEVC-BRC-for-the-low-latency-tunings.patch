@@ -1,0 +1,75 @@
+From b205fd1ede839a0d2e660f2f943e19fdc1717ad4 Mon Sep 17 00:00:00 2001
+From: "Emil J. Tywoniak" <emil@tywoniak.eu>
+Date: Sat, 17 Oct 2026 02:32:38 +0200
+Subject: [PATCH 15/18] anv: single pass HEVC BRC for the low latency tunings
+
+With the HuC BRC every frame gets a second, conditional PAK pass that
+re-encodes the frame when the BRC update asks for it. With a tight
+virtual buffer that re-encode triggers often and costs a whole PAK
+pass plus its latency, which is what the low latency tunings are
+asking to avoid. Run a single pass for LOW_LATENCY and
+ULTRA_LOW_LATENCY.
+
+B580, 1152x4608, CBR 110 Mbit/s, one frame of virtual buffer:
+
+               video engine/frame   bitrate
+  two passes   4.2 - 5.2 ms         87 - 99 Mbit/s
+  single pass  3.5 - 3.7 ms         98 - 99.5 Mbit/s
+
+The iHD media driver lands at 3.7 ms and 99 Mbit/s for the same input.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_014zf3d6ZuUHNvTB81JRfHds
+---
+ src/intel/vulkan/genX_cmd_video_enc.c |  2 +-
+ src/intel/vulkan/genX_huc_brc.h       | 14 +++++++++++++-
+ 2 files changed, 14 insertions(+), 2 deletions(-)
+
+diff --git a/src/intel/vulkan/genX_cmd_video_enc.c b/src/intel/vulkan/genX_cmd_video_enc.c
+index db43a8f6a37..15625fb52eb 100644
+--- a/src/intel/vulkan/genX_cmd_video_enc.c
++++ b/src/intel/vulkan/genX_cmd_video_enc.c
+@@ -3850,7 +3850,7 @@ anv_h265_encode_video(struct anv_cmd_buffer *cmd, const VkVideoEncodeInfoKHR *en
+       /* TODO: weighted prediction is not included into the BRC SLB yet */
+       assert(!pps->flags.weighted_pred_flag && !pps->flags.weighted_bipred_flag);
+ 
+-      num_passes = 2;
++      num_passes = anv_h265_brc_num_passes(vid);
+       brc_frame_qp =
+          anv_video_encode_quantizer(vid,
+                                     frame_info->pNaluSliceSegmentEntries[0].constantQp,
+diff --git a/src/intel/vulkan/genX_huc_brc.h b/src/intel/vulkan/genX_huc_brc.h
+index 272fb9cdec5..3290b40d215 100644
+--- a/src/intel/vulkan/genX_huc_brc.h
++++ b/src/intel/vulkan/genX_huc_brc.h
+@@ -1425,6 +1425,18 @@ anv_h265_brc_fill_init_dmem(struct anv_cmd_buffer *cmd,
+    dmem->LongTermRefMsdk_U8 = 1;
+ }
+ 
++static uint32_t
++anv_h265_brc_num_passes(const struct anv_video_session *vid)
++{
++   switch (vid->vk.enc_usage.tuning_mode) {
++   case VK_VIDEO_ENCODE_TUNING_MODE_LOW_LATENCY_KHR:
++   case VK_VIDEO_ENCODE_TUNING_MODE_ULTRA_LOW_LATENCY_KHR:
++      return 1;
++   default:
++      return 2;
++   }
++}
++
+ static void
+ anv_h265_brc_fill_update_dmem(struct anv_cmd_buffer *cmd,
+                               const VkVideoEncodeH265PictureInfoKHR *frame_info,
+@@ -1470,7 +1482,7 @@ anv_h265_brc_fill_update_dmem(struct anv_cmd_buffer *cmd,
+    }
+    dmem->Num_Slices = layout->num_slices;
+    dmem->CQP_QPValue_U8 = frame_qp;
+-   dmem->MaxNumPass_U8 = 2;
++   dmem->MaxNumPass_U8 = anv_h265_brc_num_passes(vid);
+    dmem->SceneChgPrevIntraPctThreshold_U8 = 96;
+    dmem->SceneChgCurIntraPctThreshold_U8 = 192;
+    dmem->IPAverageCoeff_U8 = 64;
+-- 
+2.54.0 (Apple Git-157)
+

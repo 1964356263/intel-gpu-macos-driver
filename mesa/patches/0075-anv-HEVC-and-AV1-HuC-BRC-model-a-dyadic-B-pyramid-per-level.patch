@@ -1,0 +1,289 @@
+anv: HEVC and AV1 HuC BRC model a dyadic B pyramid per level, as media-driver
+
+media-driver's VDEnc BRC models a B pyramid (HierarchicalFlag) per level: BRC init splits the GOP into P, B, B1, B2
+frames and turns BRCPyramidEnable on (HEVC: media_softlet/agnostic/common/codec/hal/enc/hevc/packet/
+encode_huc_brc_init_packet.cpp, GopRefDist != 3; AV1: features/encode_av1_brc.cpp SetDmemForInit), and each picture is
+typed by its level (HierarchLevelPlus1 1/2/3/4 -> P_OR_LB/B/B1/B2: encode_huc_brc_update_packet.cpp, encode_av1_brc.cpp
+SetDmemForUpdate, UPD_MaxBRCLevel 3/2/1 for GopRefDist 8/4/2). anv modelled every B frame alike (HEVC: GopB1/GopB2 0,
+BRCPyramidEnable 0; AV1: only one B frame between the anchors).
+Vulkan has no per-picture level; the app signals the dyadic pattern (VK_VIDEO_ENCODE_{H265,AV1}_RATE_CONTROL_REFERENCE_
+PATTERN_DYADIC_BIT_KHR) and anv derives HierarchLevelPlus1 from the order distance between a picture's nearest past and
+future references (GopRefDist at level 2, halved per level below), which is what a dyadic split gives (FFmpeg's
+hw_base_encode_set_b_pictures). Flat GOPs are unchanged (byte-identical output).
+B580, 1080p60 VBR 3/6/12 Mbit/s, HEVC with 7 B frames in 3 levels (Intel's default GopRefDist 8 pyramid at TU4):
+BD-rate against the same pyramid without the per-level model -7.0% PSNR-Y / -5.1% VMAF on Netflix Aerial; against Intel
+QSV defaults (hevc_qsv, GopRefDist 8 pyramid) +0.3% / -0.4%. AV1: the same model, active only with a dyadic pattern,
+which FFmpeg's Vulkan AV1 encoder cannot produce yet (one hidden frame per temporal unit, vulkan_encode.c prev_buf_ref).
+
+diff --git a/src/intel/vulkan/genX_cmd_video_enc.c b/src/intel/vulkan/genX_cmd_video_enc.c
+index aa9701aa533..44470008da5 100644
+--- a/src/intel/vulkan/genX_cmd_video_enc.c
++++ b/src/intel/vulkan/genX_cmd_video_enc.c
+@@ -3937,6 +3937,55 @@ anv_h265_is_low_delay(const VkVideoEncodeInfoKHR *enc_info,
+    return true;
+ }
+ 
++/* media-driver's HierarchLevelPlus1 of the picture in a dyadic B pyramid (1 = P / low-delay B, 2 = the B between
++ * the anchors, 3 and 4 the levels below), which VA-API gets from the app and Vulkan does not carry: the level of a B
++ * picture follows from the distance between its nearest past and future references, gop_ref_dist at level 2 and
++ * halved at each level below. 0 when it cannot be told (no references). */
++static uint32_t
++anv_h265_hier_level_plus1(const VkVideoEncodeInfoKHR *enc_info,
++                          StdVideoEncodeH265ReferenceListsInfo *ref_lists,
++                          uint32_t gop_ref_dist)
++{
++   const struct VkVideoEncodeH265PictureInfoKHR *frame_info = anv_h265_frame_info(enc_info);
++   const int32_t poc = frame_info->pStdPictureInfo->PicOrderCntVal;
++   int32_t past = INT32_MIN, future = INT32_MAX;
++
++   if (!ref_lists)
++      return 0;
++
++   for (unsigned list = 0; list < 2; list++) {
++      const uint8_t *ref_pic_list = list == 0 ? ref_lists->RefPicList0 : ref_lists->RefPicList1;
++      unsigned ref_cnt = (list == 0 ? ref_lists->num_ref_idx_l0_active_minus1 :
++                                      ref_lists->num_ref_idx_l1_active_minus1) + 1;
++
++      for (unsigned i = 0; i < ref_cnt; i++) {
++         if (ref_pic_list[i] == STD_VIDEO_H265_NO_REFERENCE_PICTURE)
++            continue;
++         const VkVideoReferenceSlotInfoKHR *slot = anv_h265_find_ref_slot(enc_info, ref_pic_list[i]);
++         const VkVideoEncodeH265DpbSlotInfoKHR *dpb =
++            slot ? vk_find_struct_const(slot->pNext, VIDEO_ENCODE_H265_DPB_SLOT_INFO_KHR) : NULL;
++         if (!dpb)
++            continue;
++         const int32_t rpoc = dpb->pStdReferenceInfo->PicOrderCntVal;
++         if (rpoc < poc && rpoc > past)
++            past = rpoc;
++         if (rpoc > poc && rpoc < future)
++            future = rpoc;
++      }
++   }
++
++   if (past == INT32_MIN)
++      return 0;
++   if (future == INT32_MAX)
++      return 1;   /* only past references: P or low-delay B */
++
++   const uint32_t span = (uint32_t)(future - past);
++   uint32_t level = 2;
++   for (uint32_t d = gop_ref_dist; d > span && d > 1 && level < 4; d /= 2)
++      level++;
++   return level;
++}
++
+ static void
+ anv_h265_brc_store_pak_stats(struct anv_cmd_buffer *cmd)
+ {
+@@ -4044,7 +4093,9 @@ anv_h265_encode_video(struct anv_cmd_buffer *cmd, const VkVideoEncodeInfoKHR *en
+          anv_h265_brc_fill_update_dmem(cmd, frame_info, sps, ref_lists, &slb_layout,
+                                        brc_frame_qp, pass,
+                                        anv_vdenc_h265_picture_type(frame_info->pStdPictureInfo->pic_type),
+-                                       is_low_delay, brc_update_dmem[pass].map);
++                                       is_low_delay,
++                                       anv_h265_hier_level_plus1(enc_info, ref_lists, vid->rc.consecutive_b_frames + 1),
++                                       brc_update_dmem[pass].map);
+       }
+    }
+ 
+@@ -4319,6 +4370,8 @@ anv_av1_encode_video(struct anv_cmd_buffer *cmd, const VkVideoEncodeInfoKHR *enc
+    }
+ 
+    bool low_delay = true;
++   /* order-hint distance to the nearest past and future reference: the picture's level in a dyadic pyramid */
++   int32_t near_past = INT32_MAX, near_future = INT32_MAX;
+    uint32_t num_ref_l0 = 0, num_ref_l1 = 0;
+    /* the L0/L1 reference pictures the VDEnc reads (Xe2 programs them and their 4x/8x downscaled copies) */
+    const struct anv_image_view *l0_iv[3] = { NULL, NULL, NULL }, *l1_iv = NULL;
+@@ -4354,6 +4407,10 @@ anv_av1_encode_video(struct anv_cmd_buffer *cmd, const VkVideoEncodeInfoKHR *enc
+                         (int32_t)pic_info->order_hint;
+          if (m)
+             diff = (diff & (m - 1)) - (diff & m);
++         if (diff > 0 && diff < near_future)
++            near_future = diff;
++         if (diff < 0 && -diff < near_past)
++            near_past = -diff;
+ 
+          if (diff > 0) {
+             low_delay = false;
+@@ -6099,7 +6156,19 @@ anv_av1_encode_video(struct anv_cmd_buffer *cmd, const VkVideoEncodeInfoKHR *enc
+                mi_mem32(ANV_VID_MEM_ADDR(vid, ANV_VID_MEM_AV1_ENCODE_TILE_BITSTREAM_ACCUM)));
+ 
+       const bool disable_cdf_update = primary_ref_iv && !pic_info->flags.disable_frame_end_update_cdf;
+-      anv_av1_brc_fill_update_dmem(vid, pic_info, is_intra, low_delay, disable_cdf_update,
++      /* media-driver's HierarchLevelPlus1, which Vulkan does not carry: 1 for a picture with only past references,
++       * 2 for the B whose references span the whole mini-GOP, one more for each halving of that span */
++      uint32_t hier_level_plus1 = 0;
++      if (!is_intra && near_past != INT32_MAX) {
++         hier_level_plus1 = 1;
++         if (near_future != INT32_MAX) {
++            const uint32_t span = (uint32_t)(near_past + near_future);
++            hier_level_plus1 = 2;
++            for (uint32_t d = vid->rc.consecutive_b_frames + 1; d > span && d > 1 && hier_level_plus1 < 4; d /= 2)
++               hier_level_plus1++;
++         }
++      }
++      anv_av1_brc_fill_update_dmem(vid, pic_info, is_intra, low_delay, hier_level_plus1, disable_cdf_update,
+                                    src_img->vk.extent.width, src_img->vk.extent.height,
+                                    &brc, brc.update_dmem.map);
+       if (brc.two_pass) {
+diff --git a/src/intel/vulkan/genX_huc_brc.h b/src/intel/vulkan/genX_huc_brc.h
+index fe143c11fbc..fcf4f4c489c 100644
+--- a/src/intel/vulkan/genX_huc_brc.h
++++ b/src/intel/vulkan/genX_huc_brc.h
+@@ -519,6 +519,7 @@ anv_h264_brc_fill_init_dmem(struct anv_cmd_buffer *cmd,
+    uint32_t gop_b = gop_ref_dist > 1 ? (gop_ref_dist - 1) * gop_p : 0;
+    dmem->INIT_GopP_U16 = gop_p;
+    dmem->INIT_GopB_U16 = gop_b;
++
+    dmem->INIT_MinQP_U16 = 10;
+    dmem->INIT_MaxQP_U16 = 51;
+ 
+@@ -1413,6 +1414,23 @@ anv_h265_brc_compute_slb_layout(const VkVideoEncodeH265PictureInfoKHR *frame_inf
+    layout->data_size = offset;
+ }
+ 
++/* media-driver HEVC_BRC_FRAME_TYPE (codec_def_encode_hevc.h) */
++#define ANV_HEVC_BRC_FRAME_TYPE_P_OR_LB 0
++#define ANV_HEVC_BRC_FRAME_TYPE_B       1
++#define ANV_HEVC_BRC_FRAME_TYPE_I       2
++#define ANV_HEVC_BRC_FRAME_TYPE_B1      3
++#define ANV_HEVC_BRC_FRAME_TYPE_B2      4
++
++/* A B pyramid the HuC BRC models per level: the app signals a dyadic reference pattern (Vulkan's counterpart of
++ * media-driver's HierarchicalFlag) with B frames, and not GopRefDist 3, which media-driver keeps flat. */
++static bool
++anv_h265_brc_pyramid(const struct anv_video_rc_state *rc)
++{
++   const uint32_t gop_ref_dist = rc->consecutive_b_frames + 1;
++   return (rc->rc_flags & VK_VIDEO_ENCODE_H265_RATE_CONTROL_REFERENCE_PATTERN_DYADIC_BIT_KHR) &&
++          gop_ref_dist > 1 && gop_ref_dist != 3;
++}
++
+ static void
+ anv_h265_brc_fill_init_dmem(struct anv_cmd_buffer *cmd,
+                             const StdVideoH265SequenceParameterSet *sps,
+@@ -1448,12 +1466,24 @@ anv_h265_brc_fill_init_dmem(struct anv_cmd_buffer *cmd,
+ 
+    uint32_t intra_period = MIN2(gop, 4001) - 1;
+    intra_period = DIV_ROUND_UP(intra_period, gop_ref_dist) * gop_ref_dist;
+-   dmem->GopP_U16 = intra_period / gop_ref_dist;
+-   dmem->GopB_U16 = intra_period - dmem->GopP_U16;
+-   dmem->GopB1_U16 = 0;
+-   dmem->GopB2_U16 = 0;
+-   dmem->MaxBRCLevel_U8 = dmem->GopB_U16 == 0 ? 0 : 1;
+-   dmem->BRCPyramidEnable_U8 = 0;
++   if (anv_h265_brc_pyramid(rc)) {
++      /* media-driver encode_huc_brc_init_packet.cpp (HierarchicalFlag && GopRefDist != 3): the B frames of each
++       * mini-GOP split into the levels B, B1, B2 (HEVC_BRC_FRAME_TYPE_B/B1/B2), the BRC models each level */
++      dmem->GopP_U16 = intra_period / gop_ref_dist;
++      dmem->GopB_U16 = dmem->GopP_U16 * (gop_ref_dist > 1);
++      dmem->GopB1_U16 = dmem->GopP_U16 * ((gop_ref_dist > 2) + (gop_ref_dist == 4 || gop_ref_dist > 5));
++      dmem->GopB2_U16 = (intra_period - dmem->GopP_U16 - dmem->GopB_U16 - dmem->GopB1_U16) * (gop_ref_dist > 3);
++      dmem->MaxBRCLevel_U8 = dmem->GopB1_U16 == 0 ? ANV_HEVC_BRC_FRAME_TYPE_B :
++                             dmem->GopB2_U16 == 0 ? ANV_HEVC_BRC_FRAME_TYPE_B1 : ANV_HEVC_BRC_FRAME_TYPE_B2;
++      dmem->BRCPyramidEnable_U8 = 1;
++   } else {
++      dmem->GopP_U16 = intra_period / gop_ref_dist;
++      dmem->GopB_U16 = intra_period - dmem->GopP_U16;
++      dmem->GopB1_U16 = 0;
++      dmem->GopB2_U16 = 0;
++      dmem->MaxBRCLevel_U8 = dmem->GopB_U16 == 0 ? 0 : 1;
++      dmem->BRCPyramidEnable_U8 = 0;
++   }
+ 
+    dmem->FrameWidth_U16 = width;
+    dmem->FrameHeight_U16 = height;
+@@ -1556,6 +1586,7 @@ anv_h265_brc_fill_update_dmem(struct anv_cmd_buffer *cmd,
+                               uint32_t pass,
+                               uint32_t pic_type,
+                               bool is_low_delay,
++                              uint32_t hier_level_plus1,
+                               anv_h265_brc_update_dmem *dmem)
+ {
+    struct anv_video_session *vid = cmd->video.vid;
+@@ -1584,7 +1615,16 @@ anv_h265_brc_fill_update_dmem(struct anv_cmd_buffer *cmd,
+    /* TODO: derive from the level */
+    dmem->MaxNumSliceAllowed_U16 = ANV_HUC_HEVC_BRC_MAX_NUM_SLICES;
+    dmem->OpMode_U8 = 1;
+-   dmem->CurrentFrameType_U8 = pic_type == 0 ? 2 : (is_low_delay ? 0 : 1);
++   /* media-driver encode_huc_brc_update_packet.cpp: with a pyramid (HierarchicalFlag, GopRefDist != 3) the type is
++    * the picture's level, HierarchLevelPlus1 1/2/3/4 -> P_OR_LB/B/B1/B2; flat: P_OR_LB for low delay, B otherwise */
++   if (pic_type == 0)
++      dmem->CurrentFrameType_U8 = ANV_HEVC_BRC_FRAME_TYPE_I;
++   else if (anv_h265_brc_pyramid(rc) && hier_level_plus1 > 0)
++      dmem->CurrentFrameType_U8 = hier_level_plus1 == 1 ? ANV_HEVC_BRC_FRAME_TYPE_P_OR_LB :
++                                  hier_level_plus1 == 2 ? ANV_HEVC_BRC_FRAME_TYPE_B :
++                                  hier_level_plus1 == 3 ? ANV_HEVC_BRC_FRAME_TYPE_B1 : ANV_HEVC_BRC_FRAME_TYPE_B2;
++   else
++      dmem->CurrentFrameType_U8 = is_low_delay ? ANV_HEVC_BRC_FRAME_TYPE_P_OR_LB : ANV_HEVC_BRC_FRAME_TYPE_B;
+    if (ref_lists && pic_type != 0) {
+       dmem->Num_Ref_L0_U8 = ref_lists->num_ref_idx_l0_active_minus1 + 1;
+       dmem->Num_Ref_L1_U8 = ref_lists->num_ref_idx_l1_active_minus1 + 1;
+diff --git a/src/intel/vulkan/genX_huc_brc_av1.h b/src/intel/vulkan/genX_huc_brc_av1.h
+index 9bdff94a587..1b300a6e3ab 100644
+--- a/src/intel/vulkan/genX_huc_brc_av1.h
++++ b/src/intel/vulkan/genX_huc_brc_av1.h
+@@ -55,6 +55,8 @@
+ #define ANV_AV1_BRC_FRAME_TYPE_P_OR_LB           0
+ #define ANV_AV1_BRC_FRAME_TYPE_I                 2
+ #define ANV_AV1_BRC_FRAME_TYPE_B                 1   /* media-driver AV1_BRC_FRAME_TYPE_B */
++#define ANV_AV1_BRC_FRAME_TYPE_B1                3   /* media-driver AV1_BRC_FRAME_TYPE_B1 */
++#define ANV_AV1_BRC_FRAME_TYPE_B2                4   /* media-driver AV1_BRC_FRAME_TYPE_B2 */
+ /* Byte offset of the HuC frame header output in ANV_VID_MEM_AV1_ENCODE_BRC_SLB_OUT */
+ #define ANV_AV1_BRC_PAK_INSERT_OUT_OFFSET        4096
+ /* Stride of the default CDF tables in ANV_VID_MEM_AV1_ENCODE_BRC_CDF_DEFAULTS: av1_cdf_max_num_bytes (15104,
+@@ -426,11 +428,23 @@ anv_av1_brc_rates(const struct anv_video_session *vid)
+    return r;
+ }
+ 
+-/* GopRefDist for the BRC GOP model: 2 with one B frame between the anchors, otherwise 1 (see
+- * anv_av1_brc_fill_init_dmem) */
++/* A dyadic B pyramid the BRC models per level (media-driver's HierarchicalFlag): the app signals the dyadic
++ * reference pattern, with a mini-GOP media-driver has levels for (GopRefDist 2, 4 or 8) */
++static bool
++anv_av1_brc_pyramid(const struct anv_video_session *vid)
++{
++   const uint32_t gop_ref_dist = vid->rc.consecutive_b_frames + 1;
++   return (vid->rc.rc_flags & VK_VIDEO_ENCODE_AV1_RATE_CONTROL_REFERENCE_PATTERN_DYADIC_BIT_KHR) &&
++          (gop_ref_dist == 2 || gop_ref_dist == 4 || gop_ref_dist == 8);
++}
++
++/* GopRefDist for the BRC GOP model: the mini-GOP of a dyadic pyramid, 2 with one B frame between the anchors,
++ * otherwise 1 (see anv_av1_brc_fill_init_dmem) */
+ static uint32_t
+ anv_av1_brc_gop_ref_dist(const struct anv_video_session *vid)
+ {
++   if (anv_av1_brc_pyramid(vid))
++      return vid->rc.consecutive_b_frames + 1;
+    return vid->rc.consecutive_b_frames == 1 ? 2 : 1;
+ }
+ 
+@@ -550,7 +564,8 @@ anv_av1_brc_fill_init_dmem(struct anv_video_session *vid, uint32_t width, uint32
+ static void
+ anv_av1_brc_fill_update_dmem(struct anv_video_session *vid,
+                              const StdVideoEncodeAV1PictureInfo *pic_info,
+-                             bool is_intra, bool low_delay, bool disable_cdf_update,
++                             bool is_intra, bool low_delay, uint32_t hier_level_plus1,
++                             bool disable_cdf_update,
+                              uint32_t width, uint32_t height,
+                              const struct anv_av1_brc_frame *brc,
+                              struct anv_huc_av1_brc_update_dmem *dmem)
+@@ -590,10 +605,16 @@ anv_av1_brc_fill_update_dmem(struct anv_video_session *vid,
+ 
+    /* media-driver: the BRC level count from GopRefDist, and without hierarchy information a random access inter
+     * frame is a B (the GOP model of anv_av1_brc_fill_init_dmem) */
++   /* media-driver Av1Brc::SetDmemForUpdate: UPD_MaxBRCLevel 3/2/1 for GopRefDist 8/4/2; with HierarchicalFlag the
++    * frame type is the picture's level, HierarchLevelPlus1 1..4 -> P_OR_LB, B, B1, B2 (deeper ones as B2) */
+    const uint32_t gop_ref_dist = anv_av1_brc_gop_ref_dist(vid);
+-   dmem->UPD_MaxBRCLevel = gop_ref_dist == 2 ? 1 : 0;
++   dmem->UPD_MaxBRCLevel = gop_ref_dist == 8 ? 3 : gop_ref_dist == 4 ? 2 : gop_ref_dist == 2 ? 1 : 0;
+    if (is_intra)
+       dmem->UPD_CurrFrameType = ANV_AV1_BRC_FRAME_TYPE_I;
++   else if (anv_av1_brc_pyramid(vid))
++      dmem->UPD_CurrFrameType = hier_level_plus1 <= 1 ? ANV_AV1_BRC_FRAME_TYPE_P_OR_LB :
++                                hier_level_plus1 == 2 ? ANV_AV1_BRC_FRAME_TYPE_B :
++                                hier_level_plus1 == 3 ? ANV_AV1_BRC_FRAME_TYPE_B1 : ANV_AV1_BRC_FRAME_TYPE_B2;
+    else
+       dmem->UPD_CurrFrameType = gop_ref_dist > 1 && !low_delay ? ANV_AV1_BRC_FRAME_TYPE_B :
+                                                                 ANV_AV1_BRC_FRAME_TYPE_P_OR_LB;

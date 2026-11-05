@@ -1,0 +1,88 @@
+anv: H.264 HuC BRC with the Xe2_HPM update tables
+
+media-driver replaces the Gen12 AVC BRC update tables for Xe2_HPM (EncodeAvcVdencConstSettingsXe2_Hpm::SetBrcSettings):
+global rate ratio thresholds {40,75,97,103,125,160} / QP {-3..3}, GlobalRateQPAdj I/P/B, DistThreshld I/P and a
+separate B table (ANV gave B the P thresholds), and one DistQPAdj table for CBR and VBR. Use them on Xe2.
+
+--- a/src/intel/vulkan/genX_huc_brc.h
++++ b/src/intel/vulkan/genX_huc_brc.h
+@@ -305,6 +305,45 @@
+    return (uint8_t)ret;
+ }
+ 
++#if GFX_VER >= 20
++/* media-driver EncodeAvcVdencConstSettingsXe2_Hpm::SetBrcSettings (encode_avc_vdenc_const_settings_xe2_hpm.cpp):
++ * the Xe2_HPM AVC BRC update tables, replacing the Gen12 ones for this firmware generation */
++static const uint8_t anv_h264_brc_xe2_rate_ratio_threshold[7] = { 40, 75, 97, 103, 125, 160, 0 };
++static const int8_t anv_h264_brc_xe2_rate_ratio_threshold_qp[8] = { -3, -2, -1, 0, 1, 2, 3, 0 };
++static const int8_t anv_h264_brc_xe2_global_rate_qp_adj_i[64] = {
++    1,  2,  3,  5,  6,   1,  1,  2,  3,  5,   0,  0,  1,  2,  3,  -1,  0,  0,  1,  2,
++   -1,  0,  0,  0,  1,  -2, -2, -1,  0,  1,  -3, -3, -1, -1,  0,  -5, -3, -2, -1, -1,
++   -6, -5, -3, -2, -1,   0,  0,  0,  0,  0,   0,  0,  0,  0,  0,   0,  0,  0,  0,  0,
++    0,  0,  0,  0,
++};
++static const int8_t anv_h264_brc_xe2_global_rate_qp_adj_p[64] = {
++    1,  2,  3,  5,  6,   1,  1,  2,  3,  5,   0,  1,  1,  2,  3,  -1,  0,  0,  1,  2,
++   -1,  0,  0,  0,  1,  -1, -1, -1,  0,  1,  -2, -1, -1, -1,  0,  -4, -2, -1, -1,  0,
++   -5, -4, -2, -1, -1,   0,  0,  0,  0,  0,   0,  0,  0,  0,  0,   0,  0,  0,  0,  0,
++    0,  0,  0,  0,
++};
++static const int8_t anv_h264_brc_xe2_global_rate_qp_adj_b[64] = {
++    1,  1,  2,  4,  5,   1,  1,  1,  2,  4,   0,  0,  1,  1,  2,  -1,  0,  0,  1,  1,
++   -1,  0,  0,  0,  0,  -1, -1, -1,  0,  1,  -2, -1, -1, -1,  0,  -3, -2, -1, -1,  0,
++   -5, -4, -2, -1, -1,   0,  0,  0,  0,  0,   0,  0,  0,  0,  0,   0,  0,  0,  0,  0,
++    0,  0,  0,  0,
++};
++static const uint8_t anv_h264_brc_xe2_dist_threshld_ip[10] = { 4, 30, 60, 80, 120, 140, 200, 255, 0, 0 };
++static const uint8_t anv_h264_brc_xe2_dist_threshld_b[10] = { 2, 20, 40, 70, 130, 160, 200, 255, 0, 0 };
++/* CBR and VBR, I, P and B all use the same Xe2 distortion QP adjustment table */
++static const int8_t anv_h264_brc_xe2_dist_qp_adj[81] = {
++    0,  0,  0,  0, 0, 2, 3, 3, 4,
++    0,  0,  0,  0, 0, 2, 3, 3, 4,
++   -1,  0,  0,  0, 0, 2, 2, 3, 3,
++   -1, -1,  0,  0, 0, 1, 2, 2, 2,
++   -1, -1, -1,  0, 0, 0, 1, 2, 2,
++   -2, -1, -1,  0, 0, 0, 1, 1, 2,
++   -2, -1, -1, -1, 0, 0, 1, 1, 2,
++   -2, -2, -1, -1, 0, 0, 0, 1, 1,
++   -2, -2, -1, -1, 0, 0, 0, 1, 1,
++};
++#endif
++
+ static void
+ anv_h264_brc_fill_const_data(struct anv_video_session *vid,
+                              StdVideoH264PictureType pic_type,
+@@ -353,6 +392,18 @@
+       memcpy(cd->UPD_BufRateAdjTabB_S8, anv_h264_brc_vbr_frm_sz_adj_b,
+              sizeof(cd->UPD_BufRateAdjTabB_S8));
+    }
++
++#if GFX_VER >= 20
++   memcpy(cd->UPD_GlobalRateQPAdjTabI_U8, anv_h264_brc_xe2_global_rate_qp_adj_i, 64);
++   memcpy(cd->UPD_GlobalRateQPAdjTabP_U8, anv_h264_brc_xe2_global_rate_qp_adj_p, 64);
++   memcpy(cd->UPD_GlobalRateQPAdjTabB_U8, anv_h264_brc_xe2_global_rate_qp_adj_b, 64);
++   memcpy(cd->UPD_DistThreshldI_U8, anv_h264_brc_xe2_dist_threshld_ip, 10);
++   memcpy(cd->UPD_DistThreshldP_U8, anv_h264_brc_xe2_dist_threshld_ip, 10);
++   memcpy(cd->UPD_DistThreshldB_U8, anv_h264_brc_xe2_dist_threshld_b, 10);
++   memcpy(cd->UPD_DistQPAdjTabI_U8, anv_h264_brc_xe2_dist_qp_adj, 81);
++   memcpy(cd->UPD_DistQPAdjTabP_U8, anv_h264_brc_xe2_dist_qp_adj, 81);
++   memcpy(cd->UPD_DistQPAdjTabB_U8, anv_h264_brc_xe2_dist_qp_adj, 81);
++#endif
+ 
+    memcpy(cd->UPD_FrmSzMinTabP_U8, anv_h264_brc_frm_sz_min_p,
+           sizeof(cd->UPD_FrmSzMinTabP_U8));
+@@ -566,8 +617,14 @@
+    memcpy(dmem->UPD_startGAdjFrame_U16, start_gadj_frame, sizeof(start_gadj_frame));
+    memcpy(dmem->UPD_startGAdjMult_U8, start_gadj_mult, sizeof(start_gadj_mult));
+    memcpy(dmem->UPD_startGAdjDiv_U8, start_gadj_div, sizeof(start_gadj_div));
++#if GFX_VER >= 20
++   memcpy(dmem->UPD_gRateRatioThreshold_U8, anv_h264_brc_xe2_rate_ratio_threshold, 7);
++   memcpy(dmem->UPD_gRateRatioThresholdQP_U8, anv_h264_brc_xe2_rate_ratio_threshold_qp, 8);
++   (void)rate_ratio_threshold; (void)rate_ratio_threshold_qp;
++#else
+    memcpy(dmem->UPD_gRateRatioThreshold_U8, rate_ratio_threshold, sizeof(rate_ratio_threshold));
+    memcpy(dmem->UPD_gRateRatioThresholdQP_U8, rate_ratio_threshold_qp, sizeof(rate_ratio_threshold_qp));
++#endif
+ 
+    dmem->UPD_SceneChgWidth_U8[0] = scene_chg_width;
+    dmem->UPD_SceneChgWidth_U8[1] = scene_chg_width;

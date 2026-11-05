@@ -1,0 +1,48 @@
+anv: HEVC encode turns P slices into generalized P/B before the BRC batch writes the slice header
+
+VDEnc codes HEVC P pictures as low delay B with L1 = L0. anv made that conversion (slice type B, L1 copied from L0,
+num_ref_idx_active_override_flag when the counts differ from the PPS) piecemeal: L1 in the VDENC_CMD2 emission and the
+override in the per-slice loop, both after the HuC BRC second level batch had already written the slice headers
+(anv_h265_brc_compute_slb_layout / the SLB build). With one L0 reference nothing differs from the PPS defaults, but
+with two (Intel's P frames at TU4 use two, hevcehw caps) the header said one active reference while VDEnc coded
+ref_idx for two: CABAC desync, "cu_qp_delta outside the valid range" from libavcodec. Normalize the reference lists and
+slice headers once at the start of anv_h265_encode_video, before anything is derived from them.
+B580, FFmpeg hevc_vulkan with 2 P references: streams decode without errors and bit-exact on libavcodec and the B580
+VideoToolbox decoder (were PSNR 8-13 dB).
+
+diff --git a/src/intel/vulkan/genX_cmd_video_enc.c b/src/intel/vulkan/genX_cmd_video_enc.c
+--- a/src/intel/vulkan/genX_cmd_video_enc.c
++++ b/src/intel/vulkan/genX_cmd_video_enc.c
+@@ -4033,6 +4033,32 @@
+    const StdVideoH265PictureParameterSet *pps = anv_h265_pps(cmd, enc_info);
+    StdVideoEncodeH265ReferenceListsInfo* ref_lists =
+       (struct StdVideoEncodeH265ReferenceListsInfo *)frame_info->pStdPictureInfo->pRefLists;
++
++   /* VDEnc encodes P pictures as generalized P/B (low delay B with L1 = L0). Turn the
++    * application's P slices into that form before anything is derived from them: the HuC BRC
++    * second level batch writes the slice headers before the per-slice loop below runs, and with
++    * more than one L0 reference the header has to carry num_ref_idx_active_override_flag and
++    * both counts, or the decoder parses the slice with one reference while VDEnc coded two.
++    */
++   if (ref_lists && frame_info->pStdPictureInfo->pic_type == STD_VIDEO_H265_PICTURE_TYPE_P) {
++      ref_lists->num_ref_idx_l1_active_minus1 = ref_lists->num_ref_idx_l0_active_minus1;
++      for (int i = 0; i < STD_VIDEO_H265_MAX_NUM_LIST_REF; i++) {
++         ref_lists->RefPicList1[i] = ref_lists->RefPicList0[i];
++         ref_lists->list_entry_l1[i] = ref_lists->list_entry_l0[i];
++      }
++   }
++   for (uint32_t slice_id = 0; slice_id < frame_info->naluSliceSegmentEntryCount; slice_id++) {
++      StdVideoEncodeH265SliceSegmentHeader *slice_header =
++         (StdVideoEncodeH265SliceSegmentHeader *)frame_info->pNaluSliceSegmentEntries[slice_id].pStdSliceSegmentHeader;
++
++      if (slice_header->slice_type % 5 == STD_VIDEO_H265_SLICE_TYPE_P)
++         slice_header->slice_type = STD_VIDEO_H265_SLICE_TYPE_B;
++
++      if (ref_lists && slice_header->slice_type % 5 != STD_VIDEO_H265_SLICE_TYPE_I &&
++          (pps->num_ref_idx_l0_default_active_minus1 != ref_lists->num_ref_idx_l0_active_minus1 ||
++           pps->num_ref_idx_l1_default_active_minus1 != ref_lists->num_ref_idx_l1_active_minus1))
++         slice_header->flags.num_ref_idx_active_override_flag = true;
++   }
+ 
+    bool is_low_delay = anv_h265_is_low_delay(enc_info, ref_lists);
+    uint8_t dpb_idx[ANV_VIDEO_H265_MAX_NUM_REF_FRAME] = { 0,};

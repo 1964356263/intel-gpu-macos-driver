@@ -1,0 +1,88 @@
+From: Yusuf İhsan KILINÇ
+Subject: [PATCH 0089] anv: report fd and host memory handle types only with their extensions
+
+On top of the installed Mesa prod8 (bf8592b4 = src/mesa-prod8). Built in a copy (src/mesa-cts1, build-cts1, same
+meson options as build-prod8); NOT installed (test package ~/b580/mesa-cts1-test).
+
+vkGetPhysicalDeviceExternalBufferProperties and vkGetPhysicalDeviceImageFormatProperties2 (with
+VkPhysicalDeviceExternalImageFormatInfo) reported OPAQUE_FD and DMA_BUF as exportable and importable, and
+HOST_ALLOCATION as importable, whether or not VK_KHR_external_memory_fd, VK_EXT_external_memory_dma_buf and
+VK_EXT_external_memory_host are supported. On Linux they always are (xe; i915 with userptr), so nothing
+changes there. With xemac (macOS) ANV_FD_SHARING is false: no fd extension is exposed, the device has no
+vkGetMemoryFdKHR entry point (vkGetDeviceProcAddr returns NULL), yet the queries promised exportable dma-bufs:
+- dEQP-VK.drm_format_modifiers.bound_to_dma_buf.* (checkSupport tests only VK_EXT_image_drm_format_modifier)
+  found DMA_BUF exportable for every modifier, allocated exportable memory and called getMemoryFdKHR = NULL:
+  SIGSEGV in deqp-vk (64 crashes).
+- dEQP-VK.api.external.memory.{opaque_fd,dma_buf}.*.info: "Physical device claims to support handle type but
+  required extensions are not supported" (6 fails).
+A handle type whose extension is not supported is now reported as unsupported: compatibleHandleTypes =
+handleType, no features (buffers); VK_ERROR_FORMAT_NOT_SUPPORTED (images), as for any other unsupported type.
+
+Generated-by: LLM
+
+diff --git a/src/intel/vulkan/anv_formats.c b/src/intel/vulkan/anv_formats.c
+index 9a66a7690..15433a13d 100644
+--- a/src/intel/vulkan/anv_formats.c
++++ b/src/intel/vulkan/anv_formats.c
+@@ -2109,6 +2109,13 @@ anv_get_image_format_properties(
+        */
+       switch (external_info->handleType) {
+       case VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT:
++         /* Only a handle type whose extension the device exposes can be
++          * exported or imported: without VK_KHR_external_memory_fd there is
++          * no vkGetMemoryFdKHR to call on the memory.
++          */
++         if (!physical_device->vk.supported_extensions.KHR_external_memory_fd)
++            goto unsupported;
++
+          if (external_props) {
+             if (tiling_has_explicit_layout) {
+                /* With an explicit memory layout, we don't care which type of fd
+@@ -2134,7 +2141,8 @@ anv_get_image_format_properties(
+          /* This memory handle has no restrictions on driverUUID nor deviceUUID,
+           * and therefore requires explicit memory layout.
+           */
+-         if (!tiling_has_explicit_layout)
++         if (!tiling_has_explicit_layout ||
++             !physical_device->vk.supported_extensions.EXT_external_memory_dma_buf)
+             goto unsupported;
+ 
+          /* With an explicit memory layout, we don't care which type of fd
+@@ -2154,7 +2162,8 @@ anv_get_image_format_properties(
+          /* This memory handle has no restrictions on driverUUID nor deviceUUID,
+           * and therefore requires explicit memory layout.
+           */
+-         if (!tiling_has_explicit_layout)
++         if (!tiling_has_explicit_layout ||
++             !physical_device->vk.supported_extensions.EXT_external_memory_host)
+             goto unsupported;
+ 
+          if (external_props)
+@@ -2433,12 +2442,27 @@ void anv_GetPhysicalDeviceExternalBufferProperties(
+ 
+    ANV_FROM_HANDLE(anv_physical_device, physical_device, physicalDevice);
+ 
++   /* Only report a handle type as exportable/importable if the extension that
++    * provides it is supported, otherwise the application has no entry point
++    * to get or import the handle with.
++    */
++   const struct vk_device_extension_table *exts =
++      &physical_device->vk.supported_extensions;
++
+    switch (pExternalBufferInfo->handleType) {
+    case VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT:
++      if (!exts->KHR_external_memory_fd)
++         goto unsupported;
++      pExternalBufferProperties->externalMemoryProperties = opaque_fd_dma_buf_props;
++      return;
+    case VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT:
++      if (!exts->EXT_external_memory_dma_buf)
++         goto unsupported;
+       pExternalBufferProperties->externalMemoryProperties = opaque_fd_dma_buf_props;
+       return;
+    case VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT:
++      if (!exts->EXT_external_memory_host)
++         goto unsupported;
+       pExternalBufferProperties->externalMemoryProperties = userptr_props;
+       return;
+    case VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID:

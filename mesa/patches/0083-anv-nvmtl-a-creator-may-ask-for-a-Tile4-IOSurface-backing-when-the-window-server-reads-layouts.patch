@@ -1,0 +1,65 @@
+From: Yusuf İhsan KILINÇ <78423442+yusufklncc@users.noreply.github.com>
+Subject: [PATCH 0083] anv/nvmtl: a creator may ask for a Tile4 IOSurface backing when the window server reads layouts
+
+On Linux a client picks a tiled modifier from the compositor's dmabuf feedback (iris ranks LINEAR lowest and 4_TILED /
+4_TILED_BMG_CCS highest, iris_resource.c modifier_priority), so the compositor samples the client's buffer tiled. The
+Metal plugin's IOSurface backings were always linear (the creator recorded DRM_FORMAT_MOD_LINEAR), and the window server
+sampled them linear. A staged request may now carry NVMTL_ANV_SURFACE_VRAM_WANT_TILE4 with width, height, cpp (4) and the
+IOSurface's bytesPerRow: when B580_CAP_SURFACE_VRAM_LAYOUT is 1 (the window server imports with SURFACE_VRAM2) the backing
+is created I915_FORMAT_MOD_4_TILED with the row rounded up to 128 B (uncompressed, as every backing), sized for whole tiles;
+the kernel's CPU-lock page-off detiles it. Refused as Tile4 (a backing that exists with another layout, a size the
+kernel will not take): linear, as before. Without the flag nothing changes. For the plugin's /tmp/nvmtl-svtile4 prototype.
+Applies on top of 0082.
+---
+--- a/src/intel/vulkan/anv_nvmtl_surface.c
++++ b/src/intel/vulkan/anv_nvmtl_surface.c
+@@ -84,9 +84,15 @@
+ /* VRAM-shared IOSurfaces (gpuperf phase 2). The plugin stages a request, then calls vkAllocateMemory with a
+  * VkImportMemoryFdInfoKHR (OPAQUE_FD, any placeholder fd it owns, consumed on success) in the same thread: that import
+  * becomes the surface's VRAM backing (DRM_IOCTL_B580_SURFACE_VRAM), the way NVK's nvmtl_nvk_stage_import works. */
++/* req->flags (0083): a creator asks for a Tile4 backing (I915_FORMAT_MOD_4_TILED, its pitch the row rounded up to 128 B)
++ * when the window server's plugin reads backing layouts (B580_CAP_SURFACE_VRAM_LAYOUT = 1), as a Wayland client picks a
++ * tiled modifier from the compositor's dmabuf feedback; width, height, cpp (4) and linear_pitch (the IOSurface's
++ * bytesPerRow) are then inputs. Linear when the layout cannot be used, when the kernel refuses it (a backing that exists
++ * with another layout: EBUSY) or without the capability. A Mesa before 0083 ignores the flag: linear. */
++#define NVMTL_ANV_SURFACE_VRAM_WANT_TILE4 (1u << 8)
+ struct nvmtl_anv_surface_vram_req {
+    uint32_t version;     /* 1, or 2: the caller reads tiled backings (the fields below) */
+-   uint32_t surface_id, plane, flags;   /* flags: B580_SURFACE_VRAM_CREATE */
++   uint32_t surface_id, plane, flags;   /* flags: B580_SURFACE_VRAM_CREATE, NVMTL_ANV_SURFACE_VRAM_WANT_TILE4 */
+    uint64_t size;        /* bytes the caller needs */
+    uint64_t size_out;    /* out: the backing's bytes */
+    uint32_t gen;         /* out: its generation */
+@@ -288,9 +294,31 @@
+          .surface_id = v.surface_id, .plane = v.plane, .size = v.size, .flags = v.flags,
+          .modifier = DRM_FORMAT_MOD_LINEAR,
+       };
++      /* 0083: a creator that renders Tile4 when the reader takes layouts (see NVMTL_ANV_SURFACE_VRAM_WANT_TILE4) */
++      bool t4 = false;
++      if ((req->flags & B580_SURFACE_VRAM_CREATE) && (req->flags & NVMTL_ANV_SURFACE_VRAM_WANT_TILE4) && req->cpp == 4 &&
++          req->width && req->height && req->width <= 16384 && req->height <= 16384 &&
++          req->linear_pitch >= req->width * 4) {
++         struct drm_get_cap cap = { .capability = B580_CAP_SURFACE_VRAM_LAYOUT };
++         if (nvmtl_ioctl(device->fd, DRM_IOCTL_GET_CAP, &cap) == 0 && cap.value == 1) {
++            const uint32_t pitch = align(req->width * 4, 128);
++            const uint64_t tsize = (uint64_t)pitch * align(req->height, 32);
++            v2.modifier = I915_FORMAT_MOD_4_TILED; v2.pitch = pitch; v2.cpp = 4; v2.width = req->width;
++            v2.height = req->height; v2.linear_pitch = req->linear_pitch;
++            if (tsize > v2.size)
++               v2.size = tsize;
++            t4 = true;
++         }
++      }
+       req->modifier = DRM_FORMAT_MOD_LINEAR;
+       req->pitch = req->cpp = req->width = req->height = req->linear_pitch = 0;
+-      if (nvmtl_surface_vram_ioctl(device, DRM_IOCTL_B580_SURFACE_VRAM2, &v2, &v2.flags) == 0) {
++      int r2 = nvmtl_surface_vram_ioctl(device, DRM_IOCTL_B580_SURFACE_VRAM2, &v2, &v2.flags);
++      if (r2 && t4 && errno != ENOTTY) {   /* refused as Tile4 (another layout exists, too large ...): linear, as before */
++         v2.modifier = DRM_FORMAT_MOD_LINEAR; v2.pitch = v2.cpp = v2.width = v2.height = v2.linear_pitch = 0;
++         v2.size = v.size; v2.flags = v.flags; v2.handle = 0;
++         r2 = nvmtl_surface_vram_ioctl(device, DRM_IOCTL_B580_SURFACE_VRAM2, &v2, &v2.flags);
++      }
++      if (r2 == 0) {
+          req->modifier = v2.modifier; req->pitch = v2.pitch; req->cpp = v2.cpp; req->width = v2.width;
+          req->height = v2.height; req->linear_pitch = v2.linear_pitch;
+          v.handle = v2.handle; v.size_out = v2.size_out; v.gen = v2.gen;

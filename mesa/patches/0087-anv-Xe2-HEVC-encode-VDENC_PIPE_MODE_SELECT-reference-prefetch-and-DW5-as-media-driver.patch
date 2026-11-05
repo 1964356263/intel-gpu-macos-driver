@@ -1,0 +1,88 @@
+From: Yusuf İhsan KILINÇ
+Subject: [PATCH 0087] anv: Xe2 HEVC encode VDENC_PIPE_MODE_SELECT reference prefetch and DW5 as media-driver
+
+On top of 0084 (installed Mesa 935ef655 = src/mesa-onehandle + 0084 = src/mesa-videotu). Built from a file copy
+(src/mesa-hevctu, build-hevctu; same meson options as build-vt, release, x86_64). NOT installed.
+
+Xe2 only (Gen12/12.5 unchanged). ANV's HEVC encoder programmed VDENC_PIPE_MODE_SELECT DW2/DW3 with the genxml
+defaults (top prefetch mode 1, numVerticalReqMinus1 11, source TLB prefetch on with offset 4: what media-driver
+programs for Xe3, encode_hevc_basic_feature_xe3_lpm_base.cpp) and left DW5 bit 17 clear. media-driver's
+Xe2_HPM HEVC VDEnc path:
+- DW2: no HEVC override (HevcBasicFeature / HevcVdencPkt MHW_SETPAR(VDENC_PIPE_MODE_SELECT)), so the
+  MHW_PAR_T(VDENC_PIPE_MODE_SELECT) defaults (mhw_vdbox_vdenc_cmdpar.h): HME region prefetch 1, top prefetch
+  mode 0, left prefetch at wrap around 1, verticalShift32Minus1 2, hzShift32Minus1 3, numVerticalReqMinus1 6,
+  numHzReqMinus1 2, prefetch offset 0. ANV's Xe2 AV1 encoder already uses exactly these.
+- DW3: VDENC_PIPE_MODE_SELECT_CMD constructor zeros (mhw_vdbox_vdenc_hwcmd_xe2_hpm.h), not set by HEVC.
+- DW5 bit 17 = VdencPipeModeSelectPar0 = 1 (encode_hevc_vdenc_packet.cpp, unless WaEnableOnlyASteppingFeatures).
+  No DW5 bit 8 for HEVC (AVC only).
+Prefetch fields only change memory access timing; DW5 bit 17 is undocumented in the open source, so the
+level 1 (TU 4) bitstream must be compared against 0084 before use (see docs/reports/b580-hevc-tu1-20261103.md).
+This is a faithfulness fix found while analysing HEVC veryslow (TU 1) 4K/8K at ~50% of Windows QSV; it is not
+expected to close that gap (the report attributes it to Windows' two-VDBOX HEVC encode at 4K and above).
+
+Generated-by: LLM
+
+--- a/src/intel/vulkan/genX_cmd_video_enc.c	2026-11-02 02:41:06
++++ b/src/intel/vulkan/genX_cmd_video_enc.c	2026-11-03 02:19:14
+@@ -2760,7 +2760,15 @@
+    const StdVideoH265SequenceParameterSet *sps = anv_h265_sps(cmd, enc_info);
+    const bool is_10bit = anv_h265_is_10bit(sps);
+ 
++#if GFX_VER >= 20
++   uint32_t *dw = anv_batch_emitn(&cmd->batch, GENX(VDENC_PIPE_MODE_SELECT_length), GENX(VDENC_PIPE_MODE_SELECT));
++   if (!dw)
++      return;
++   struct GENX(VDENC_PIPE_MODE_SELECT) vdenc_pipe_mode = { GENX(VDENC_PIPE_MODE_SELECT_header) };
++   {
++#else
+    anv_batch_emit(&cmd->batch, GENX(VDENC_PIPE_MODE_SELECT), vdenc_pipe_mode) {
++#endif
+       vdenc_pipe_mode.StandardSelect = SS_HEVC;
+       vdenc_pipe_mode.FrameStatisticsStreamOutEnable = brc_enabled;
+       vdenc_pipe_mode.VDEncPAK_OBJ_CMDStreamOutEnable = brc_enabled && !pak_only;
+@@ -2768,6 +2776,28 @@
+       vdenc_pipe_mode.PAKChromaSubSamplingType = _420;
+       vdenc_pipe_mode.OutputRangeControlAfterColorSpaceConversion = true;
+       vdenc_pipe_mode.IsRandomAccess = !is_low_delay;
++#if GFX_VER >= 20
++      /* media-driver Xe2_HPM HEVC (HevcBasicFeature / HevcVdencPkt MHW_SETPAR(VDENC_PIPE_MODE_SELECT), packed by
++       * mhw_vdbox_vdenc_impl.h): no HEVC override of the reference prefetch, so DW2 stays at the
++       * MHW_PAR_T(VDENC_PIPE_MODE_SELECT) defaults (HME region prefetch on, top prefetch mode 0, left prefetch at
++       * wrap around on, verticalShift32Minus1 2, hzShift32Minus1 3, numVerticalReqMinus1 6, numHzReqMinus1 2,
++       * prefetch offset 0) and DW3 (source TLB prefetch) at the VDENC_PIPE_MODE_SELECT_CMD constructor's zeros, as
++       * ANV's Xe2 AV1 encoder already programs them. The genxml defaults used before (top prefetch mode 1,
++       * 12 vertical requests, source TLB prefetch with offset 4) are what media-driver programs for Xe3.
++       */
++      vdenc_pipe_mode.HMERegionPrefetchEnable = true;
++      vdenc_pipe_mode.TopPrefetchEnableMode = 0;
++      vdenc_pipe_mode.LeftPrefetchAtWrapAround = true;
++      vdenc_pipe_mode.VerticalShift32Minus1 = 2;
++      vdenc_pipe_mode.HzShift32Minus1 = 3;
++      vdenc_pipe_mode.NumberofVerticalRequests = 6;
++      vdenc_pipe_mode.NumberofHorizontalRequests = 2;
++      vdenc_pipe_mode.PrefetchOffsetforReference = 0;
++      vdenc_pipe_mode.SourceLumaPackedDataTLBPrefetchEnable = false;
++      vdenc_pipe_mode.SourceChromaTLBPrefetchEnable = false;
++      vdenc_pipe_mode.HzShift32Minus1Src = 0;
++      vdenc_pipe_mode.PrefetchOffsetforSource = 0;
++#else
+       vdenc_pipe_mode.HMERegionPrefetchEnable = !vdenc_pipe_mode.TLBPrefetchEnable;
+       vdenc_pipe_mode.TopPrefetchEnableMode = 1;
+       vdenc_pipe_mode.LeftPrefetchAtWrapAround = true;
+@@ -2779,7 +2809,16 @@
+       vdenc_pipe_mode.SourceChromaTLBPrefetchEnable = true;
+       vdenc_pipe_mode.HzShift32Minus1Src = 3;
+       vdenc_pipe_mode.PrefetchOffsetforSource = 4;
++#endif
+    }
++#if GFX_VER >= 20
++   GENX(VDENC_PIPE_MODE_SELECT_pack)(&cmd->batch, dw, &vdenc_pipe_mode);
++   /* DW5 bit 17 = VdencPipeModeSelectPar0 = 1: HevcVdencPkt sets it on every platform without
++    * WaEnableOnlyASteppingFeatures (encode_hevc_vdenc_packet.cpp, MHW_SETPAR_DECL_SRC(VDENC_PIPE_MODE_SELECT));
++    * Xe2_HPM HEVC sets no VdencPipeModeSelectPar1 (DW5 bit 8), unlike AVC.
++    */
++   dw[5] |= 1u << 17;
++#endif
+ }
+ 
+ static void

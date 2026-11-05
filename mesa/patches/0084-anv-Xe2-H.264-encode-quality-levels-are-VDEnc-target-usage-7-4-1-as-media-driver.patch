@@ -1,0 +1,161 @@
+From: Yusuf İhsan KILINÇ
+Subject: [PATCH 0084] anv: Xe2 H.264 encode quality levels are VDEnc target usage 7/4/1, as media-driver
+
+On top of the installed Mesa 935ef655 (src/mesa-onehandle working tree). Built and tested from a copy
+(src/mesa-videotu, build-vt): libvulkan_intel.dylib sha256 8dc4146d..., NOT installed.
+
+H.264 encode had one quality level, target usage 4, so every preset encoded the same (macOS kit 2 Nov:
+veryfast/medium/veryslow 556.5/556.3/556.5 fps, byte-identical streams). HEVC (7/4/1) and AV1 (7/4/2)
+already map their levels. Now H.264 on Xe2 does too, with what media-driver's Xe2_HPM AVC VDEnc encoder
+changes per target usage (EncodeAvcVdencFeatureManagerXe2_Hpm::MapTargetUsage keeps 1, 2, 4, 7):
+
+- maxQualityLevels 3 for H.264 on Xe2 (ANV_H264_ENCODE_QUALITY_LEVELS); level 0/1/2 = TU 7/4/1.
+- VDENC_AVC_IMG_STATE: the Xe2_HPM tables (encode_avc_vdenc_const_settings_xe2_hpm_open.h dw2/dw4/dw5/dw12/
+  dw13/dw14/dw25, already in h264_vdenc_tables.h for all 8 TUs) indexed by the session's TU instead of 4.
+- Trellis quantization (AvcEncodeTrellis, DDI default trellisInternal): on for TU 1 and 2 with CABAC
+  (m_trellisQuantizationEnable { 0, 1, 1, 0, 0, 0, 0, 0 }, rounding 3): VDENC_AVC_IMG_STATE TrellisQuantEn,
+  MFX_AVC_IMG_STATE TrellisQuantizationEnable / Rounding (chroma TQ stays disabled).
+- VDENC_PIPE_MODE_SELECT (AvcBasicFeature MHW_SETPAR): reference prefetch verticalShift32Minus1 0,
+  hzShift32Minus1 15, numVerticalReqMinus1 5, numHzReqMinus1 0, top prefetch mode 0 (the other DW2 fields at
+  the MHW_PAR defaults), DW5 bit 17 (VdencPipeModeSelectPar0) = 1, DW5 bit 8 (VdencPipeModeSelectPar1) =
+  { 0, 0, 1, 1, 1, 1, 1 }[TU - 1].
+- Not taken over: perf mode (perfModeEnabled for TU 6/7) - m_perfModeSupported is never set in media-driver;
+  INIT_SinglePassOnly for TU 7 - ANV's BRC is single pass at every TU already.
+
+Measured on the B580 (vtencq, 1080p60 Aerial 600 frames, 6 Mbit/s VBR, page cache warm), level 0/1/2:
+755.2 / 556.7 / 191.2 fps; 6213 / 6186 / 6306 kbit/s; PSNR-Y 34.78 / 34.80 / 35.02 dB. Level 1 (TU 4, the
+default) is byte-identical to the installed driver (7732670 bytes both). Windows QSV (1 Nov, adapter not pinned)
+veryfast/medium/veryslow: 562.9 / 541.0 / 195.0 fps.
+
+--- a/src/intel/vulkan/genX_cmd_video_enc.c	2026-10-31 17:34:18
++++ b/src/intel/vulkan/genX_cmd_video_enc.c	2026-11-02 02:41:06
+@@ -842,12 +842,45 @@
+    }
+ }
+ 
++/* H.264 quality levels 0/1/2 = VDEnc target usage 7/4/1. Xe2 only (media-driver's Xe2_HPM AVC encoder,
++ * EncodeAvcVdencFeatureManagerXe2_Hpm::MapTargetUsage, keeps 1, 2, 4 and 7); before Xe2 ANV has one level, TU 4.
++ */
++static uint32_t
++anv_h264_target_usage(const struct anv_cmd_buffer *cmd)
++{
++#if GFX_VER >= 20
++   static const uint8_t target_usage[ANV_H264_ENCODE_QUALITY_LEVELS] = { 7, 4, 1 };
++
++   return target_usage[MIN2(cmd->video.vid->quality_level, ANV_H264_ENCODE_QUALITY_LEVELS - 1)];
++#else
++   return 4;
++#endif
++}
++
++/* Trellis quantization, media-driver AvcEncodeTrellis with the DDI default Trellis = trellisInternal: on for target
++ * usage 1 and 2 (EncodeAvcVdencConstSettings m_trellisQuantizationEnable { 0, 1, 1, 0, 0, 0, 0, 0 }, rounding
++ * m_trellisQuantizationRounding 3), and only with CABAC. Xe2 only, as the target usage. */
++static bool
++anv_h264_trellis_enabled(struct anv_cmd_buffer *cmd, const VkVideoEncodeInfoKHR *enc_info)
++{
++   const uint32_t tu = anv_h264_target_usage(cmd);
++
++   return GFX_VER >= 20 && (tu == 1 || tu == 2) &&
++          anv_h264_pps(cmd, enc_info)->flags.entropy_coding_mode_flag;
++}
++
+ static void
+ anv_h264_emit_vdenc_pipe_mode_select(struct anv_cmd_buffer *cmd,
+                                      const VkVideoEncodeInfoKHR *enc_info,
+                                      bool brc_enabled)
+ {
++#if GFX_VER >= 20
++   uint32_t *dw = anv_batch_emitn(&cmd->batch, GENX(VDENC_PIPE_MODE_SELECT_length), GENX(VDENC_PIPE_MODE_SELECT));
++   struct GENX(VDENC_PIPE_MODE_SELECT) vdenc_pipe_mode = { GENX(VDENC_PIPE_MODE_SELECT_header) };
++   {
++#else
+    anv_batch_emit(&cmd->batch, GENX(VDENC_PIPE_MODE_SELECT), vdenc_pipe_mode) {
++#endif
+       vdenc_pipe_mode.StandardSelect = SS_AVC;
+       vdenc_pipe_mode.PAKChromaSubSamplingType = _420;
+ #if GFX_VER >= 12
+@@ -864,8 +897,30 @@
+       /* media-driver: AvcBasicFeature MHW_SETPAR(VDENC_PIPE_MODE_SELECT), randomAccess = (CodingType == B_TYPE) */
+       vdenc_pipe_mode.IsRandomAccess =
+          anv_h264_frame_info(enc_info)->pStdPictureInfo->primary_pic_type == STD_VIDEO_H264_PICTURE_TYPE_B;
++      /* The same AvcBasicFeature reference prefetch ("override perf settings for AVC codec"): verticalShift32Minus1 0,
++       * hzShift32Minus1 15, numVerticalReqMinus1 5, numHzReqMinus1 0, the other DW2 fields at the
++       * MHW_PAR_T(VDENC_PIPE_MODE_SELECT) defaults (HME region prefetch on, top prefetch mode 0, left prefetch at wrap
++       * around on, prefetch offset 0).
++       */
++      vdenc_pipe_mode.HMERegionPrefetchEnable = true;
++      vdenc_pipe_mode.TopPrefetchEnableMode = 0;
++      vdenc_pipe_mode.LeftPrefetchAtWrapAround = true;
++      vdenc_pipe_mode.VerticalShift32Minus1 = 0;
++      vdenc_pipe_mode.HzShift32Minus1 = 15;
++      vdenc_pipe_mode.NumberofVerticalRequests = 5;
++      vdenc_pipe_mode.NumberofHorizontalRequests = 0;
++      vdenc_pipe_mode.PrefetchOffsetforReference = 0;
+ #endif
+    }
++#if GFX_VER >= 20
++   GENX(VDENC_PIPE_MODE_SELECT_pack)(&cmd->batch, dw, &vdenc_pipe_mode);
++   /* DW5 bit 17 = VdencPipeModeSelectPar0 = 1 and bit 8 = VdencPipeModeSelectPar1 = { 0, 0, 1, 1, 1, 1, 1 }[TU - 1]
++    * (AvcBasicFeature MHW_SETPAR(VDENC_PIPE_MODE_SELECT), packed by mhw_vdbox_vdenc_impl.h as
++    * VDENC_PIPE_MODE_SELECT_DW5_BIT17 / _DW5_BIT8 of mhw_vdbox_vdenc_hwcmd_xe2_hpm.h).
++    */
++   static const uint8_t par1[7] = { 0, 0, 1, 1, 1, 1, 1 };
++   dw[5] |= (1u << 17) | ((uint32_t)par1[anv_h264_target_usage(cmd) - 1] << 8);
++#endif
+ }
+ 
+ static void
+@@ -1073,6 +1128,10 @@
+       avc_img.FrameBitrateMinReport = true;
+       avc_img.ForceIPCMControl = true;
+       avc_img.TrellisQuantizationChromaDisable = true;
++      if (anv_h264_trellis_enabled(cmd, enc_info)) {
++         avc_img.TrellisQuantizationEnable = true;
++         avc_img.TrellisQuantizationRounding = 3;
++      }
+ 
+       avc_img.IntraMBConformanceMaxSize = 2700;
+       avc_img.InterMBConformanceMaxSize = 4095;
+@@ -1221,13 +1280,15 @@
+ 
+ #if GFX_VER >= 20
+    /* Xe2: VDENC_AVC_IMG_STATE is 26 dwords and takes the Xe2_HPM settings
+-    * (media-driver EncodeAvcVdencConstSettingsXe2_Hpm). Target usage 4, no
+-    * slice level rate control, rolling intra refresh or low delay mode, and
+-    * Wa_18011246551 is not set on Xe2.
++    * (media-driver EncodeAvcVdencConstSettingsXe2_Hpm) for the session's target
++    * usage. No slice level rate control, rolling intra refresh or low delay
++    * mode, and Wa_18011246551 is not set on Xe2.
+     */
+    const unsigned type = !is_inter ? 0 : !is_bframe ? 1 : 2;
+-   const unsigned tu = 4;
++   const unsigned tu = anv_h264_target_usage(cmd);
+    const bool ref_pic = frame_info->pStdPictureInfo->flags.is_reference;
++
++   img.TrellisQuantEn = anv_h264_trellis_enabled(cmd, enc_info);
+ 
+    uint32_t *dw = anv_batch_emitn(batch, GENX(VDENC_AVC_IMG_STATE_length),
+                                   GENX(VDENC_AVC_IMG_STATE));
+--- a/src/intel/vulkan/anv_video.c	2026-10-31 17:34:18
++++ b/src/intel/vulkan/anv_video.c	2026-11-02 02:40:39
+@@ -477,6 +477,8 @@
+ 
+       enc_caps->maxRateControlLayers = 1;
+       enc_caps->maxQualityLevels =
++         pVideoProfile->videoCodecOperation == VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR &&
++         pdevice->info.ver >= 20 ? ANV_H264_ENCODE_QUALITY_LEVELS :
+          pVideoProfile->videoCodecOperation == VK_VIDEO_CODEC_OPERATION_ENCODE_H265_BIT_KHR ?
+          ANV_H265_ENCODE_QUALITY_LEVELS :
+          pVideoProfile->videoCodecOperation == VK_VIDEO_CODEC_OPERATION_ENCODE_AV1_BIT_KHR ?
+--- a/src/intel/vulkan/anv_private.h	2026-10-31 17:35:23
++++ b/src/intel/vulkan/anv_private.h	2026-11-02 02:40:39
+@@ -7081,6 +7081,8 @@
+ #define ANV_VIDEO_H264_MAX_NUM_REF_FRAME 16
+ #define ANV_VIDEO_H265_MAX_NUM_REF_FRAME 16
+ #define ANV_VIDEO_H265_HCP_NUM_REF_FRAME 8
++/* H.264 quality levels 0/1/2 = VDEnc target usage 7/4/1 on Xe2 (see anv_h264_target_usage); one level before Xe2 */
++#define ANV_H264_ENCODE_QUALITY_LEVELS 3
+ #define ANV_H265_ENCODE_QUALITY_LEVELS 3
+ #define ANV_AV1_ENCODE_QUALITY_LEVELS 3
+ #define ANV_MAX_H265_CTB_SIZE 64

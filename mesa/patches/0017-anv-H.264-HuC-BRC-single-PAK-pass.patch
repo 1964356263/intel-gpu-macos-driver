@@ -1,0 +1,75 @@
+anv: run the H.264 HuC BRC as single PAK pass (on top of 0010..0016)
+
+The encode runs one PAK pass per frame but told the AVC BRC kernels there were two (UPD_MaxNumPass 2,
+INIT_SinglePassOnly 0) and compensated with a second BRC update right after the encode, which accounts each
+frame twice (once there, once in the next frame's update). Use media-driver's single pass VDEnc BRC
+(AvcEncodeBRC::EnableVdencSinglePass): INIT_SinglePassOnly 1, UPD_MaxNumPass 1, no post-encode update.
+1080p60 CBR 6 Mbit/s, 300 frames: 7.04 -> 6.32 Mbit/s (600 frames: 6.63 -> 6.16); the remainder is the
+initial buffer (ffmpeg leaves virtualBufferSizeInMs 0, the driver then uses 2 s / 1 s initial).
+
+--- a/src/intel/vulkan/genX_cmd_video_enc.c	2026-10-29 17:04:25
++++ b/src/intel/vulkan/genX_cmd_video_enc.c	2026-10-29 17:02:43
+@@ -1878,11 +1878,8 @@
+ }
+ 
+ static void
+-anv_h264_brc_store_pak_stats(struct anv_cmd_buffer *cmd,
+-                             const VkVideoEncodeInfoKHR *enc_info,
+-                             struct anv_state brc_input_slb)
++anv_h264_brc_store_pak_stats(struct anv_cmd_buffer *cmd)
+ {
+-   const struct VkVideoEncodeH264PictureInfoKHR *frame_info = anv_h264_frame_info(enc_info);
+    const struct anv_video_session *vid = cmd->video.vid;
+ 
+    /* Stage this frame's PAK MMIO outputs into the persistent PAK info
+@@ -1906,15 +1903,9 @@
+       srm.MemoryAddress = anv_address_add(pak_info, 8);
+    }
+ 
+-   /* Second BRC pass: after the encode, run the HuC BRC Update again with
+-    * this frame's actual PAK result (now staged in PAK_INFO) so it folds
+-    * the running rate state into the history buffer (region 0).
+-    * The pass-0 update only predicts QP and does
+-    * not write history, so without this pass the history never advances and
+-    * the QP stays pinned at the init value.
+-    */
+-   anv_video_emit_mi_flush_dw(cmd, true);
+-   anv_h264_brc_emit_huc_update(cmd, frame_info, 1, brc_input_slb);
++   /* The next frame's HuC BRC Update (single pass, see INIT_SinglePassOnly) reads them from PAK_INFO and folds
++    * this frame into its history. A second update right after the encode would account the same frame twice
++    * (300 frames CBR 6 Mbit/s 1080p60: +17% with it, +5% without, the excess being the initial buffer). */
+ }
+ 
+ #endif
+@@ -2009,7 +2000,7 @@
+ 
+ #if GFX_VER >= 12
+    if (brc_enabled) {
+-      anv_h264_brc_store_pak_stats(cmd, enc_info, brc_input_slb);
++      anv_h264_brc_store_pak_stats(cmd);
+       vid->rc.frame_counter++;
+    }
+ #endif
+--- a/src/intel/vulkan/genX_huc_brc.h	2026-10-29 17:04:25
++++ b/src/intel/vulkan/genX_huc_brc.h	2026-10-29 17:02:28
+@@ -507,6 +507,10 @@
+    dmem->INIT_BotQPDeltaThrForAdapt2Pass_U8 = 1;
+    dmem->INIT_TopFrmSzThrForAdapt2Pass_U8 = 32;
+    dmem->INIT_BotFrmSzThrForAdapt2Pass_U8 = 24;
++   /* media-driver's single pass VDEnc BRC (AvcEncodeBRC::EnableVdencSinglePass, BRCPrecision 1): the encode
++    * runs one PAK pass per frame, so the kernel must not plan its rate model around a second one. Told
++    * there were two (MaxNumPass 2) it defers the history update to a pass that never comes. */
++   dmem->INIT_SinglePassOnly = 1;
+ }
+ 
+ static void
+@@ -551,7 +555,8 @@
+    dmem->UPD_SLBB_Size_U16 = ANV_H264_BRC_SLB_SIZE;
+    dmem->UPD_AvcImgStateOffset_U16 = 0;
+    dmem->UPD_PAKPassNum_U8 = pass;
+-   dmem->UPD_MaxNumPass_U8 = 2;
++   /* One PAK pass: the encode never runs the kernel's re-encode pass, see INIT_SinglePassOnly */
++   dmem->UPD_MaxNumPass_U8 = 1;
+ 
+    static const uint16_t start_gadj_frame[4] = { 10, 50, 100, 150 };
+    static const uint8_t start_gadj_mult[5] = { 1, 1, 3, 2, 1 };

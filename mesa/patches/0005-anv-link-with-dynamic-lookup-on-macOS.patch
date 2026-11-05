@@ -1,0 +1,43 @@
+From 9b84189307c12d88198a3c6ed7b730b4748c01a1 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Yusuf=20=C4=B0hsan=20KILIN=C3=87?= <78423442+yusufklncc@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 05:25:05 +0300
+Subject: [PATCH 5/6] anv: link with dynamic lookup on macOS
+
+The entrypoints anv does not implement are weak references that are
+never defined; ld64 rejects them unless undefined symbols may be looked
+up at run time, as kosmickrisp already does.
+
+Generated-by: LLM
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/intel/vulkan/meson.build | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/src/intel/vulkan/meson.build b/src/intel/vulkan/meson.build
+index 06697c02c19..9b23a68b86c 100644
+--- a/src/intel/vulkan/meson.build
++++ b/src/intel/vulkan/meson.build
+@@ -311,6 +311,13 @@ libanv_common = static_library(
+   dependencies : anv_deps
+ )
+ 
++anv_link_args = []
++if host_machine.system() == 'darwin'
++  # Entrypoints anv does not implement are weak references to nothing, which
++  # ld64 only accepts with dynamic lookup (same as kosmickrisp).
++  anv_link_args += '-Wl,-undefined,dynamic_lookup'
++endif
++
+ libvulkan_intel = shared_library(
+   'vulkan_intel',
+   [files('anv_gem.c'), anv_entrypoints[0], bvh_spv],
+@@ -331,7 +338,8 @@ libvulkan_intel = shared_library(
+   ],
+   c_args : anv_flags,
+   gnu_symbol_visibility : 'hidden',
+-  link_args : [vulkan_icd_link_args, ld_args_build_id, ld_args_bsymbolic, ld_args_gc_sections],
++  link_args : [vulkan_icd_link_args, ld_args_build_id, ld_args_bsymbolic, ld_args_gc_sections,
++               anv_link_args],
+   link_depends : vulkan_icd_link_depends,
+   install : true,
+ )

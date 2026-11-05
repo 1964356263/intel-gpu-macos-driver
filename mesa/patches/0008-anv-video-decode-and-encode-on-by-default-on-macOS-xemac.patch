@@ -1,0 +1,43 @@
+diff --git a/src/intel/vulkan/anv_instance.c b/src/intel/vulkan/anv_instance.c
+index c62327984ea..beb9ebb31fa 100644
+--- a/src/intel/vulkan/anv_instance.c
++++ b/src/intel/vulkan/anv_instance.c
+@@ -28,6 +28,14 @@ static void
+ process_anv_debug_variable_once(void)
+ {
+    anv_debug = parse_debug_string(os_get_option("ANV_DEBUG"), debug_control);
++#ifdef HAVE_XEMAC
++   /* macOS over B580.kext: Vulkan Video decode and encode are on without ANV_DEBUG=video-decode,video-encode
++    * (VideoToolbox and ffmpeg's Vulkan hwaccel use them system-wide). ANV_NO_VIDEO=1 turns them off again. The
++    * extensions and video queues still need the media GT's engines, which the kernel reports only when it has them.
++    */
++   if (!debug_get_bool_option("ANV_NO_VIDEO", false))
++      anv_debug |= ANV_DEBUG_VIDEO_DECODE | ANV_DEBUG_VIDEO_ENCODE;
++#endif
+ }
+ 
+ VkResult anv_EnumerateInstanceVersion(
+diff --git a/src/intel/vulkan/anv_physical_device.c b/src/intel/vulkan/anv_physical_device.c
+index 8fb8496fdb9..b06bc5b3181 100644
+--- a/src/intel/vulkan/anv_physical_device.c
++++ b/src/intel/vulkan/anv_physical_device.c
+@@ -373,9 +373,17 @@ get_device_extensions(const struct anv_physical_device *device,
+                                           device->info.verx10 == 200;
+    const bool hw_video_encode_h264_supported = device->info.verx10 <= 125;
+ 
+-   const bool video_encode_enabled = hw_video_encode_supported &&
++#ifdef HAVE_XEMAC
++   /* video is on by default here (anv_instance.c): advertise it only when the kernel reports a video engine (B580.kext
++    * brings the media GT up only when asked, debug.b580.video) */
++   const bool has_vcs = device->engine_info &&
++      intel_engines_count(device->engine_info, INTEL_ENGINE_CLASS_VIDEO) > 0;
++#else
++   const bool has_vcs = true;
++#endif
++   const bool video_encode_enabled = hw_video_encode_supported && has_vcs &&
+                                      ANV_DEBUG(VIDEO_ENCODE);
+-   const bool video_decode_enabled = ANV_DEBUG(VIDEO_DECODE);
++   const bool video_decode_enabled = has_vcs && ANV_DEBUG(VIDEO_DECODE);
+ 
+    if (VIDEO_CODEC_H265DEC && video_decode_enabled && !device->has_huc)
+       debug_warn_once("HuC firmware is not loaded, disabling H.265 video decoding");

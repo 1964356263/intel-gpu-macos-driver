@@ -1,0 +1,46 @@
+From 7504b7aca17dcc5d13abc8b6a33ffb30d3b0d98b Mon Sep 17 00:00:00 2001
+From: "Emil J. Tywoniak" <emil@tywoniak.eu>
+Date: Sat, 17 Oct 2026 02:27:05 +0200
+Subject: [PATCH 13/18] anv: fix the HEVC encode collocated MV buffer index
+
+collocated_ref_idx is an index into RefPicList0/1, but dpb_idx is indexed
+by DPB slot. Look up the slot of the collocated reference first. This
+only worked when the collocated reference happened to sit in the slot
+with the same number as its list index.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_014zf3d6ZuUHNvTB81JRfHds
+---
+ src/intel/vulkan/genX_cmd_video_enc.c | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/src/intel/vulkan/genX_cmd_video_enc.c b/src/intel/vulkan/genX_cmd_video_enc.c
+index e311d4e9f42..91af084cc03 100644
+--- a/src/intel/vulkan/genX_cmd_video_enc.c
++++ b/src/intel/vulkan/genX_cmd_video_enc.c
+@@ -3477,6 +3477,7 @@ anv_h265_emit_hcp_slice_state(struct anv_cmd_buffer *cmd,
+    const StdVideoH265PictureParameterSet *pps = anv_h265_pps(cmd, enc_info);
+    const VkVideoEncodeH265NaluSliceSegmentInfoKHR *nalu = &frame_info->pNaluSliceSegmentEntries[slice_id];
+    const StdVideoEncodeH265SliceSegmentHeader *slice_header = nalu->pStdSliceSegmentHeader;
++   const StdVideoEncodeH265ReferenceListsInfo *ref_lists = frame_info->pStdPictureInfo->pRefLists;
+ 
+    bool is_last = (slice_id == frame_info->naluSliceSegmentEntryCount - 1);
+    uint32_t slice_type = slice_header->slice_type % 5;
+@@ -3531,7 +3532,13 @@ anv_h265_emit_hcp_slice_state(struct anv_cmd_buffer *cmd,
+       slice.CABACInit = slice_header->flags.cabac_init_flag;
+       slice.MaxMergeIndex = slice_header->MaxNumMergeCand - 1;
+ 
+-      slice.CollocatedMVTemporalBufferIndex = dpb_idx[slice_header->collocated_ref_idx];
++      if (slice_type != STD_VIDEO_H265_SLICE_TYPE_I && ref_lists) {
++         const uint8_t col_slot = slice_header->flags.collocated_from_l0_flag ?
++            ref_lists->RefPicList0[slice_header->collocated_ref_idx] :
++            ref_lists->RefPicList1[slice_header->collocated_ref_idx];
++         if (col_slot < ANV_VIDEO_H265_MAX_NUM_REF_FRAME)
++            slice.CollocatedMVTemporalBufferIndex = dpb_idx[col_slot];
++      }
+       assert(slice.CollocatedMVTemporalBufferIndex < ANV_VIDEO_H265_HCP_NUM_REF_FRAME);
+ 
+       /* For VDEnc mode */
+-- 
+2.54.0 (Apple Git-157)
+

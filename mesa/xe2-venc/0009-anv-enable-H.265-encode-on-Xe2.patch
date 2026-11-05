@@ -1,0 +1,66 @@
+From 723ed3be6e2464b41d8c9f58def5504ba19ad9d0 Mon Sep 17 00:00:00 2001
+From: "Emil J. Tywoniak" <emil@tywoniak.eu>
+Date: Thu, 15 Oct 2026 00:42:20 +0200
+Subject: [PATCH 09/18] anv: enable H.265 encode on Xe2
+
+---
+ src/intel/vulkan/anv_physical_device.c | 13 +++++++++----
+ src/intel/vulkan/anv_video.c           |  4 ++++
+ 2 files changed, 13 insertions(+), 4 deletions(-)
+
+diff --git a/src/intel/vulkan/anv_physical_device.c b/src/intel/vulkan/anv_physical_device.c
+index 7f1cec3de1b..8fb8496fdb9 100644
+--- a/src/intel/vulkan/anv_physical_device.c
++++ b/src/intel/vulkan/anv_physical_device.c
+@@ -368,7 +368,10 @@ get_device_extensions(const struct anv_physical_device *device,
+                       struct vk_device_extension_table *ext)
+ {
+    const bool rt_enabled = ANV_SUPPORT_RT && device->info.has_ray_tracing;
+-   const bool hw_video_encode_supported = device->info.verx10 <= 125;
++   /* Xe2 only has H.265 encode wired up so far. */
++   const bool hw_video_encode_supported = device->info.verx10 <= 125 ||
++                                          device->info.verx10 == 200;
++   const bool hw_video_encode_h264_supported = device->info.verx10 <= 125;
+ 
+    const bool video_encode_enabled = hw_video_encode_supported &&
+                                      ANV_DEBUG(VIDEO_ENCODE);
+@@ -507,7 +510,8 @@ get_device_extensions(const struct anv_physical_device *device,
+       .KHR_video_decode_av1                  = device->info.ver >= 12 && VIDEO_CODEC_AV1DEC && video_decode_enabled,
+       .KHR_video_decode_vp9                  = VIDEO_CODEC_VP9DEC && video_decode_enabled,
+       .KHR_video_encode_queue                = video_encode_enabled,
+-      .KHR_video_encode_h264                 = VIDEO_CODEC_H264ENC && video_encode_enabled,
++      .KHR_video_encode_h264                 = VIDEO_CODEC_H264ENC && video_encode_enabled &&
++                                               hw_video_encode_h264_supported,
+       .KHR_video_encode_h265                 = device->info.ver >= 12 && VIDEO_CODEC_H265ENC && video_encode_enabled,
+       .KHR_video_encode_av1                  = device->info.verx10 == 125 && VIDEO_CODEC_AV1ENC && video_encode_enabled,
+       .KHR_video_maintenance1                = (video_decode_enabled &&
+@@ -3488,8 +3492,9 @@ void anv_GetPhysicalDeviceQueueFamilyProperties2(
+                }
+ 
+                if (queue_family->queueFlags & VK_QUEUE_VIDEO_ENCODE_BIT_KHR) {
+-                  prop->videoCodecOperations |= VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR |
+-                                                VK_VIDEO_CODEC_OPERATION_ENCODE_H265_BIT_KHR;
++                  prop->videoCodecOperations |= VK_VIDEO_CODEC_OPERATION_ENCODE_H265_BIT_KHR;
++                  if (pdevice->info.verx10 <= 125)
++                     prop->videoCodecOperations |= VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR;
+                   if (pdevice->info.verx10 == 125)
+                      prop->videoCodecOperations |= VK_VIDEO_CODEC_OPERATION_ENCODE_AV1_BIT_KHR;
+                }
+diff --git a/src/intel/vulkan/anv_video.c b/src/intel/vulkan/anv_video.c
+index 82c1b03f9a4..75770bf7e06 100644
+--- a/src/intel/vulkan/anv_video.c
++++ b/src/intel/vulkan/anv_video.c
+@@ -222,6 +222,10 @@ video_profile_supported(struct anv_physical_device *pdevice,
+ 
+    case VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR:
+    case VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR: {
++      if (profile->videoCodecOperation == VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR &&
++          pdevice->info.verx10 > 125)
++         return VK_ERROR_VIDEO_PROFILE_CODEC_NOT_SUPPORTED_KHR;
++
+       if (profile->lumaBitDepth != VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR)
+          return VK_ERROR_VIDEO_PROFILE_FORMAT_NOT_SUPPORTED_KHR;
+       break;
+-- 
+2.54.0 (Apple Git-157)
+

@@ -1,0 +1,366 @@
+diff --git a/src/intel/vulkan/anv_allocator.c b/src/intel/vulkan/anv_allocator.c
+index d4ddc748c7b..b110b0048a1 100644
+--- a/src/intel/vulkan/anv_allocator.c
++++ b/src/intel/vulkan/anv_allocator.c
+@@ -1843,6 +1843,33 @@ anv_device_map_bo(struct anv_device *device,
+       if (placed_addr)
+          return map_placed_addr_slab(device, bo, offset, size, placed_addr, map_out);
+ 
++#ifdef HAVE_XEMAC
++      /* xemac maps a GEM object as one IOKit mapping of the whole object
++       * (IOConnectMapMemory64, page tables set up front), and xe_gem_mmap()
++       * reaches a slab child by mapping its parent up to the child's end. Doing
++       * that for every child map, and tearing it down at every unmap, made each
++       * new batch buffer of each command buffer (slab children of the batch
++       * pool) cost an IOKit map + unmap: a third of Minecraft's render thread.
++       * Map the parent once, the first time any child needs a CPU pointer, and
++       * hand out pointers into it; anv_device_unmap_bo() leaves such pointers
++       * alone and anv_device_release_bo() takes the parent's map down with it.
++       */
++      void *pmap = p_atomic_read(&real->map);
++      if (pmap == NULL) {
++         void *m = device->kmd_backend->gem_mmap(device, real, 0, real->size, NULL);
++         if (unlikely(m == MAP_FAILED))
++            return vk_errorf(device, VK_ERROR_MEMORY_MAP_FAILED, "mmap failed: %m");
++         pmap = p_atomic_cmpxchg(&real->map, NULL, m);
++         if (pmap != NULL)
++            xemac_munmap(m, real->size);   /* another thread mapped it first */
++         else
++            pmap = m;
++      }
++      if (map_out)
++         *map_out = (char *)pmap + (bo->offset - real->offset) + offset;
++      return VK_SUCCESS;
++#endif
++
+       offset += (bo->offset - real->offset);
+ 
+       const uint64_t page_size = device->physical->page_size;
+@@ -1882,6 +1909,12 @@ anv_device_unmap_bo(struct anv_device *device,
+ 
+    struct anv_bo *real = anv_bo_get_real(bo);
+    if (real != bo) {
++#ifdef HAVE_XEMAC
++      /* A pointer into the parent's mapping (anv_device_map_bo): nothing to undo. */
++      char *pmap = p_atomic_read(&real->map);
++      if (!replace && pmap && (char *)map >= pmap && (char *)map < pmap + real->size)
++         return VK_SUCCESS;
++#endif
+       const uint64_t page_size = device->physical->page_size;
+       uint64_t slab_offset = bo->offset - real->offset;
+ 
+diff --git a/src/intel/vulkan/anv_descriptor_set.c b/src/intel/vulkan/anv_descriptor_set.c
+index 6041453c5ce..db629056669 100644
+--- a/src/intel/vulkan/anv_descriptor_set.c
++++ b/src/intel/vulkan/anv_descriptor_set.c
+@@ -1388,7 +1388,7 @@ VkResult anv_CreateDescriptorPool(
+     */
+    anv_state_stream_init(&pool->surface_state_stream,
+                          anv_device_get_internal_surface_state_pool(device), 4096);
+-   pool->surface_state_free_list = NULL;
++   util_dynarray_init(&pool->surface_state_free_list, NULL);
+ 
+    list_inithead(&pool->desc_sets);
+ 
+@@ -1431,6 +1431,7 @@ void anv_DestroyDescriptorPool(
+    util_vma_heap_finish(&pool->host_heap);
+ 
+    anv_state_stream_finish(&pool->surface_state_stream);
++   util_dynarray_fini(&pool->surface_state_free_list);
+ 
+    anv_descriptor_pool_heap_fini(device, pool, &pool->surfaces);
+    anv_descriptor_pool_heap_fini(device, pool, &pool->samplers);
+@@ -1461,7 +1462,7 @@ VkResult anv_ResetDescriptorPool(
+    anv_state_stream_finish(&pool->surface_state_stream);
+    anv_state_stream_init(&pool->surface_state_stream,
+                          anv_device_get_internal_surface_state_pool(device), 4096);
+-   pool->surface_state_free_list = NULL;
++   util_dynarray_clear(&pool->surface_state_free_list);
+ 
+    return VK_SUCCESS;
+ }
+@@ -1499,22 +1500,15 @@ anv_descriptor_pool_free_set(struct anv_descriptor_pool *pool,
+                       set->size);
+ }
+ 
+-struct surface_state_free_list_entry {
+-   void *next;
+-   struct anv_state state;
+-};
+-
+ static struct anv_state
+ anv_descriptor_pool_alloc_state(struct anv_descriptor_pool *pool)
+ {
+    assert(!pool->host_only);
+ 
+-   struct surface_state_free_list_entry *entry =
+-      pool->surface_state_free_list;
+-
+-   if (entry) {
+-      struct anv_state state = entry->state;
+-      pool->surface_state_free_list = entry->next;
++   if (util_dynarray_num_elements(&pool->surface_state_free_list,
++                                  struct anv_state) > 0) {
++      struct anv_state state =
++         util_dynarray_pop(&pool->surface_state_free_list, struct anv_state);
+       assert(state.alloc_size == ANV_SURFACE_STATE_SIZE);
+       return state;
+    } else {
+@@ -1530,11 +1524,16 @@ anv_descriptor_pool_free_state(struct anv_descriptor_pool *pool,
+                                struct anv_state state)
+ {
+    assert(state.alloc_size);
+-   /* Put the buffer view surface state back on the free list. */
+-   struct surface_state_free_list_entry *entry = state.map;
+-   entry->next = pool->surface_state_free_list;
+-   entry->state = state;
+-   pool->surface_state_free_list = entry;
++   /* Put the buffer view surface state back on the free list. The list is in
++    * host memory; nothing is written into (or later read back from) the
++    * state's own write-combined mapping. If the list cannot grow the state is
++    * simply not reused: the pool's stream still owns it and frees it with the
++    * pool.
++    */
++   struct anv_state *slot =
++      util_dynarray_grow(&pool->surface_state_free_list, struct anv_state, 1);
++   if (slot)
++      *slot = state;
+ }
+ 
+ static size_t
+diff --git a/src/intel/vulkan/anv_instance.c b/src/intel/vulkan/anv_instance.c
+index c62327984ea..beb9ebb31fa 100644
+--- a/src/intel/vulkan/anv_instance.c
++++ b/src/intel/vulkan/anv_instance.c
+@@ -28,6 +28,14 @@ static void
+ process_anv_debug_variable_once(void)
+ {
+    anv_debug = parse_debug_string(os_get_option("ANV_DEBUG"), debug_control);
++#ifdef HAVE_XEMAC
++   /* macOS over B580.kext: Vulkan Video decode and encode are on without ANV_DEBUG=video-decode,video-encode
++    * (VideoToolbox and ffmpeg's Vulkan hwaccel use them system-wide). ANV_NO_VIDEO=1 turns them off again. The
++    * extensions and video queues still need the media GT's engines, which the kernel reports only when it has them.
++    */
++   if (!debug_get_bool_option("ANV_NO_VIDEO", false))
++      anv_debug |= ANV_DEBUG_VIDEO_DECODE | ANV_DEBUG_VIDEO_ENCODE;
++#endif
+ }
+ 
+ VkResult anv_EnumerateInstanceVersion(
+diff --git a/src/intel/vulkan/anv_nvmtl_surface.c b/src/intel/vulkan/anv_nvmtl_surface.c
+new file mode 100644
+index 00000000000..6f39c64e6af
+--- /dev/null
++++ b/src/intel/vulkan/anv_nvmtl_surface.c
+@@ -0,0 +1,128 @@
++/*
++ * Implicit IOSurface synchronization for the nullmoth Metal plugin on B580.kext (macOS, xemac).
++ *
++ * B580.kext keeps, per IOSurface ID, the fences of the jobs that last wrote and read the surface (uapi/b580_drm.h, the
++ * dma-resv model). These entry points let the plugin, which only sees Vulkan objects, attach a submission's fence to a
++ * surface and import a surface's fences into a timeline semaphore it then waits on in vkQueueSubmit, so a consumer in
++ * another process (WindowServer compositing a game's frame) waits on the GPU instead of the producer waiting on the CPU.
++ * They are looked up with dlsym; a plugin that does not find them, or a kernel without B580_CAP_SURFACE_FENCES, keeps
++ * the CPU-side ordering.
++ */
++#include "anv_private.h"
++
++#include "vk_drm_syncobj.h"
++#include "vk_fence.h"
++#include "vk_semaphore.h"
++
++#include "drm-uapi/drm.h"
++#include "../../../../b580/uapi/b580_drm.h"
++
++PUBLIC VkResult nvmtl_anv_surface_cap_v1(VkDevice _device, uint32_t *supported);
++PUBLIC VkResult nvmtl_anv_surface_attach_v1(VkDevice _device, VkFence fence, VkSemaphore sem, uint64_t value,
++                                            uint32_t surface_id, uint32_t flags);
++PUBLIC VkResult nvmtl_anv_surface_import_v1(VkDevice _device, VkSemaphore sem, uint32_t surface_id, uint32_t flags,
++                                            uint64_t *wait_value, uint32_t *count);
++PUBLIC VkResult nvmtl_anv_surface_wait_v1(VkDevice _device, uint32_t surface_id, uint32_t flags, int64_t timeout_abs_ns);
++
++/* intel_ioctl restarts on EAGAIN, which ATTACH returns for a point that has no fence yet: retry on EINTR only */
++static int
++nvmtl_ioctl(int fd, unsigned long request, void *arg)
++{
++   int ret;
++   do {
++#ifdef HAVE_XEMAC
++      ret = xemac_ioctl(fd, request, arg);
++#else
++      ret = ioctl(fd, request, arg);
++#endif
++   } while (ret == -1 && errno == EINTR);
++   return ret;
++}
++
++static struct vk_drm_syncobj *
++nvmtl_syncobj_of(VkFence _fence, VkSemaphore _sem)
++{
++   struct vk_sync *sync = NULL;
++   if (_fence) {
++      VK_FROM_HANDLE(vk_fence, fence, _fence);
++      sync = vk_fence_get_active_sync(fence);
++   } else if (_sem) {
++      VK_FROM_HANDLE(vk_semaphore, sem, _sem);
++      sync = vk_semaphore_get_active_sync(sem);
++   }
++   return sync ? vk_sync_as_drm_syncobj(sync) : NULL;
++}
++
++static VkResult
++nvmtl_errno_result(int err)
++{
++   switch (err) {
++   case 0: return VK_SUCCESS;
++   case EAGAIN: return VK_NOT_READY;
++   case ETIME: case ETIMEDOUT: return VK_TIMEOUT;
++   case ENOSPC: case ENOMEM: return VK_ERROR_OUT_OF_HOST_MEMORY;
++   case ENOENT: case EINVAL: return VK_ERROR_UNKNOWN;
++   default: return VK_ERROR_FEATURE_NOT_PRESENT;
++   }
++}
++
++/* *supported = 1 when the kernel has the surface-fence ioctls (B580_CAP_SURFACE_FENCES). */
++PUBLIC VkResult
++nvmtl_anv_surface_cap_v1(VkDevice _device, uint32_t *supported)
++{
++   ANV_FROM_HANDLE(anv_device, device, _device);
++   struct drm_get_cap cap = { .capability = B580_CAP_SURFACE_FENCES };
++   *supported = 0;
++   if (intel_ioctl(device->fd, DRM_IOCTL_GET_CAP, &cap))
++      return VK_SUCCESS;
++   *supported = cap.value == 1;
++   return VK_SUCCESS;
++}
++
++/* Attach the fence of `fence` (a binary syncobj), or of timeline semaphore `sem` at `value`, to surface `surface_id`
++ * as a B580_SURFACE_FENCE_WRITE or _READ user. VK_NOT_READY: not submitted yet (EAGAIN). */
++PUBLIC VkResult
++nvmtl_anv_surface_attach_v1(VkDevice _device, VkFence fence, VkSemaphore sem, uint64_t value, uint32_t surface_id,
++                            uint32_t flags)
++{
++   ANV_FROM_HANDLE(anv_device, device, _device);
++   struct vk_drm_syncobj *s = nvmtl_syncobj_of(fence, sem);
++   if (!s)
++      return VK_ERROR_FEATURE_NOT_PRESENT;
++   struct drm_b580_surface_fence_attach a = {
++      .surface_id = surface_id, .syncobj = s->syncobj, .point = fence ? 0 : value, .flags = flags,
++   };
++   return nvmtl_ioctl(device->fd, DRM_IOCTL_B580_SURFACE_FENCE_ATTACH, &a) ? nvmtl_errno_result(errno) : VK_SUCCESS;
++}
++
++/* Add the fences of surface `surface_id` that a B580_SURFACE_FENCE_READER or _WRITER must wait for as new points of
++ * timeline semaphore `sem` (one used for nothing else). *wait_value: the point to wait on, 0 when there is nothing. */
++PUBLIC VkResult
++nvmtl_anv_surface_import_v1(VkDevice _device, VkSemaphore sem, uint32_t surface_id, uint32_t flags,
++                            uint64_t *wait_value, uint32_t *count)
++{
++   ANV_FROM_HANDLE(anv_device, device, _device);
++   *wait_value = 0;
++   if (count)
++      *count = 0;
++   struct vk_drm_syncobj *s = nvmtl_syncobj_of(VK_NULL_HANDLE, sem);
++   if (!s || !(s->base.flags & VK_SYNC_IS_TIMELINE))
++      return VK_ERROR_FEATURE_NOT_PRESENT;
++   struct drm_b580_surface_fence_import m = { .surface_id = surface_id, .syncobj = s->syncobj, .flags = flags };
++   if (nvmtl_ioctl(device->fd, DRM_IOCTL_B580_SURFACE_FENCE_IMPORT, &m))
++      return nvmtl_errno_result(errno);
++   *wait_value = m.count_out ? m.point_out : 0;
++   if (count)
++      *count = m.count_out;
++   return VK_SUCCESS;
++}
++
++/* Wait on the CPU until the fences of surface `surface_id` that `flags` names have signaled, or until
++ * `timeout_abs_ns` (CLOCK_UPTIME_RAW; 0 polls). VK_TIMEOUT when it ran out. */
++PUBLIC VkResult
++nvmtl_anv_surface_wait_v1(VkDevice _device, uint32_t surface_id, uint32_t flags, int64_t timeout_abs_ns)
++{
++   ANV_FROM_HANDLE(anv_device, device, _device);
++   struct drm_b580_surface_fence_wait w = { .surface_id = surface_id, .flags = flags, .timeout_ns = timeout_abs_ns };
++   return nvmtl_ioctl(device->fd, DRM_IOCTL_B580_SURFACE_FENCE_WAIT, &w) ? nvmtl_errno_result(errno) : VK_SUCCESS;
++}
+diff --git a/src/intel/vulkan/anv_physical_device.c b/src/intel/vulkan/anv_physical_device.c
+index 8fb8496fdb9..b06bc5b3181 100644
+--- a/src/intel/vulkan/anv_physical_device.c
++++ b/src/intel/vulkan/anv_physical_device.c
+@@ -373,9 +373,17 @@ get_device_extensions(const struct anv_physical_device *device,
+                                           device->info.verx10 == 200;
+    const bool hw_video_encode_h264_supported = device->info.verx10 <= 125;
+ 
+-   const bool video_encode_enabled = hw_video_encode_supported &&
++#ifdef HAVE_XEMAC
++   /* video is on by default here (anv_instance.c): advertise it only when the kernel reports a video engine (B580.kext
++    * brings the media GT up only when asked, debug.b580.video) */
++   const bool has_vcs = device->engine_info &&
++      intel_engines_count(device->engine_info, INTEL_ENGINE_CLASS_VIDEO) > 0;
++#else
++   const bool has_vcs = true;
++#endif
++   const bool video_encode_enabled = hw_video_encode_supported && has_vcs &&
+                                      ANV_DEBUG(VIDEO_ENCODE);
+-   const bool video_decode_enabled = ANV_DEBUG(VIDEO_DECODE);
++   const bool video_decode_enabled = has_vcs && ANV_DEBUG(VIDEO_DECODE);
+ 
+    if (VIDEO_CODEC_H265DEC && video_decode_enabled && !device->has_huc)
+       debug_warn_once("HuC firmware is not loaded, disabling H.265 video decoding");
+diff --git a/src/intel/vulkan/anv_private.h b/src/intel/vulkan/anv_private.h
+index 05446e7c2a4..f9e8986d561 100644
+--- a/src/intel/vulkan/anv_private.h
++++ b/src/intel/vulkan/anv_private.h
+@@ -68,6 +68,7 @@
+ #include "util/set.h"
+ #include "util/sparse_array.h"
+ #include "util/u_atomic.h"
++#include "util/u_dynarray.h"
+ #if DETECT_OS_ANDROID
+ #include "util/u_gralloc/u_gralloc.h"
+ #endif
+@@ -3919,7 +3920,13 @@ struct anv_descriptor_pool {
+    struct anv_descriptor_pool_heap samplers;
+ 
+    struct anv_state_stream surface_state_stream;
+-   void *surface_state_free_list;
++   /* Freed surface states (struct anv_state) ready for reuse. Kept in host
++    * memory: the states themselves live in the internal surface state pool,
++    * which on discrete GPUs is write-combined VRAM, so a free list threaded
++    * through the states made every allocation a series of uncached reads
++    * across PCIe (~1 us each).
++    */
++   struct util_dynarray surface_state_free_list;
+ 
+    /** List of anv_descriptor_set. */
+    struct list_head desc_sets;
+diff --git a/src/intel/vulkan/genX_query.c b/src/intel/vulkan/genX_query.c
+index ac82020b3ef..6c7d8f8d0a2 100644
+--- a/src/intel/vulkan/genX_query.c
++++ b/src/intel/vulkan/genX_query.c
+@@ -355,9 +355,15 @@ VkResult genX(CreateQueryPool)(
+       size += (uint64_t)pool->n_passes * pool->khr_perf_preamble_stride;
+    }
+ 
++   /* System memory (cached, snooped by the GPU): results and availability
++    * are read by the CPU, and on a discrete GPU a VRAM query pool is
++    * write-combined, so every vkGetQueryPoolResults read crossed PCIe
++    * uncached (~1 us per load).
++    */
+    result = anv_device_alloc_bo(device, "query-pool", size,
+                                 ANV_BO_ALLOC_MAPPED |
+                                 ANV_BO_ALLOC_HOST_CACHED_COHERENT |
++                                ANV_BO_ALLOC_NO_LOCAL_MEM |
+                                 ANV_BO_ALLOC_CAPTURE,
+                                 0 /* explicit_address */,
+                                 &pool->bo);
+diff --git a/src/intel/vulkan/meson.build b/src/intel/vulkan/meson.build
+index 9b23a68b86c..f8d0461eb4a 100644
+--- a/src/intel/vulkan/meson.build
++++ b/src/intel/vulkan/meson.build
+@@ -204,6 +204,7 @@ libanv_files = files(
+   'anv_debug.c',
+   'anv_descriptor_set.c',
+   'anv_device.c',
++  'anv_nvmtl_surface.c',
+   'anv_dgc_layout.c',
+   'anv_dgc_set.c',
+   'anv_embedded_sampler.c',

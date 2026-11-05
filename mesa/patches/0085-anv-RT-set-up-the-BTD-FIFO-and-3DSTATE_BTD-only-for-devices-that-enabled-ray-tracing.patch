@@ -1,0 +1,83 @@
+From: Yusuf İhsan KILINÇ
+Subject: [PATCH 0085] anv: RT, set up the BTD FIFO and 3DSTATE_BTD only for devices that enabled ray tracing
+
+On top of the installed Mesa 935ef655 (src/mesa-onehandle working tree, a3ad934 + 0048 0049 0071 0073-0083).
+Only has an effect with -Dintel-rt=enabled (ANV_SUPPORT_RT=1); the production builds use intel-rt=disabled,
+where anv_device_uses_btd() is constant false, as the old condition was. Built in a copy (src/mesa-rt,
+build-rt); NOT installed (test package ~/b580/mesa-rt-test).
+
+No build fix was needed: 935ef655's tree configures and builds for x86_64 macOS with intel-rt=enabled as is
+(glslangValidator 16.6.0 from Homebrew compiles the BVH shaders; no LLVM/clang-OpenCL needed beyond the
+system mesa_clc the production build already uses).
+
+With ANV_SUPPORT_RT=1 upstream gives every VkDevice of an RT-capable GPU a 128 KiB-per-DSS BTD FIFO BO
+("rt-btd-fifo", 2.5 MiB on the B580's 20 DSS) and emits 3DSTATE_BTD into each queue's initial state, also for
+devices that never use ray tracing. The other RT resources already follow the enabled extensions: the ray query
+BOs (KHR_ray_query), the "bvh build" BO pool (KHR_acceleration_structure) and the RT trampoline shaders
+(KHR_ray_tracing_pipeline). Do the same for the BTD FIFO and 3DSTATE_BTD: set up for a device that enabled
+VK_KHR_ray_tracing_pipeline or VK_KHR_ray_query (ray queries do not dispatch through BTD - their
+RT_DISPATCH_GLOBALS point at ray_query_bo - but they are kept in for safety), so a device without either gets
+exactly the initial state and BOs of the intel-rt=disabled build.
+
+--- a/src/intel/vulkan/anv_private.h
++++ b/src/intel/vulkan/anv_private.h
+@@ -2980,6 +2980,19 @@
+    } fault;
+ };
+ 
++/* The BTD FIFO (rt-btd-fifo) and 3DSTATE_BTD: set up for a device that
++ * enabled ray tracing pipelines or ray queries, as its ray query BOs, BVH
++ * build pool and RT shaders already are. A device without either never
++ * dispatches RT work and keeps the state of a build without ray tracing.
++ */
++static inline bool
++anv_device_uses_btd(const struct anv_device *device)
++{
++   return ANV_SUPPORT_RT && device->info->has_ray_tracing &&
++          (device->vk.enabled_extensions.KHR_ray_tracing_pipeline ||
++           device->vk.enabled_extensions.KHR_ray_query);
++}
++
+ static inline uint32_t
+ anv_printf_buffer_size(void)
+ {
+--- a/src/intel/vulkan/anv_device.c
++++ b/src/intel/vulkan/anv_device.c
+@@ -1200,7 +1200,7 @@
+    /* TODO(RT): Do we want some sort of data structure for this? */
+    memset(device->rt_scratch_bos, 0, sizeof(device->rt_scratch_bos));
+ 
+-   if (ANV_SUPPORT_RT && device->info->has_ray_tracing) {
++   if (anv_device_uses_btd(device)) {
+       /* The docs say to always allocate 128KB per DSS */
+       const uint32_t btd_fifo_bo_size =
+          128 * 1024 * intel_device_info_dual_subslice_id_bound(device->info);
+@@ -1410,7 +1410,7 @@
+  fail_default_pipeline_cache:
+    vk_pipeline_cache_destroy(device->vk.mem_cache, NULL);
+  fail_btd_fifo_bo:
+-   if (ANV_SUPPORT_RT && device->info->has_ray_tracing) {
++   if (anv_device_uses_btd(device)) {
+       ANV_DMR_BO_FREE(&device->vk.base, device->btd_fifo_bo);
+       anv_device_release_bo(device, device->btd_fifo_bo);
+    }
+@@ -1527,7 +1527,7 @@
+ 
+    anv_device_perf_finish(device);
+ 
+-   if (ANV_SUPPORT_RT && device->info->has_ray_tracing) {
++   if (anv_device_uses_btd(device)) {
+       ANV_DMR_BO_FREE(&device->vk.base, device->btd_fifo_bo);
+       anv_device_release_bo(device, device->btd_fifo_bo);
+    }
+--- a/src/intel/vulkan/genX_init_state.c
++++ b/src/intel/vulkan/genX_init_state.c
+@@ -346,7 +346,7 @@
+ #endif /* GFX_VER >= 12 */
+ 
+ #if GFX_VERx10 >= 125
+-   if (ANV_SUPPORT_RT && device->info->has_ray_tracing) {
++   if (anv_device_uses_btd(device)) {
+       anv_batch_emit(batch, GENX(3DSTATE_BTD), btd) {
+          uint32_t dispatch_timeout_counter =
+             device->physical->drirc.perf.rt_dispatch_timeout;

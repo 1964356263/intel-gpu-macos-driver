@@ -1,0 +1,146 @@
+diff --git a/src/intel/vulkan/anv_nvmtl_surface.c b/src/intel/vulkan/anv_nvmtl_surface.c
+new file mode 100644
+index 00000000000..6f39c64e6af
+--- /dev/null
++++ b/src/intel/vulkan/anv_nvmtl_surface.c
+@@ -0,0 +1,128 @@
++/*
++ * Implicit IOSurface synchronization for the nullmoth Metal plugin on B580.kext (macOS, xemac).
++ *
++ * B580.kext keeps, per IOSurface ID, the fences of the jobs that last wrote and read the surface (uapi/b580_drm.h, the
++ * dma-resv model). These entry points let the plugin, which only sees Vulkan objects, attach a submission's fence to a
++ * surface and import a surface's fences into a timeline semaphore it then waits on in vkQueueSubmit, so a consumer in
++ * another process (WindowServer compositing a game's frame) waits on the GPU instead of the producer waiting on the CPU.
++ * They are looked up with dlsym; a plugin that does not find them, or a kernel without B580_CAP_SURFACE_FENCES, keeps
++ * the CPU-side ordering.
++ */
++#include "anv_private.h"
++
++#include "vk_drm_syncobj.h"
++#include "vk_fence.h"
++#include "vk_semaphore.h"
++
++#include "drm-uapi/drm.h"
++#include "../../../../b580/uapi/b580_drm.h"
++
++PUBLIC VkResult nvmtl_anv_surface_cap_v1(VkDevice _device, uint32_t *supported);
++PUBLIC VkResult nvmtl_anv_surface_attach_v1(VkDevice _device, VkFence fence, VkSemaphore sem, uint64_t value,
++                                            uint32_t surface_id, uint32_t flags);
++PUBLIC VkResult nvmtl_anv_surface_import_v1(VkDevice _device, VkSemaphore sem, uint32_t surface_id, uint32_t flags,
++                                            uint64_t *wait_value, uint32_t *count);
++PUBLIC VkResult nvmtl_anv_surface_wait_v1(VkDevice _device, uint32_t surface_id, uint32_t flags, int64_t timeout_abs_ns);
++
++/* intel_ioctl restarts on EAGAIN, which ATTACH returns for a point that has no fence yet: retry on EINTR only */
++static int
++nvmtl_ioctl(int fd, unsigned long request, void *arg)
++{
++   int ret;
++   do {
++#ifdef HAVE_XEMAC
++      ret = xemac_ioctl(fd, request, arg);
++#else
++      ret = ioctl(fd, request, arg);
++#endif
++   } while (ret == -1 && errno == EINTR);
++   return ret;
++}
++
++static struct vk_drm_syncobj *
++nvmtl_syncobj_of(VkFence _fence, VkSemaphore _sem)
++{
++   struct vk_sync *sync = NULL;
++   if (_fence) {
++      VK_FROM_HANDLE(vk_fence, fence, _fence);
++      sync = vk_fence_get_active_sync(fence);
++   } else if (_sem) {
++      VK_FROM_HANDLE(vk_semaphore, sem, _sem);
++      sync = vk_semaphore_get_active_sync(sem);
++   }
++   return sync ? vk_sync_as_drm_syncobj(sync) : NULL;
++}
++
++static VkResult
++nvmtl_errno_result(int err)
++{
++   switch (err) {
++   case 0: return VK_SUCCESS;
++   case EAGAIN: return VK_NOT_READY;
++   case ETIME: case ETIMEDOUT: return VK_TIMEOUT;
++   case ENOSPC: case ENOMEM: return VK_ERROR_OUT_OF_HOST_MEMORY;
++   case ENOENT: case EINVAL: return VK_ERROR_UNKNOWN;
++   default: return VK_ERROR_FEATURE_NOT_PRESENT;
++   }
++}
++
++/* *supported = 1 when the kernel has the surface-fence ioctls (B580_CAP_SURFACE_FENCES). */
++PUBLIC VkResult
++nvmtl_anv_surface_cap_v1(VkDevice _device, uint32_t *supported)
++{
++   ANV_FROM_HANDLE(anv_device, device, _device);
++   struct drm_get_cap cap = { .capability = B580_CAP_SURFACE_FENCES };
++   *supported = 0;
++   if (intel_ioctl(device->fd, DRM_IOCTL_GET_CAP, &cap))
++      return VK_SUCCESS;
++   *supported = cap.value == 1;
++   return VK_SUCCESS;
++}
++
++/* Attach the fence of `fence` (a binary syncobj), or of timeline semaphore `sem` at `value`, to surface `surface_id`
++ * as a B580_SURFACE_FENCE_WRITE or _READ user. VK_NOT_READY: not submitted yet (EAGAIN). */
++PUBLIC VkResult
++nvmtl_anv_surface_attach_v1(VkDevice _device, VkFence fence, VkSemaphore sem, uint64_t value, uint32_t surface_id,
++                            uint32_t flags)
++{
++   ANV_FROM_HANDLE(anv_device, device, _device);
++   struct vk_drm_syncobj *s = nvmtl_syncobj_of(fence, sem);
++   if (!s)
++      return VK_ERROR_FEATURE_NOT_PRESENT;
++   struct drm_b580_surface_fence_attach a = {
++      .surface_id = surface_id, .syncobj = s->syncobj, .point = fence ? 0 : value, .flags = flags,
++   };
++   return nvmtl_ioctl(device->fd, DRM_IOCTL_B580_SURFACE_FENCE_ATTACH, &a) ? nvmtl_errno_result(errno) : VK_SUCCESS;
++}
++
++/* Add the fences of surface `surface_id` that a B580_SURFACE_FENCE_READER or _WRITER must wait for as new points of
++ * timeline semaphore `sem` (one used for nothing else). *wait_value: the point to wait on, 0 when there is nothing. */
++PUBLIC VkResult
++nvmtl_anv_surface_import_v1(VkDevice _device, VkSemaphore sem, uint32_t surface_id, uint32_t flags,
++                            uint64_t *wait_value, uint32_t *count)
++{
++   ANV_FROM_HANDLE(anv_device, device, _device);
++   *wait_value = 0;
++   if (count)
++      *count = 0;
++   struct vk_drm_syncobj *s = nvmtl_syncobj_of(VK_NULL_HANDLE, sem);
++   if (!s || !(s->base.flags & VK_SYNC_IS_TIMELINE))
++      return VK_ERROR_FEATURE_NOT_PRESENT;
++   struct drm_b580_surface_fence_import m = { .surface_id = surface_id, .syncobj = s->syncobj, .flags = flags };
++   if (nvmtl_ioctl(device->fd, DRM_IOCTL_B580_SURFACE_FENCE_IMPORT, &m))
++      return nvmtl_errno_result(errno);
++   *wait_value = m.count_out ? m.point_out : 0;
++   if (count)
++      *count = m.count_out;
++   return VK_SUCCESS;
++}
++
++/* Wait on the CPU until the fences of surface `surface_id` that `flags` names have signaled, or until
++ * `timeout_abs_ns` (CLOCK_UPTIME_RAW; 0 polls). VK_TIMEOUT when it ran out. */
++PUBLIC VkResult
++nvmtl_anv_surface_wait_v1(VkDevice _device, uint32_t surface_id, uint32_t flags, int64_t timeout_abs_ns)
++{
++   ANV_FROM_HANDLE(anv_device, device, _device);
++   struct drm_b580_surface_fence_wait w = { .surface_id = surface_id, .flags = flags, .timeout_ns = timeout_abs_ns };
++   return nvmtl_ioctl(device->fd, DRM_IOCTL_B580_SURFACE_FENCE_WAIT, &w) ? nvmtl_errno_result(errno) : VK_SUCCESS;
++}
+diff --git a/src/intel/vulkan/meson.build b/src/intel/vulkan/meson.build
+index 9b23a68b86c..f8d0461eb4a 100644
+--- a/src/intel/vulkan/meson.build
++++ b/src/intel/vulkan/meson.build
+@@ -204,6 +204,7 @@ libanv_files = files(
+   'anv_debug.c',
+   'anv_descriptor_set.c',
+   'anv_device.c',
++  'anv_nvmtl_surface.c',
+   'anv_dgc_layout.c',
+   'anv_dgc_set.c',
+   'anv_embedded_sampler.c',

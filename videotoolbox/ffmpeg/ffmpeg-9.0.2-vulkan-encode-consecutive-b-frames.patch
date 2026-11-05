@@ -1,0 +1,26 @@
+diff --git a/libavcodec/vulkan_encode_av1.c b/libavcodec/vulkan_encode_av1.c
+index d98b3a5..3ac537b 100644
+--- a/libavcodec/vulkan_encode_av1.c
++++ b/libavcodec/vulkan_encode_av1.c
+@@ -128,7 +128,7 @@ static int init_pic_rc(AVCodecContext *avctx, FFHWBaseEncodePicture *pic,
+                  VK_VIDEO_ENCODE_AV1_RATE_CONTROL_REGULAR_GOP_BIT_KHR,
+         .gopFrameCount = ctx->base.gop_size,
+         .keyFramePeriod = ctx->base.gop_size,
+-        .consecutiveBipredictiveFrameCount = FFMAX(ctx->base.b_per_p - 1, 0),
++        .consecutiveBipredictiveFrameCount = ctx->base.b_per_p,
+         .temporalLayerCount = 0,
+     };
+     rc_info->pNext = &ap->vkrc_info;
+diff --git a/libavcodec/vulkan_encode_h265.c b/libavcodec/vulkan_encode_h265.c
+index 1218017..950819f 100644
+--- a/libavcodec/vulkan_encode_h265.c
++++ b/libavcodec/vulkan_encode_h265.c
+@@ -122,7 +122,7 @@ static int init_pic_rc(AVCodecContext *avctx, FFHWBaseEncodePicture *pic,
+                  VK_VIDEO_ENCODE_H265_RATE_CONTROL_REGULAR_GOP_BIT_KHR,
+         .idrPeriod = ctx->base.gop_size,
+         .gopFrameCount = ctx->base.gop_size,
+-        .consecutiveBFrameCount = FFMAX(ctx->base.b_per_p - 1, 0),
++        .consecutiveBFrameCount = ctx->base.b_per_p,
+         .subLayerCount = 0,
+     };
+     rc_info->pNext = &hp->vkrc_info;

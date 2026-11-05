@@ -1,0 +1,142 @@
+From: Yusuf İhsan KILINÇ
+Subject: [PATCH 0098] anv: xemac fd handle types from what the kernel offers, at runtime
+
+On top of mesa-prod9 (prod8 + 0089-0092 + 0095 + 0096). Built in a copy (src/mesa-fd1, build-fd1.sh, same meson
+options as build-prod9, -Dxemac=src/xemac-fd1/user); NOT installed. Stage 0 of fd sharing
+(docs/reports/b580-fd-sharing-20261103.md, report b580-fd-sharing-stage0-20261104.md). Needs the xemac of
+patches/xemac/fd1-object-fds-syncobj-sync-file-prime-and-fake-device.patch (xemac_fd_sharing, xemac_obj_size).
+
+With xemac (macOS, B580.kext) the fd extensions were off at compile time (ANV_FD_SHARING false): no syncobj fds,
+sync files or dma-bufs existed. B580.kext now gets object fds (opens of the clone device /dev/b580obj, one kernel
+object per fd; uapi/b580_drm.h B580_CAP_FD_OBJECTS), so the device is asked at physical device creation
+(xemac_fd_sharing(): B580_CAP_FD_OBJECTS = 1, and DRM_CAP_PRIME = IMPORT|EXPORT for BO fds):
+ - VK_KHR_external_semaphore_fd and VK_KHR_external_fence_fd with syncobj fds and sync files (OPAQUE_FD and
+   SYNC_FD come together: vk_semaphore/vk_fence derive both from the drm_syncobj sync type, and a shared binary
+   semaphore's move goes through a sync file),
+ - VK_KHR_external_memory_fd with PRIME fds.
+An older kernel (or XEMAC_FDS=0) reports neither and the device is exactly as before. VK_EXT_external_memory_dma_buf
+(stage 3) and VK_EXT_physical_device_drm stay off under xemac; Linux is unchanged (all true).
+
+An imported BO's size came from lseek(fd, 0, SEEK_END) on the dma-buf. An object fd here is an open of a character
+device, whose SEEK_END is 0 (checked on macOS), so under xemac the kernel answers it: xemac_obj_size()
+(DRM_IOCTL_B580_OBJ_INFO through the device's IOUserClient, never an ioctl on the object fd).
+
+Validation on the build Mac (x86_64 deqp-vk under Rosetta, XEMAC_FAKE=1, the fake device's object fds):
+dEQP-VK.api.external.* 550 cases: prod9 61 Pass / 489 NotSupported -> 144 Pass / 406 NotSupported, 0 Fail
+(+83: semaphore opaque_fd 20, sync_fd 8, fence opaque_fd 22, sync_fd 9, memory opaque_fd 24; the remaining fd
+NotSupported are the dup/dup2/dup3/send_over_socket cases CTS compiles only for Linux/Android). With
+XEMAC_FAKE_FDS=0 (a kernel without object fds) all 550 results are identical to prod9.
+
+Generated-by: LLM
+---
+diff --git a/src/intel/vulkan/anv_allocator.c b/src/intel/vulkan/anv_allocator.c
+index b12f848..f61c5f8 100644
+--- a/src/intel/vulkan/anv_allocator.c
++++ b/src/intel/vulkan/anv_allocator.c
+@@ -2128,7 +2128,14 @@ anv_device_import_bo(struct anv_device *device,
+          .alloc_flags = alloc_flags,
+       };
+ 
++#ifdef HAVE_XEMAC
++      /* An object fd is an open of B580.kext's clone device, whose
++       * lseek(SEEK_END) is 0: the kernel tells the BO's size.
++       */
++      off_t size = xemac_obj_size(device->fd, fd);
++#else
+       off_t size = lseek(fd, 0, SEEK_END);
++#endif
+       if (size == (off_t)-1) {
+          device->kmd_backend->gem_close(device, &new_bo);
+          simple_mtx_unlock(&cache->mutex);
+diff --git a/src/intel/vulkan/anv_physical_device.c b/src/intel/vulkan/anv_physical_device.c
+index 6657fd7..1fe77f0 100644
+--- a/src/intel/vulkan/anv_physical_device.c
++++ b/src/intel/vulkan/anv_physical_device.c
+@@ -354,13 +354,24 @@ get_device_descriptor_limits(const struct anv_physical_device *device,
+ }
+ 
+ 
+-/* With xemac there are no dma-buf, sync_file or syncobj fds (yet), and no
+- * DRM node to report.
++/* With xemac (macOS, B580.kext) the fd handle types exist only when the
++ * kernel offers object fds (xemac_fd_sharing(): B580_CAP_FD_OBJECTS and
++ * DRM_CAP_PRIME), asked at runtime so that an older kernel keeps today's
++ * behaviour: DRM syncobj fds and sync files for the semaphore and fence fd
++ * extensions, PRIME fds for VK_KHR_external_memory_fd. A dma-buf with an
++ * explicit layout (VK_EXT_external_memory_dma_buf) and a DRM node to report
++ * (VK_EXT_physical_device_drm) are not there yet.
+  */
+ #ifdef HAVE_XEMAC
+-#define ANV_FD_SHARING false
++#define ANV_FD_SYNC(pdev) (((pdev)->xemac_fd_sharing & XEMAC_FD_SYNC) != 0)
++#define ANV_FD_MEMORY(pdev) (((pdev)->xemac_fd_sharing & XEMAC_FD_PRIME) != 0)
++#define ANV_FD_DMA_BUF false
++#define ANV_FD_DRM_NODE false
+ #else
+-#define ANV_FD_SHARING true
++#define ANV_FD_SYNC(pdev) true
++#define ANV_FD_MEMORY(pdev) true
++#define ANV_FD_DMA_BUF true
++#define ANV_FD_DRM_NODE true
+ #endif
+ 
+ static void
+@@ -413,11 +424,11 @@ get_device_extensions(const struct anv_physical_device *device,
+       .KHR_dynamic_rendering_local_read      = true,
+       .KHR_extended_flags                    = true,
+       .KHR_external_fence                    = true,
+-      .KHR_external_fence_fd                 = ANV_FD_SHARING,
++      .KHR_external_fence_fd                 = ANV_FD_SYNC(device),
+       .KHR_external_memory                   = true,
+-      .KHR_external_memory_fd                = ANV_FD_SHARING,
++      .KHR_external_memory_fd                = ANV_FD_MEMORY(device),
+       .KHR_external_semaphore                = true,
+-      .KHR_external_semaphore_fd             = ANV_FD_SHARING,
++      .KHR_external_semaphore_fd             = ANV_FD_SYNC(device),
+       .KHR_format_feature_flags2             = true,
+       .KHR_fragment_shader_barycentric       = device->info.ver >= 20,
+       .KHR_fragment_shading_rate             = device->info.ver >= 11,
+@@ -577,7 +588,7 @@ get_device_extensions(const struct anv_physical_device *device,
+       .EXT_extended_dynamic_state2           = true,
+       .EXT_extended_dynamic_state3           = true,
+       .EXT_external_memory_acquire_unmodified = true,
+-      .EXT_external_memory_dma_buf           = ANV_FD_SHARING,
++      .EXT_external_memory_dma_buf           = ANV_FD_DMA_BUF,
+       .EXT_external_memory_host              = device->info.has_userptr_uapi,
+       .EXT_fragment_shader_interlock         = true,
+       .EXT_global_priority                   = device->max_context_priority >=
+@@ -613,7 +624,7 @@ get_device_extensions(const struct anv_physical_device *device,
+       .EXT_nested_command_buffer             = true,
+       .EXT_non_seamless_cube_map             = true,
+       .EXT_pci_bus_info                      = true,
+-      .EXT_physical_device_drm               = ANV_FD_SHARING,
++      .EXT_physical_device_drm               = ANV_FD_DRM_NODE,
+       .EXT_pipeline_creation_cache_control   = true,
+       .EXT_pipeline_creation_feedback        = true,
+       .EXT_pipeline_library_group_handles    = rt_enabled,
+@@ -3172,6 +3183,10 @@ anv_physical_device_try_create(struct vk_instance *vk_instance,
+    if (result != VK_SUCCESS)
+       goto fail_drirc;
+ 
++#ifdef HAVE_XEMAC
++   device->xemac_fd_sharing = xemac_fd_sharing(fd);
++#endif
++
+    if (is_virtio) {
+       struct util_sync_provider *sync = intel_virtio_sync_provider(fd);
+       device->sync_syncobj_type = vk_drm_syncobj_get_type_from_provider(sync);
+diff --git a/src/intel/vulkan/anv_private.h b/src/intel/vulkan/anv_private.h
+index c702ee8..9bbee90 100644
+--- a/src/intel/vulkan/anv_private.h
++++ b/src/intel/vulkan/anv_private.h
+@@ -1529,6 +1529,10 @@ struct anv_physical_device {
+      * on Gfx12+.
+      */
+     bool                                        has_reg_timestamp;
++#ifdef HAVE_XEMAC
++    /** XEMAC_FD_* bits: the object fds B580.kext offers (xemac_fd_sharing) */
++    unsigned                                    xemac_fd_sharing;
++#endif
+ 
+     /** True if we can create protected contexts. */
+     bool                                        has_protected_contexts;

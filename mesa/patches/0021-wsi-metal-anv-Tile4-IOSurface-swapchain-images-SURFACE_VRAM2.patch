@@ -1,0 +1,422 @@
+wsi/metal, anv: Tile4 swapchain images in the IOSurface's VRAM (B580.kext SURFACE_VRAM2), on top of 0019 + 0020 + 0022 + 0023 + 0024 + 0025 (mesa-rel-pkg-cpu3)
+
+Linux compositors take a tiled (modifier) swapchain from the client; on macOS the "compositor" is WindowServer's Metal
+plugin importing the IOSurface's VRAM backing. Rendering into a linear image costs a lot on Xe2: Minecraft's last step,
+a 2560x1302 RGBA8 -> B8G8R8A8 vkCmdBlitImage, takes 122 us into linear memory and 30 us into uncompressed Tile4.
+
+- wsi_device::iosurface.gpu_memory_modifier(): the DRM format modifier every user of the IOSurface's GPU memory reads.
+  When it is I915_FORMAT_MOD_4_TILED the swapchain images are created with that modifier (ANV picks the pitch), and
+  wsi_memory_allocate_info carries the modifier, the pitch and the pages' row pitch to the driver. The IOSurface's pages
+  (CPU readers) stay linear. Swapchain creation falls back from Tile4 to linear GPU memory to page copies.
+- ANV: anv_wsi_iosurface_gpu_memory_modifier() answers Tile4 for B8G8R8A8 when the kernel reports
+  B580_CAP_SURFACE_VRAM_LAYOUT = 1 (only once WindowServer imports with SURFACE_VRAM2, i.e. its plugin reads tiled
+  backings); the import makes the backing with DRM_IOCTL_B580_SURFACE_VRAM2 and its layout (modifier, pitch, cpp,
+  width, height, the pages' row pitch), and the kernel pages it off for CPU readers with XY_BLOCK_COPY_BLT Tile4 ->
+  linear. The backing stays uncompressed (no CCS modifier).
+- nvmtl_anv_surface_vram_stage_v1 (0014) takes version 2 requests: imports go through SURFACE_VRAM2 and return the
+  backing's layout to the Metal plugin; a kernel without it (ENOTTY) has linear backings only. Version 1 callers (old
+  plugins) only ever get linear backings: the kernel refuses them a tiled one (EBUSY), and they keep private copies.
+- The FPS log says whether the swapchain renders Tile4 or linear.
+
+diff -ruN a/src/intel/vulkan/anv_device.c b/src/intel/vulkan/anv_device.c
+--- a/src/intel/vulkan/anv_device.c
++++ b/src/intel/vulkan/anv_device.c
+@@ -1935,8 +1935,17 @@
+        */
+       alloc_flags &= ~(ANV_BO_ALLOC_SCANOUT | ANV_BO_ALLOC_COMPRESSED |
+                        ANV_BO_ALLOC_AUX_CCS | ANV_BO_ALLOC_LOCAL_MEM_CPU_VISIBLE);
++      /* the image in that memory (SURFACE_VRAM2: the kernel detiles a
++       * Tile4 one into the IOSurface's pages for CPU readers)
++       */
++      const uint32_t cpp = image ? vk_format_get_blocksize(image->vk.format) : 0;
+       result = anv_wsi_iosurface_import(device, wsi_info->iosurface_id,
+                                         aligned_alloc_size,
++                                        wsi_info->iosurface_modifier,
++                                        wsi_info->iosurface_pitch, cpp,
++                                        image ? image->vk.extent.width : 0,
++                                        image ? image->vk.extent.height : 0,
++                                        wsi_info->iosurface_bytes_per_row,
+                                         alloc_flags | ANV_BO_ALLOC_EXTERNAL,
+                                         client_address, &mem->bo);
+       if (result != VK_SUCCESS)
+--- a/src/intel/vulkan/anv_nvmtl_surface.c
++++ b/src/intel/vulkan/anv_nvmtl_surface.c
+@@ -43,16 +43,51 @@
+ #define DRM_IOCTL_B580_SURFACE_DIRTY DRM_IOW(DRM_COMMAND_BASE + DRM_B580_SURFACE_DIRTY, struct drm_b580_surface_dirty)
+ #endif
+ 
++#ifndef DRM_IOCTL_B580_SURFACE_VRAM2
++/* B580.kext (tile4) uAPI, uapi/b580_drm.h: a VRAM backing that carries the layout its creator renders with (a DRM format
++ * modifier and its pitch, like a Linux framebuffer), so importers (the window server's Metal plugin) build the same image
++ * and the kernel's CPU-lock page-off detiles it (XY_BLOCK_COPY_BLT Tile4 -> linear pages). GET_CAP
++ * B580_CAP_SURFACE_VRAM_LAYOUT = 1 once WindowServer imports with SURFACE_VRAM2. modifier: DRM_FORMAT_MOD_LINEAR or
++ * I915_FORMAT_MOD_4_TILED (uncompressed: the backing stays noComp); CREATE records it, an import gets it back. */
++#define B580_CAP_SURFACE_VRAM_LAYOUT 0xb5800003ull
++struct drm_b580_surface_vram2 {
++   __u32 surface_id;
++   __u32 plane;
++   __u64 size;
++   __u32 flags;
++   __u32 handle;      /* out */
++   __u64 size_out;    /* out */
++   __u32 gen;         /* out */
++   __u32 pad;
++   __u64 modifier;    /* in (CREATE) / out */
++   __u32 pitch;       /* in (CREATE) / out: bytes per row of the backing's layout */
++   __u32 cpp;         /* in (CREATE) / out */
++   __u32 width;       /* in (CREATE) / out */
++   __u32 height;      /* in (CREATE) / out */
++   __u32 linear_pitch;/* in (CREATE) / out: the IOSurface's bytesPerRow */
++   __u32 pad2;
++};
++#define DRM_B580_SURFACE_VRAM2 0x55
++#define DRM_IOCTL_B580_SURFACE_VRAM2 DRM_IOWR(DRM_COMMAND_BASE + DRM_B580_SURFACE_VRAM2, struct drm_b580_surface_vram2)
++#endif
++#ifndef DRM_FORMAT_MOD_LINEAR
++#define DRM_FORMAT_MOD_LINEAR 0ull
++#endif
++
+ /* VRAM-shared IOSurfaces (gpuperf phase 2). The plugin stages a request, then calls vkAllocateMemory with a
+  * VkImportMemoryFdInfoKHR (OPAQUE_FD, any placeholder fd it owns, consumed on success) in the same thread: that import
+  * becomes the surface's VRAM backing (DRM_IOCTL_B580_SURFACE_VRAM), the way NVK's nvmtl_nvk_stage_import works. */
+ struct nvmtl_anv_surface_vram_req {
+-   uint32_t version;     /* 1 */
++   uint32_t version;     /* 1, or 2: the caller reads tiled backings (the fields below) */
+    uint32_t surface_id, plane, flags;   /* flags: B580_SURFACE_VRAM_CREATE */
+    uint64_t size;        /* bytes the caller needs */
+    uint64_t size_out;    /* out: the backing's bytes */
+    uint32_t gen;         /* out: its generation */
+    int32_t err;          /* out: errno of the kernel call (0: imported) */
++   /* version 2, out: the layout the backing's creator renders with (SURFACE_VRAM2; modifier 0: linear at the IOSurface's
++    * own row pitch, also with a kernel that has no SURFACE_VRAM2). A version 1 caller only ever gets linear backings. */
++   uint64_t modifier;
++   uint32_t pitch, cpp, width, height, linear_pitch, pad;
+ };
+ PUBLIC VkResult nvmtl_anv_surface_vram_cap_v1(VkDevice _device, uint32_t *level);
+ PUBLIC VkResult nvmtl_anv_surface_vram_stage_v1(VkDevice _device, struct nvmtl_anv_surface_vram_req *req);
+@@ -188,7 +223,7 @@
+ nvmtl_anv_surface_vram_stage_v1(VkDevice _device, struct nvmtl_anv_surface_vram_req *req)
+ {
+    (void)_device;
+-   if (req && req->version != 1)
++   if (req && req->version != 1 && req->version != 2)
+       return VK_ERROR_FEATURE_NOT_PRESENT;
+    nvmtl_staged_vram = req;
+    return VK_SUCCESS;
+@@ -206,11 +241,33 @@
+       .surface_id = req->surface_id, .plane = req->plane,
+       .size = req->size > need ? req->size : need, .flags = req->flags & B580_SURFACE_VRAM_CREATE,
+    };
++   if (req->version >= 2) {
++      /* SURFACE_VRAM2: a creator records linear (the plugin renders linear); an importer learns the layout. A kernel
++       * without it (ENOTTY) has linear backings only. */
++      struct drm_b580_surface_vram2 v2 = {
++         .surface_id = v.surface_id, .plane = v.plane, .size = v.size, .flags = v.flags,
++         .modifier = DRM_FORMAT_MOD_LINEAR,
++      };
++      req->modifier = DRM_FORMAT_MOD_LINEAR;
++      req->pitch = req->cpp = req->width = req->height = req->linear_pitch = 0;
++      if (nvmtl_ioctl(device->fd, DRM_IOCTL_B580_SURFACE_VRAM2, &v2) == 0) {
++         req->modifier = v2.modifier; req->pitch = v2.pitch; req->cpp = v2.cpp; req->width = v2.width;
++         req->height = v2.height; req->linear_pitch = v2.linear_pitch;
++         v.handle = v2.handle; v.size_out = v2.size_out; v.gen = v2.gen;
++         goto imported;
++      }
++      if (errno != ENOTTY) {
++         req->err = errno;
++         *result = vk_errorf(device, VK_ERROR_INVALID_EXTERNAL_HANDLE, "surface %u VRAM: errno %d", req->surface_id, req->err);
++         return true;
++      }
++   }
+    if (nvmtl_ioctl(device->fd, DRM_IOCTL_B580_SURFACE_VRAM, &v)) {
+       req->err = errno;
+       *result = vk_errorf(device, VK_ERROR_INVALID_EXTERNAL_HANDLE, "surface %u VRAM: errno %d", req->surface_id, req->err);
+       return true;
+    }
++imported:
+    req->err = 0;
+    req->size_out = v.size_out;
+    req->gen = v.gen;
+@@ -261,16 +318,52 @@
+    return fences && level >= 1;
+ }
+ 
++
++
++/* I915_FORMAT_MOD_4_TILED when the kernel keeps backings' layouts and pages tiled ones off, for formats the swapchain
++ * uses; DRM_FORMAT_MOD_LINEAR otherwise. */
++uint64_t
++anv_wsi_iosurface_gpu_memory_modifier(VkDevice _device, VkFormat format)
++{
++   ANV_FROM_HANDLE(anv_device, device, _device);
++   if (format != VK_FORMAT_B8G8R8A8_UNORM && format != VK_FORMAT_B8G8R8A8_SRGB)
++      return DRM_FORMAT_MOD_LINEAR;
++   struct drm_get_cap cap = { .capability = B580_CAP_SURFACE_VRAM_LAYOUT };
++   if (nvmtl_ioctl(device->fd, DRM_IOCTL_GET_CAP, &cap) || cap.value != 1)
++      return DRM_FORMAT_MOD_LINEAR;
++   return I915_FORMAT_MOD_4_TILED;
++}
++
+ VkResult
+-anv_wsi_iosurface_import(struct anv_device *device, uint32_t iosurface_id, uint64_t size,
++anv_wsi_iosurface_import(struct anv_device *device, uint32_t iosurface_id, uint64_t size, uint64_t modifier,
++                         uint32_t pitch, uint32_t cpp, uint32_t width, uint32_t height, uint32_t linear_pitch,
+                          enum anv_bo_alloc_flags alloc_flags, uint64_t client_address, struct anv_bo **bo)
+ {
+    struct drm_b580_surface_vram v = {
+       .surface_id = iosurface_id, .plane = 0, .size = size, .flags = B580_SURFACE_VRAM_CREATE,
+    };
+-   if (nvmtl_ioctl(device->fd, DRM_IOCTL_B580_SURFACE_VRAM, &v))
++   if (modifier != DRM_FORMAT_MOD_LINEAR) {
++      /* the layout goes with the backing (SURFACE_VRAM2); a backing someone else made with another layout is refused */
++      struct drm_b580_surface_vram2 v2 = {
++         .surface_id = iosurface_id, .plane = 0, .size = size, .flags = B580_SURFACE_VRAM_CREATE,
++         .modifier = modifier, .pitch = pitch, .cpp = cpp, .width = width, .height = height, .linear_pitch = linear_pitch,
++      };
++      if (nvmtl_ioctl(device->fd, DRM_IOCTL_B580_SURFACE_VRAM2, &v2))
++         return vk_errorf(device, VK_ERROR_OUT_OF_DEVICE_MEMORY, "IOSurface %u: no tiled VRAM backing (errno %d)",
++                          iosurface_id, errno);
++      if (v2.modifier != modifier || v2.pitch != pitch) {
++         struct anv_bo tmp = { .gem_handle = v2.handle };
++         device->kmd_backend->gem_close(device, &tmp);
++         return vk_errorf(device, VK_ERROR_OUT_OF_DEVICE_MEMORY, "IOSurface %u: its backing has another layout",
++                          iosurface_id);
++      }
++      v.handle = v2.handle;
++      v.size_out = v2.size_out;
++      v.gen = v2.gen;
++   } else if (nvmtl_ioctl(device->fd, DRM_IOCTL_B580_SURFACE_VRAM, &v)) {
+       return vk_errorf(device, VK_ERROR_OUT_OF_DEVICE_MEMORY, "IOSurface %u: no VRAM backing (errno %d)",
+                        iosurface_id, errno);
++   }
+    if (v.size_out < size) {
+       struct anv_bo tmp = { .gem_handle = v.handle };
+       device->kmd_backend->gem_close(device, &tmp);
+--- a/src/intel/vulkan/anv_private.h
++++ b/src/intel/vulkan/anv_private.h
+@@ -3193,9 +3193,11 @@
+ bool anv_wsi_iosurface_supports_gpu_memory(VkDevice device);
+ VkResult anv_wsi_iosurface_signal_write(VkDevice device, VkFence fence, void *iosurface, bool gpu_memory);
+ VkResult anv_wsi_iosurface_wait_idle(VkDevice device, void *iosurface, uint64_t abs_timeout);
++uint64_t anv_wsi_iosurface_gpu_memory_modifier(VkDevice device, VkFormat format);
+ VkResult anv_wsi_iosurface_import(struct anv_device *device, uint32_t iosurface_id, uint64_t size,
+-                                  enum anv_bo_alloc_flags alloc_flags, uint64_t client_address,
+-                                  struct anv_bo **bo);
++                                  uint64_t modifier, uint32_t pitch, uint32_t cpp, uint32_t width, uint32_t height,
++                                  uint32_t linear_pitch, enum anv_bo_alloc_flags alloc_flags,
++                                  uint64_t client_address, struct anv_bo **bo);
+ #endif
+ /* nvmtl: vkAllocateMemory's fd import after nvmtl_anv_surface_vram_stage_v1 (anv_nvmtl_surface.c): true when it was
+  * one (then *result says how it went and *bo is the import) */
+--- a/src/intel/vulkan/anv_wsi.c
++++ b/src/intel/vulkan/anv_wsi.c
+@@ -76,6 +76,7 @@
+    wsi_device->iosurface.supports_gpu_memory = anv_wsi_iosurface_supports_gpu_memory;
+    wsi_device->iosurface.signal_write = anv_wsi_iosurface_signal_write;
+    wsi_device->iosurface.wait_idle = anv_wsi_iosurface_wait_idle;
++   wsi_device->iosurface.gpu_memory_modifier = anv_wsi_iosurface_gpu_memory_modifier;
+ #endif
+ 
+    return VK_SUCCESS;
+--- a/src/vulkan/util/vk_internal_exts.h
++++ b/src/vulkan/util/vk_internal_exts.h
+@@ -68,6 +68,16 @@
+      * that uses the IOSurface on the GPU (the window server).
+      */
+     uint32_t iosurface_id;
++
++    /**
++     * macOS, with iosurface_id: the layout of the image in that GPU memory
++     * (a DRM format modifier and its row pitch), recorded with the
++     * IOSurface's GPU memory so that other processes import it the same way.
++     */
++    uint64_t iosurface_modifier;
++    uint32_t iosurface_pitch;
++    /* the row pitch of the IOSurface's pages (its CPU layout, always linear) */
++    uint32_t iosurface_bytes_per_row;
+ };
+ 
+ /* To be chained into VkSurfaceCapabilities2KHR */
+--- a/src/vulkan/wsi/wsi_common.h
++++ b/src/vulkan/wsi/wsi_common.h
+@@ -183,6 +183,13 @@
+        */
+       bool (*supports_gpu_memory)(VkDevice device);
+ 
++      /* The DRM format modifier the IOSurface's GPU memory may have for
++       * `format`: what the driver, the kernel (CPU readers' page-off) and
++       * the window server's GPU import all handle.  DRM_FORMAT_MOD_LINEAR
++       * (0) when only the CPU layout is shared.  Optional.
++       */
++      uint64_t (*gpu_memory_modifier)(VkDevice device, VkFormat format);
++
+       /* Called once the present's submission (signaling `fence`) was made:
+        * attach its fence to IOSurface `iosurface` as a writer, so that the
+        * window server's GPU reads wait for it, and tell the IOSurface's
+--- a/src/vulkan/wsi/wsi_common_metal.c
++++ b/src/vulkan/wsi/wsi_common_metal.c
+@@ -1125,9 +1125,15 @@
+    bool gpu_memory;
+    uint32_t bytes_per_row;
+ 
+-   /* Linear images at the IOSurface's row pitch (gpu_memory) */
++   /* Images in the IOSurface's GPU memory (gpu_memory): linear at the
++    * IOSurface's row pitch, or `modifier` (Tile4) when the driver says
++    * every user of that memory handles it.
++    */
++   uint64_t modifier;
++   bool allow_tiled;
+    VkSubresourceLayout plane_layout;
+    VkImageDrmFormatModifierExplicitCreateInfoEXT drm_explicit;
++   VkImageDrmFormatModifierListCreateInfoEXT drm_list;
+ 
+    struct wsi_metal_contents_layer *contents;
+    struct wsi_metal_vblank *vblank;
+@@ -1210,10 +1216,27 @@
+                                  &ios_image->iosurface_id);
+    if (!ios_image->iosurface)
+       return VK_ERROR_OUT_OF_DEVICE_MEMORY;
++
++   /* A tiled image's layout, as the driver chose it */
++   uint32_t pitch = chain->bytes_per_row;
++   if (chain->modifier != 0 /* DRM_FORMAT_MOD_LINEAR */) {
++      const VkImageSubresource sub = {
++         .aspectMask = VK_IMAGE_ASPECT_MEMORY_PLANE_0_BIT_EXT,
++      };
++      VkSubresourceLayout layout;
++      wsi->GetImageSubresourceLayout(wsi_chain->device, image->image, &sub,
++                                     &layout);
++      if (layout.offset != 0 || layout.rowPitch > UINT32_MAX)
++         return VK_ERROR_OUT_OF_DEVICE_MEMORY;
++      pitch = layout.rowPitch;
++   }
+ 
+    const struct wsi_memory_allocate_info memory_wsi_info = {
+       .sType = VK_STRUCTURE_TYPE_WSI_MEMORY_ALLOCATE_INFO_MESA,
+       .iosurface_id = ios_image->iosurface_id,
++      .iosurface_modifier = chain->modifier,
++      .iosurface_pitch = pitch,
++      .iosurface_bytes_per_row = chain->bytes_per_row,
+    };
+    const VkMemoryDedicatedAllocateInfo dedicated = {
+       .sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO,
+@@ -1236,9 +1259,9 @@
+ 
+    image->num_planes = 1;
+    image->sizes[0] = reqs.size;
+-   image->row_pitches[0] = chain->bytes_per_row;
++   image->row_pitches[0] = pitch;
+    image->offsets[0] = 0;
+-   image->drm_modifier = 0; /* DRM_FORMAT_MOD_LINEAR */
++   image->drm_modifier = chain->modifier;
+    return VK_SUCCESS;
+ }
+ 
+@@ -1288,6 +1311,7 @@
+                               const struct wsi_metal_image_params *params,
+                               struct wsi_image_info *info)
+ {
++   const struct wsi_device *wsi = wsi_chain->wsi;
+    struct wsi_iosurface_swapchain *chain =
+       container_of((struct wsi_swapchain *)wsi_chain,
+                    struct wsi_iosurface_swapchain, base);
+@@ -1308,11 +1332,31 @@
+       return VK_SUCCESS;
+    }
+ 
+-   /* A linear image at the IOSurface's row pitch, in the IOSurface's GPU
+-    * memory: what the window server's GPU reads, scan-out and CPU layout.
+-    */
++   /* The IOSurface's pages (CPU readers) are linear at this row pitch. */
+    const uint32_t cpp = vk_format_get_blocksize(pCreateInfo->imageFormat);
+    chain->bytes_per_row = align(pCreateInfo->imageExtent.width * cpp, 256);
++
++   /* Its GPU memory is tiled when every user of it handles the tiling (the
++    * driver says so): like a Linux compositor that takes the modifier, the
++    * application then renders and blits into a Tile4 image (4x faster into
++    * than linear on Xe2, 122 vs 30 us for a 2560x1302 blit).
++    */
++   chain->modifier = chain->allow_tiled && wsi->iosurface.gpu_memory_modifier ?
++      wsi->iosurface.gpu_memory_modifier(wsi_chain->device,
++                                         pCreateInfo->imageFormat) : 0;
++   if (chain->modifier != 0 /* DRM_FORMAT_MOD_LINEAR */) {
++      chain->drm_list = (VkImageDrmFormatModifierListCreateInfoEXT) {
++         .sType = VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_LIST_CREATE_INFO_EXT,
++         .drmFormatModifierCount = 1,
++         .pDrmFormatModifiers = &chain->modifier,
++      };
++      info->create.tiling = VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT;
++      __vk_append_struct(&info->create, &chain->drm_list);
++      info->create_mem = wsi_iosurface_create_gpu_mem;
++      return VK_SUCCESS;
++   }
++
++   /* Linear at the IOSurface's row pitch: the same layout as its pages. */
+    chain->plane_layout = (VkSubresourceLayout) {
+       .offset = 0,
+       .rowPitch = chain->bytes_per_row,
+@@ -1537,7 +1581,8 @@
+                  chain->base.present_mode < 4 ?
+                     mode_names[chain->base.present_mode] : "?",
+                  chain->base.image_count,
+-                 chain->gpu_memory ? "shared VRAM" : "page copies",
++                 !chain->gpu_memory ? "page copies" :
++                 chain->modifier ? "shared VRAM, Tile4" : "shared VRAM, linear",
+                  chain->fps_presents / s, chain->fps_shown / s,
+                  chain->fps_dropped / s,
+                  chain->fps_presents ?
+@@ -1771,7 +1816,7 @@
+                                struct wsi_device *wsi_device,
+                                const VkSwapchainCreateInfoKHR *pCreateInfo,
+                                const VkAllocationCallbacks *pAllocator,
+-                               bool gpu_memory,
++                               bool gpu_memory, bool allow_tiled,
+                                struct wsi_swapchain **swapchain_out)
+ {
+    /* MAILBOX holds a finished frame for the next refresh, and IMMEDIATE
+@@ -1806,6 +1851,7 @@
+    chain->format = pCreateInfo->imageFormat;
+    chain->color_space = pCreateInfo->imageColorSpace;
+    chain->gpu_memory = gpu_memory;
++   chain->allow_tiled = allow_tiled;
+ 
+    const struct wsi_metal_image_params params = {
+       .base.image_type = WSI_IMAGE_TYPE_METAL,
+@@ -1903,14 +1949,26 @@
+ {
+    VkResult result = VK_ERROR_FEATURE_NOT_PRESENT;
+ 
++   if (!wsi_metal_iosurface_format_supported(pCreateInfo->imageFormat,
++                                             pCreateInfo->imageColorSpace))
++      return VK_ERROR_FORMAT_NOT_SUPPORTED;
++
+    /* MESA_VK_WSI_DEBUG=buffer: always copy into the pages. */
+    if (!(WSI_DEBUG & WSI_DEBUG_BUFFER) &&
+        wsi_device->iosurface.supports_gpu_memory(device)) {
++      /* Tile4 when every user of the GPU memory reads it (the driver says),
++       * else, or if that fails, linear GPU memory.
++       */
+       result = wsi_iosurface_create_swapchain(metal_surface, device, wsi_device,
+                                               pCreateInfo, pAllocator,
+-                                              true, swapchain_out);
+-      if (result == VK_SUCCESS || result == VK_ERROR_FORMAT_NOT_SUPPORTED)
++                                              true, true, swapchain_out);
++      if (result == VK_SUCCESS)
+          return result;
++      result = wsi_iosurface_create_swapchain(metal_surface, device, wsi_device,
++                                              pCreateInfo, pAllocator,
++                                              true, false, swapchain_out);
++      if (result == VK_SUCCESS)
++         return result;
+    }
+ 
+    /* No shared GPU memory (the kernel switch is off, or its budget is
+@@ -1918,7 +1976,7 @@
+     */
+    return wsi_iosurface_create_swapchain(metal_surface, device, wsi_device,
+                                          pCreateInfo, pAllocator,
+-                                         false, swapchain_out);
++                                         false, false, swapchain_out);
+ }
+ 
+ VkResult

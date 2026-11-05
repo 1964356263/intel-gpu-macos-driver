@@ -1,0 +1,79 @@
+From ea7bea331c6c4eb71c6f08cdd06ca19b71806469 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Yusuf=20=C4=B0hsan=20KILIN=C3=87?= <78423442+yusufklncc@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 19:24:14 +0300
+Subject: [PATCH 01/18] WIP: uncommitted macos-anv tree changes (session mem
+ host-visible, budget clamp, anon_file)
+
+---
+ src/intel/vulkan/anv_physical_device.c |  5 +++++
+ src/intel/vulkan/anv_video.c           | 13 +++++++++++++
+ src/util/anon_file.c                   |  6 ++++--
+ 3 files changed, 22 insertions(+), 2 deletions(-)
+
+diff --git a/src/intel/vulkan/anv_physical_device.c b/src/intel/vulkan/anv_physical_device.c
+index 39b9295dd12..7f1cec3de1b 100644
+--- a/src/intel/vulkan/anv_physical_device.c
++++ b/src/intel/vulkan/anv_physical_device.c
+@@ -3603,6 +3603,11 @@ anv_get_memory_budget(VkPhysicalDevice physicalDevice,
+        * VkPhysicalDeviceMemoryProperties::memoryHeapCount. The heapBudget
+        * value must be less than or equal to VkMemoryHeap::size for each heap.
+        */
++      /* macOS (xemac): a heap can have no free memory left for this process -- the B580's CPU-visible VRAM is a
++       * 256 MB BAR window shared by WindowServer and every app -- and the rounding above then gives 0, which the
++       * assert turned into an abort (SecurityAgent, 2026-10-28). The spec only asks for a non-zero budget. */
++      if (heap_budget == 0)
++         heap_budget = MIN2(heap_size, 1ull << 20);
+       assert(0 < heap_budget && heap_budget <= heap_size);
+ 
+       memoryBudget->heapUsage[i] = heap_used;
+diff --git a/src/intel/vulkan/anv_video.c b/src/intel/vulkan/anv_video.c
+index b9e3dfa324c..82c1b03f9a4 100644
+--- a/src/intel/vulkan/anv_video.c
++++ b/src/intel/vulkan/anv_video.c
+@@ -1288,6 +1288,19 @@ anv_GetVideoSessionMemoryRequirementsKHR(VkDevice _device,
+       (vid->vk.flags & VK_VIDEO_SESSION_CREATE_PROTECTED_CONTENT_BIT_KHR) ?
+       device->physical->memory.protected_mem_types :
+       device->physical->memory.default_buffer_mem_types;
++#ifdef HAVE_XEMAC
++   /* The driver CPU-maps session memory (anv_video_zero_mem, anv_init_av1_cdf_tables). xe's TTM moves a VRAM BO
++    * into the CPU-visible window on a CPU fault; xemac's kernel cannot, so a BO placed past the BAR window failed
++    * GEM_MMAP_OFFSET and AV1 setup returned VK_ERROR_MEMORY_MAP_FAILED. Offer only host-visible types (CPU-visible
++    * VRAM first among them on a dGPU). */
++   uint32_t host_visible = 0;
++   for (uint32_t i = 0; i < device->physical->memory.type_count; i++) {
++      if (device->physical->memory.types[i].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)
++         host_visible |= 1u << i;
++   }
++   if (memory_types & host_visible)
++      memory_types &= host_visible;
++#endif
+ 
+    switch (vid->vk.op) {
+    case VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR:
+diff --git a/src/util/anon_file.c b/src/util/anon_file.c
+index 0cb6cfa347b..b0409d1503f 100644
+--- a/src/util/anon_file.c
++++ b/src/util/anon_file.c
+@@ -114,7 +114,9 @@ get_or_create_user_temp_dir(void) {
+     const char* env;
+     char* buf;
+     struct stat st;
+-    int uid = getuid();
++    /* the effective uid names, creates and owns the directory: WindowServer runs with uid 0 and euid 88
++     * (_windowserver), so mkdir made the directory euid-owned and the next run's getuid() check refused it */
++    int uid = geteuid();
+     int n;
+ 
+     env = os_get_option("XDG_RUNTIME_DIR");
+@@ -125,7 +127,7 @@ get_or_create_user_temp_dir(void) {
+         return buf;
+     }
+ 
+-    n = asprintf(&buf, "/tmp/xdg-runtime-mesa-%ld", (long)getuid());
++    n = asprintf(&buf, "/tmp/xdg-runtime-mesa-%ld", (long)uid);
+     if (n < 0)
+        return NULL;
+     mesa_logd("%s: XDG_RUNTIME_DIR not set; falling back to temp dir %s",
+-- 
+2.54.0 (Apple Git-157)
+

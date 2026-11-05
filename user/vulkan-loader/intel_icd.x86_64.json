@@ -1,0 +1,9 @@
+{
+    "file_format_version": "1.0.1",
+    "ICD": {
+        "library_path": "/Library/GPUBundles/nvmtl/libvulkan_intel.dylib",
+        "library_arch": "64",
+        "api_version": "1.4.363",
+        "is_portability_driver": false
+    }
+}

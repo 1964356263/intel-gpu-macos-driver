@@ -1,0 +1,104 @@
+From: Yusuf İhsan KILINÇ
+Subject: [PATCH 0090] wsi: native images without dma-buf export on devices that have none
+
+On top of 0089 (src/mesa-cts1, build-cts1, same meson options as build-prod8). NOT installed.
+
+A headless swapchain (VK_EXT_headless_surface) of a hardware device uses native DRM images
+(wsi_configure_native_image / wsi_create_native_image_mem): the image is created with
+VkExternalMemoryImageCreateInfo(DMA_BUF), its memory allocated exportable as DMA_BUF and exported at once
+(wsi_init_image_dmabuf_fd -> vkGetMemoryFdKHR). With xemac (macOS: no dma-bufs, no
+VK_EXT_external_memory_dma_buf) the export fails in ANV (anv_device_export_bo: anv_gem_handle_to_fd < 0 ->
+VK_ERROR_TOO_MANY_OBJECTS), so every headless vkCreateSwapchainKHR failed:
+dEQP-VK.image.swapchain_mutable.headless.* (90 fails) and dEQP-VK.api.array.oversized_array.wsi.headless.* (5).
+
+wsi_device now records VK_EXT_external_memory_dma_buf support (has_export_memory_dma_buf). Without it a native
+image is created and allocated without the DMA_BUF external handle type and not exported: image->dma_buf_fd
+stays -1, which the acquire/present paths already treat as "no dma-buf implicit sync" (as when the kernel
+lacks sync-file import/export). Headless never reads its images outside the device, so it works unchanged,
+with the same tiled, modifier-selected, blit-free images as on Linux. The window systems that do share
+images (X11, Wayland, display) are not built without dma-bufs, and every Linux driver using this path exposes
+VK_EXT_external_memory_dma_buf, so nothing changes there.
+
+Not chosen: CPU images for such devices (WSI_IMAGE_TYPE_CPU, what MESA_VK_WSI_DEBUG=sw does). It also creates
+the swapchains, but adds an image-to-buffer blit per present and records command buffers during
+vkCreateSwapchainKHR, which crashes dEQP-VK.wsi.headless.swapchain.simulate_oom.* (SIGSEGV in ANV's
+mi_builder/blorp writing into the NULL dwords of a batch whose allocation failed; reproducible on prod8 with
+MESA_VK_WSI_DEBUG=sw).
+
+Generated-by: LLM
+
+diff --git a/src/vulkan/wsi/wsi_common.c b/src/vulkan/wsi/wsi_common.c
+index b1d9658..d8af8b8 100644
+--- a/src/vulkan/wsi/wsi_common.c
++++ b/src/vulkan/wsi/wsi_common.c
+@@ -172,6 +172,8 @@ wsi_device_init(struct wsi_device *wsi,
+       &vk_physical_device_from_handle(pdevice)->supported_extensions;
+    wsi->has_import_memory_host =
+       supported_extensions->EXT_external_memory_host;
++   wsi->has_export_memory_dma_buf =
++      supported_extensions->EXT_external_memory_dma_buf;
+    wsi->has_present_wait = supported_extensions->KHR_present_wait ||
+                            supported_extensions->KHR_present_wait2;
+ 
+diff --git a/src/vulkan/wsi/wsi_common.h b/src/vulkan/wsi/wsi_common.h
+index 0cef11e..590c965 100644
+--- a/src/vulkan/wsi/wsi_common.h
++++ b/src/vulkan/wsi/wsi_common.h
+@@ -73,6 +73,8 @@ struct wsi_device {
+    VkExternalSemaphoreHandleTypeFlags timeline_semaphore_export_handle_types;
+ 
+    bool has_import_memory_host;
++   /* VK_EXT_external_memory_dma_buf: memory can be exported as a dma-buf */
++   bool has_export_memory_dma_buf;
+    bool has_timeline_semaphore;
+    bool has_host_query_reset;
+ 
+diff --git a/src/vulkan/wsi/wsi_common_drm.c b/src/vulkan/wsi/wsi_common_drm.c
+index dbf65b2..34f29a2 100644
+--- a/src/vulkan/wsi/wsi_common_drm.c
++++ b/src/vulkan/wsi/wsi_common_drm.c
+@@ -583,8 +583,13 @@ wsi_configure_native_image(const struct wsi_swapchain *chain,
+ {
+    const struct wsi_device *wsi = chain->wsi;
+ 
++   /* Without VK_EXT_external_memory_dma_buf (a device on a system without
++    * dma-bufs) the image cannot be shared and is not exported: only a window
++    * system that never reads it outside the device (headless) can use it.
++    */
+    VkExternalMemoryHandleTypeFlags handle_type =
+-      VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
++      wsi->has_export_memory_dma_buf ?
++      VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT : 0;
+ 
+    VkResult result = wsi_configure_image(chain, pCreateInfo, handle_type, info);
+    if (result != VK_SUCCESS)
+@@ -783,7 +788,9 @@ wsi_create_native_image_mem(const struct wsi_swapchain *chain,
+    };
+    const VkMemoryDedicatedAllocateInfo memory_dedicated_info = {
+       .sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO,
+-      .pNext = &memory_export_info,
++      .pNext = wsi->has_export_memory_dma_buf ?
++               (const void *)&memory_export_info :
++               (const void *)&memory_wsi_info,
+       .image = image->image,
+       .buffer = VK_NULL_HANDLE,
+    };
+@@ -799,9 +806,15 @@ wsi_create_native_image_mem(const struct wsi_swapchain *chain,
+    if (result != VK_SUCCESS)
+       return result;
+ 
+-   result = wsi_init_image_dmabuf_fd(chain, image, false);
+-   if (result != VK_SUCCESS)
+-      return result;
++   /* Without dma-buf export image->dma_buf_fd stays -1: the acquire and
++    * present paths then use no dma-buf implicit sync (as when the kernel
++    * lacks sync-file import/export).
++    */
++   if (wsi->has_export_memory_dma_buf) {
++      result = wsi_init_image_dmabuf_fd(chain, image, false);
++      if (result != VK_SUCCESS)
++         return result;
++   }
+ 
+    if (info->drm_mod_list.drmFormatModifierCount > 0) {
+       VkImageDrmFormatModifierPropertiesEXT image_mod_props = {

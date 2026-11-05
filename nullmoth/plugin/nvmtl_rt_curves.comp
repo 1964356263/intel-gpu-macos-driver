@@ -1,0 +1,69 @@
+#version 460
+// Metal curve geometry -> one VkAabbPositionsKHR per segment, on the GPU (nvmtl_vk_cmd_curve_aabbs), recorded right
+// before the build that takes the curve as bounding-box geometry (rtopt4; the shaders intersect the segment with the
+// translator's runtime, nvmtl_rt_runtime.metal). Reads the control points, radii and indices when the build runs.
+//   glslangValidator -V --target-env vulkan1.2 nvmtl_rt_curves.comp -o nvmtl_rt_curves.spv
+// Segment s: first = index[s] (UInt16 / UInt32), clamped to cp_count - seg_cp; its control points and radii in the
+// basis' Bezier form (as nvmtl_curves.metal: B-spline, uniform Catmull-Rom, Bezier, linear), the box = their bounds
+// padded by the largest |radius| (round: the tube, disks and sphere caps lie within it of the curve) or twice it
+// (flat: the ribbon's joints reach past the chord ends), plus a relative epsilon.
+// Formats (MTLAttributeFormat): points Half2 25, Half3 26, Half4 27, Float2 29, Float3 30, Float4 31; radii Float 28,
+// Half 53. Float data is 4-byte aligned, half data 2-byte aligned (the plugin refuses other layouts).
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+layout(local_size_x = 64) in;
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer Words { uint w[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer OutWords { uint w[]; };
+layout(push_constant) uniform Args {
+    uint64_t cp, radius, index, dst;
+    uint cp_stride, cp_format, r_stride, r_format;
+    uint index_type, seg_cp, basis, ctype;
+    uint seg_count, cp_count, pad0, pad1;
+} a;
+
+uint ld32(uint64_t addr) { return Words(addr).w[0]; }
+uint ld16(uint64_t addr) { const uint w = Words(addr & ~3ul).w[0]; return (addr & 2ul) != 0ul ? (w >> 16) : (w & 0xFFFFu); }
+float ldh(uint64_t addr) { return unpackHalf2x16(ld16(addr)).x; }
+float ldf(uint64_t addr) { return uintBitsToFloat(ld32(addr)); }
+vec3 point(uint64_t p) {
+    const uint f = a.cp_format;
+    if (f == 25u || f == 26u || f == 27u) return vec3(ldh(p), ldh(p + 2ul), f == 25u ? 0.0 : ldh(p + 4ul));
+    return vec3(ldf(p), ldf(p + 4ul), f == 29u ? 0.0 : ldf(p + 8ul));
+}
+float rad(uint64_t p) { return a.r_format == 53u ? ldh(p) : ldf(p); }
+
+void main()
+{
+    const uint s = gl_GlobalInvocationID.x;
+    if (s >= a.seg_count) return;
+    const uint ncp = clamp(a.seg_cp, 2u, 4u);
+    uint first = a.index_type == 0u ? ld16(a.index + 2ul * uint64_t(s)) : ld32(a.index + 4ul * uint64_t(s));
+    if (a.cp_count >= ncp) first = min(first, a.cp_count - ncp); else first = 0u;
+    vec3 P[4]; float R[4];
+    for (uint k = 0u; k < 4u; k++) {
+        const uint c = first + min(k, ncp - 1u);
+        P[k] = point(a.cp + uint64_t(c) * uint64_t(a.cp_stride));
+        R[k] = rad(a.radius + uint64_t(c) * uint64_t(a.r_stride));
+    }
+    vec3 B[4]; float RB[4];
+    if (a.basis == 0u && ncp == 4u) {
+        B[0] = (P[0] + 4.0 * P[1] + P[2]) / 6.0; B[1] = (2.0 * P[1] + P[2]) / 3.0; B[2] = (P[1] + 2.0 * P[2]) / 3.0; B[3] = (P[1] + 4.0 * P[2] + P[3]) / 6.0;
+        RB[0] = (R[0] + 4.0 * R[1] + R[2]) / 6.0; RB[1] = (2.0 * R[1] + R[2]) / 3.0; RB[2] = (R[1] + 2.0 * R[2]) / 3.0; RB[3] = (R[1] + 4.0 * R[2] + R[3]) / 6.0;
+    } else if (a.basis == 0u && ncp == 3u) {
+        B[0] = (P[0] + P[1]) / 2.0; B[1] = P[1]; B[2] = (P[1] + P[2]) / 2.0; B[3] = B[2];
+        RB[0] = (R[0] + R[1]) / 2.0; RB[1] = R[1]; RB[2] = (R[1] + R[2]) / 2.0; RB[3] = RB[2];
+    } else if (a.basis == 1u) {
+        B[0] = P[1]; B[1] = P[1] + (P[2] - P[0]) / 6.0; B[2] = P[2] - (P[3] - P[1]) / 6.0; B[3] = P[2];
+        RB[0] = R[1]; RB[1] = R[1] + (R[2] - R[0]) / 6.0; RB[2] = R[2] - (R[3] - R[1]) / 6.0; RB[3] = R[2];
+    } else {
+        for (uint k = 0u; k < 4u; k++) { B[k] = P[min(k, ncp - 1u)]; RB[k] = R[min(k, ncp - 1u)]; }
+    }
+    vec3 lo = B[0], hi = B[0]; float r = 0.0;
+    for (uint k = 0u; k < 4u; k++) { lo = min(lo, B[k]); hi = max(hi, B[k]); r = max(r, abs(RB[k])); }
+    for (uint k = 0u; k < 4u; k++) r = max(r, abs(R[k]));
+    const float pad = (a.ctype == 1u ? 2.0 : 1.0) * r * 1.001 + 1e-6 * max(max(abs(lo.x), abs(hi.x)), max(max(abs(lo.y), abs(hi.y)), max(abs(lo.z), abs(hi.z)))) + 1e-7;
+    lo -= pad; hi += pad;
+    OutWords d = OutWords(a.dst + 24ul * uint64_t(s));
+    d.w[0] = floatBitsToUint(lo.x); d.w[1] = floatBitsToUint(lo.y); d.w[2] = floatBitsToUint(lo.z);
+    d.w[3] = floatBitsToUint(hi.x); d.w[4] = floatBitsToUint(hi.y); d.w[5] = floatBitsToUint(hi.z);
+}

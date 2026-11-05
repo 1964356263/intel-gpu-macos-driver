@@ -1,0 +1,579 @@
+From: Yusuf İhsan KILINÇ <78423442+yusufklncc@users.noreply.github.com>
+Date: Thu, 29 Oct 2026 13:30:00 +0300
+Subject: [PATCH 10] anv: enable H.264 encode on Xe2
+
+Xe2 (Battlemage, media 13.01) runs the Gfx12.5 H.264 VDEnc path with two
+changes taken from Intel's media-driver (Xe2_HPM AVC encoder):
+
+ - VDENC_AVC_IMG_STATE is 26 dwords on Xe_LPM+/Xe2 (20 on DG2): add the Xe2
+   layout to xe2.xml and program dwords 1-25 with the Xe2_HPM settings
+   (encode_avc_vdenc_const_settings_xe2_hpm_open.h, target usage 4).
+ - The collocated MV write buffer, the 8x scaled reference and the backward
+   4x DS reference in VDENC_PIPE_BUF_ADDR_STATE apply to Gfx12.5 and later,
+   not only to Gfx12.5.
+
+The HuC BRC tables of Xe2_HPM equal Xe_LPM+'s, so the H.264 BRC path is
+unchanged; its SLB size follows the longer image state through the genxml
+length. Wa_18011246551 is not set on BMG.
+
+Tested on Arc B580: CQP, CBR and VBR (HuC BRC), I/P/B, 720p-4K; output
+decodes with libavcodec's software H.264 decoder without errors
+(1080p testsrc2 QP 24: 50.4 dB Y; VBR 8 Mbit/s: 47.2 dB, 8.6 Mbit/s).
+
+Applies on top of patches 0001-0008 and the widlarizer Xe2 HEVC VDEnc series
+(src/mesa-venc branch xe2-venc).
+---
+ src/intel/genxml/xe2.xml               |  45 +++++
+ src/intel/vulkan/anv_physical_device.c |  10 +-
+ src/intel/vulkan/anv_video.c           |   4 -
+ src/intel/vulkan/genX_cmd_video_enc.c  |  42 +++-
+ src/intel/vulkan/h264_vdenc_tables.h   | 347 +++++++++++++++++++++++++++++++++
+ 5 files changed, 433 insertions(+), 15 deletions(-)
+
+diff --git a/src/intel/genxml/xe2.xml b/src/intel/genxml/xe2.xml
+index fd1c7d512e5..6440375ac7f 100644
+--- a/src/intel/genxml/xe2.xml
++++ b/src/intel/genxml/xe2.xml
+@@ -1725,6 +1725,51 @@
+     <field name="Command Type" dword="0" bits="31:29" type="uint" default="3" />
+     <field name="System Memory Fence Address" dword="1" bits="63:12" type="address" />
+   </instruction>
++  <instruction name="VDENC_AVC_IMG_STATE" bias="2" length="26" engine="video">
++    <field name="DWord Length" dword="0" bits="11:0" type="uint" default="24" />
++    <field name="SubOpcodeB" dword="0" bits="20:16" type="uint" default="5" />
++    <field name="SubOpcodeA" dword="0" bits="22:21" type="uint" default="0" />
++    <field name="Media Command Opcode" dword="0" bits="26:23" type="uint" default="1" />
++    <field name="Pipeline" dword="0" bits="28:27" type="uint" default="2" />
++    <field name="Command Type" dword="0" bits="31:29" type="uint" default="3" />
++    <field name="Picture Type" dword="1" bits="3:2" type="uint" />
++    <field name="Transform8x8Flag" dword="1" bits="4:4" type="bool" />
++    <field name="Colloc MV WR En" dword="1" bits="5:5" type="bool" />
++    <field name="Subpel Mode" dword="1" bits="7:6" type="uint" />
++    <field name="Colloc MV RD En" dword="2" bits="13:13" type="bool" />
++    <field name="Bidirectional Weight" dword="2" bits="23:18" type="uint" />
++    <field name="Picture Height Minus One" dword="3" bits="7:0" type="uint" />
++    <field name="Picture Width" dword="3" bits="24:16" type="uint" />
++    <field name="Fwd Ref Idx0 Reference Picture" dword="5" bits="3:0" type="uint" />
++    <field name="Bwd Ref Idx0 Reference Picture" dword="5" bits="7:4" type="uint" />
++    <field name="Fwd Ref Idx1 Reference Picture" dword="5" bits="11:8" type="uint" />
++    <field name="Fwd Ref Idx2 Reference Picture" dword="5" bits="19:16" type="uint" />
++    <field name="Number Of L0 References Minus One" dword="5" bits="23:20" type="uint" />
++    <field name="Number Of L1 References Minus One" dword="5" bits="26:24" type="uint" />
++    <field name="Intra Refresh MB Pos" dword="6" bits="7:0" type="uint" />
++    <field name="Intra Refresh MB Size Minus One" dword="6" bits="15:8" type="uint" />
++    <field name="Intra Refresh Enable Rolling I Enable" dword="6" bits="16:16" type="bool" />
++    <field name="Intra Refresh Mode" dword="6" bits="17:17" type="uint" />
++    <field name="QP Adjustment For Rolling I" dword="6" bits="31:24" type="uint" />
++    <field name="ROI QP Adjustment For Zone0" dword="9" bits="3:0" type="uint" />
++    <field name="ROI QP Adjustment For Zone1" dword="9" bits="7:4" type="uint" />
++    <field name="ROI QP Adjustment For Zone2" dword="9" bits="11:8" type="uint" />
++    <field name="ROI QP Adjustment For Zone3" dword="9" bits="15:12" type="uint" />
++    <field name="Min Qp" dword="12" bits="7:0" type="uint" />
++    <field name="Max Qp" dword="12" bits="15:8" type="uint" />
++    <field name="Num B Frames Between Fwd And Bwd" dword="12" bits="30:29" type="uint" />
++    <field name="ROI Enable" dword="13" bits="0:0" type="bool" />
++    <field name="MB Level Qp Enable" dword="13" bits="3:3" type="bool" />
++    <field name="MB Level Delta Qp Enable" dword="13" bits="5:5" type="bool" />
++    <field name="Longterm Reference Frame BWD Ref0 Indicator" dword="13" bits="10:10" type="bool" />
++    <field name="Qp Prime Y" dword="14" bits="7:0" type="uint" />
++    <field name="Trellis Quant En" dword="14" bits="19:19" type="bool" />
++    <field name="POC Number For Current Picture" dword="15" bits="15:8" type="uint" />
++    <field name="POC Number For Fwd Ref0" dword="16" bits="15:8" type="uint" />
++    <field name="POC Number For Fwd Ref1" dword="17" bits="15:8" type="uint" />
++    <field name="POC Number For Fwd Ref2" dword="18" bits="15:8" type="uint" />
++    <field name="POC Number For Bwd Ref0" dword="19" bits="15:8" type="uint" />
++  </instruction>
+   <instruction name="VDENC_CMD1" bias="2" length="39" engine="video">
+     <field name="DWord Length" dword="0" bits="11:0" type="uint" default="37" />
+     <field name="SubOpcodeB" dword="0" bits="20:16" type="uint" default="10" />
+diff --git a/src/intel/vulkan/anv_physical_device.c b/src/intel/vulkan/anv_physical_device.c
+index b06bc5b3181..a0040da6393 100644
+--- a/src/intel/vulkan/anv_physical_device.c
++++ b/src/intel/vulkan/anv_physical_device.c
+@@ -368,10 +368,8 @@ get_device_extensions(const struct anv_physical_device *device,
+                       struct vk_device_extension_table *ext)
+ {
+    const bool rt_enabled = ANV_SUPPORT_RT && device->info.has_ray_tracing;
+-   /* Xe2 only has H.265 encode wired up so far. */
+    const bool hw_video_encode_supported = device->info.verx10 <= 125 ||
+                                           device->info.verx10 == 200;
+-   const bool hw_video_encode_h264_supported = device->info.verx10 <= 125;
+ 
+ #ifdef HAVE_XEMAC
+    /* video is on by default here (anv_instance.c): advertise it only when the kernel reports a video engine (B580.kext
+@@ -518,8 +516,7 @@ get_device_extensions(const struct anv_physical_device *device,
+       .KHR_video_decode_av1                  = device->info.ver >= 12 && VIDEO_CODEC_AV1DEC && video_decode_enabled,
+       .KHR_video_decode_vp9                  = VIDEO_CODEC_VP9DEC && video_decode_enabled,
+       .KHR_video_encode_queue                = video_encode_enabled,
+-      .KHR_video_encode_h264                 = VIDEO_CODEC_H264ENC && video_encode_enabled &&
+-                                               hw_video_encode_h264_supported,
++      .KHR_video_encode_h264                 = VIDEO_CODEC_H264ENC && video_encode_enabled,
+       .KHR_video_encode_h265                 = device->info.ver >= 12 && VIDEO_CODEC_H265ENC && video_encode_enabled,
+       .KHR_video_encode_av1                  = device->info.verx10 == 125 && VIDEO_CODEC_AV1ENC && video_encode_enabled,
+       .KHR_video_maintenance1                = (video_decode_enabled &&
+@@ -3500,9 +3497,8 @@ void anv_GetPhysicalDeviceQueueFamilyProperties2(
+                }
+ 
+                if (queue_family->queueFlags & VK_QUEUE_VIDEO_ENCODE_BIT_KHR) {
+-                  prop->videoCodecOperations |= VK_VIDEO_CODEC_OPERATION_ENCODE_H265_BIT_KHR;
+-                  if (pdevice->info.verx10 <= 125)
+-                     prop->videoCodecOperations |= VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR;
++                  prop->videoCodecOperations |= VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR |
++                                                VK_VIDEO_CODEC_OPERATION_ENCODE_H265_BIT_KHR;
+                   if (pdevice->info.verx10 == 125)
+                      prop->videoCodecOperations |= VK_VIDEO_CODEC_OPERATION_ENCODE_AV1_BIT_KHR;
+                }
+diff --git a/src/intel/vulkan/anv_video.c b/src/intel/vulkan/anv_video.c
+index a0e5ffd4642..a41f7c62517 100644
+--- a/src/intel/vulkan/anv_video.c
++++ b/src/intel/vulkan/anv_video.c
+@@ -222,10 +222,6 @@ video_profile_supported(struct anv_physical_device *pdevice,
+ 
+    case VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR:
+    case VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR: {
+-      if (profile->videoCodecOperation == VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR &&
+-          pdevice->info.verx10 > 125)
+-         return VK_ERROR_VIDEO_PROFILE_CODEC_NOT_SUPPORTED_KHR;
+-
+       if (profile->lumaBitDepth != VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR)
+          return VK_ERROR_VIDEO_PROFILE_FORMAT_NOT_SUPPORTED_KHR;
+       break;
+diff --git a/src/intel/vulkan/genX_cmd_video_enc.c b/src/intel/vulkan/genX_cmd_video_enc.c
+index 156f0d17a1f..a8f7a13102b 100644
+--- a/src/intel/vulkan/genX_cmd_video_enc.c
++++ b/src/intel/vulkan/genX_cmd_video_enc.c
+@@ -904,7 +904,7 @@ anv_h264_emit_vdenc_pipe_buf_addr_state(struct anv_cmd_buffer *cmd,
+    struct anv_video_session *vid = cmd->video.vid;
+    const struct anv_image_view *iv =
+       anv_image_view_from_handle(enc_info->srcPictureResource.imageViewBinding);
+-#if GFX_VERx10 == 125
++#if GFX_VERx10 >= 125
+    uint32_t base_ref_array_layer;
+    const struct anv_image_view *base_ref_iv =
+       anv_video_enc_base_ref(enc_info, &base_ref_array_layer);
+@@ -950,13 +950,13 @@ anv_h264_emit_vdenc_pipe_buf_addr_state(struct anv_cmd_buffer *cmd,
+       if (colloc_rd_en)
+          buf.col_mv_read =
+                anv_image_dmv_top_address(l1_iv, l1_slot->pPictureResource->baseArrayLayer);
+-#if GFX_VERx10 == 125
++#if GFX_VERx10 >= 125
+       buf.ds_bwd_ref =
+             anv_image_ds_4x_address(l1_iv, l1_slot->pPictureResource->baseArrayLayer);
+ #endif
+    }
+ 
+-#if GFX_VERx10 == 125
++#if GFX_VERx10 >= 125
+    if (enc_info->pSetupReferenceSlot)
+       buf.col_mv_avc_write =
+          anv_image_dmv_top_address(base_ref_iv, base_ref_array_layer);
+@@ -1198,6 +1198,40 @@ anv_h264_emit_vdenc_avc_img_state(struct anv_cmd_buffer *cmd,
+     * TODO: the rest, intra-refresh / A-stepping / Wa_18011246551 / stream-in
+     * are all 0 for now.
+     */
++   uint32_t level = vk_video_get_h264_level(sps->level_idc);
++
++#if GFX_VER >= 20
++   /* Xe2: VDENC_AVC_IMG_STATE is 26 dwords and takes the Xe2_HPM settings
++    * (media-driver EncodeAvcVdencConstSettingsXe2_Hpm). Target usage 4, no
++    * slice level rate control, rolling intra refresh or low delay mode, and
++    * Wa_18011246551 is not set on Xe2.
++    */
++   const unsigned type = !is_inter ? 0 : !is_bframe ? 1 : 2;
++   const unsigned tu = 4;
++   const bool ref_pic = enc_info->pSetupReferenceSlot != NULL;
++
++   uint32_t *dw = anv_batch_emitn(batch, GENX(VDENC_AVC_IMG_STATE_length),
++                                  GENX(VDENC_AVC_IMG_STATE));
++   GENX(VDENC_AVC_IMG_STATE_pack)(batch, dw, &img);
++   dw[1] |= h264_vdenc_avc_img_state_xe2_dw1;
++   dw[2] |= h264_vdenc_avc_img_state_xe2_dw2[type][tu][ref_pic][0];
++   dw[4] |= h264_vdenc_avc_img_state_xe2_dw4[type][tu][0][0];
++   dw[5] |= h264_vdenc_avc_img_state_xe2_dw5[type][tu];
++   dw[7] |= h264_vdenc_avc_img_state_xe2_dw7;
++   dw[8] |= level <= 52 ? h264_vdenc_avc_img_state_xe2_dw8[level] : 0x02002000;
++   dw[10] |= h264_vdenc_avc_img_state_xe2_dw10[type];
++   dw[11] |= h264_vdenc_avc_img_state_xe2_dw11[type];
++   dw[12] |= h264_vdenc_avc_img_state_xe2_dw12[type][tu];
++   dw[13] |= h264_vdenc_avc_img_state_xe2_dw13[type][tu][0];
++   dw[14] |= h264_vdenc_avc_img_state_xe2_dw14[type][tu];
++   dw[15] |= h264_vdenc_avc_img_state_xe2_dw15;
++   dw[16] |= h264_vdenc_avc_img_state_xe2_dw16;
++   dw[17] |= h264_vdenc_avc_img_state_xe2_dw17;
++   dw[18] |= h264_vdenc_avc_img_state_xe2_dw18;
++   dw[19] |= h264_vdenc_avc_img_state_xe2_dw19;
++   dw[22] |= h264_vdenc_avc_img_state_xe2_dw22;
++   dw[25] |= h264_vdenc_avc_img_state_xe2_dw25[tu];
++#else
+    uint8_t img_type = !is_inter ? 0 : !is_bframe ? 1 :
+                       (enc_info->pSetupReferenceSlot ? 3 : 2);
+    const uint32_t *cost = h264_vdenc_avc_img_state[4 - 1][img_type][0][0][0][0];
+@@ -1207,9 +1241,9 @@ anv_h264_emit_vdenc_avc_img_state(struct anv_cmd_buffer *cmd,
+    for (unsigned i = 0; i < 19; i++)
+       dw[i + 1] |= cost[i];
+ 
+-   uint32_t level = vk_video_get_h264_level(sps->level_idc);
+    dw[8] = (dw[8] & 0xffff) |
+            (level <= 52 ? h264_vdenc_avc_img_state_dw8[level] : 0x02000000);
++#endif
+ }
+ #endif
+ 
+diff --git a/src/intel/vulkan/h264_vdenc_tables.h b/src/intel/vulkan/h264_vdenc_tables.h
+index f519dfce6c0..4f609fbaffd 100644
+--- a/src/intel/vulkan/h264_vdenc_tables.h
++++ b/src/intel/vulkan/h264_vdenc_tables.h
+@@ -1460,6 +1460,353 @@ static const uint32_t h264_vdenc_avc_img_state_dw8[53] = {
+    0x02000000, 0x02000000, 0x08000000, 0x08000000, 0x08000000,
+ };
+ 
++#if GFX_VER >= 20
++/* Xe2 VDENC_AVC_IMG_STATE settings, from media-driver
++ * (encode_avc_vdenc_const_settings_xe2_hpm_open.h, the open source variant of
++ * EncodeAvcVdencConstSettingsXe2_Hpm::SetVdencAvcImgStateSettings). Xe2 grows
++ * the command to 26 dwords; the settings are ORed into dwords 1 to 25 on top
++ * of the fields the driver packs.
++ *
++ * Indices: picture coding type minus one (I = 0, P = 1, B = 2), target usage
++ * (0..7, media-driver maps 1..7 to 1, 2, 4 or 7), reference picture flag,
++ * slice level rate control, rolling intra refresh mode, Wa_18011246551 (not
++ * set on BMG), AVC level_idc and low delay mode.
++ */
++static const uint32_t h264_vdenc_avc_img_state_xe2_dw1 = 0x301;
++static const uint32_t h264_vdenc_avc_img_state_xe2_dw2[3][8][2][2] = {
++   {
++      {
++         { 0x70028000, 0x70028000 },
++         { 0x70028000, 0x70028000 },
++      },
++      {
++         { 0xc0029400, 0xc0029400 },
++         { 0xc0029400, 0xc0029400 },
++      },
++      {
++         { 0x70029400, 0x70029400 },
++         { 0x70029400, 0x70029400 },
++      },
++      {
++         { 0x40028240, 0x40028240 },
++         { 0x40028240, 0x40028240 },
++      },
++      {
++         { 0x40028240, 0x40028240 },
++         { 0x40028240, 0x40028240 },
++      },
++      {
++         { 0x40028240, 0x40028240 },
++         { 0x40028240, 0x40028240 },
++      },
++      {
++         { 0x400281e0, 0x40028160 },
++         { 0x400281e0, 0x40028160 },
++      },
++      {
++         { 0x400281e0, 0x40028160 },
++         { 0x400281e0, 0x40028160 },
++      },
++   },
++   {
++      {
++         { 0x70028000, 0x70028000 },
++         { 0x70028000, 0x70028000 },
++      },
++      {
++         { 0xc0029407, 0xc0029407 },
++         { 0xc0029407, 0xc0029407 },
++      },
++      {
++         { 0x70029407, 0x70029407 },
++         { 0x70029407, 0x70029407 },
++      },
++      {
++         { 0x40028247, 0x40028247 },
++         { 0x40028247, 0x40028247 },
++      },
++      {
++         { 0x40028247, 0x40028247 },
++         { 0x40028247, 0x40028247 },
++      },
++      {
++         { 0x40028247, 0x40028247 },
++         { 0x40028247, 0x40028247 },
++      },
++      {
++         { 0x400281e4, 0x40028164 },
++         { 0x400281e4, 0x40028164 },
++      },
++      {
++         { 0x400281e4, 0x40028164 },
++         { 0x400281e4, 0x40028164 },
++      },
++   },
++   {
++      {
++         { 0x70028000, 0x70028000 },
++         { 0x70028000, 0x70028000 },
++      },
++      {
++         { 0xc0029407, 0xc0029407 },
++         { 0xc0029407, 0xc0029407 },
++      },
++      {
++         { 0x70029407, 0x70029407 },
++         { 0x72029207, 0x72029207 },
++      },
++      {
++         { 0x40028244, 0x40028244 },
++         { 0x40028244, 0x40028244 },
++      },
++      {
++         { 0x40028243, 0x40028243 },
++         { 0x40028243, 0x40028243 },
++      },
++      {
++         { 0x40028243, 0x40028243 },
++         { 0x40028243, 0x40028243 },
++      },
++      {
++         { 0x400281e2, 0x40028162 },
++         { 0x400281e2, 0x40028162 },
++      },
++      {
++         { 0x400281e2, 0x40028162 },
++         { 0x400281e2, 0x40028162 },
++      },
++   },
++};
++static const uint32_t h264_vdenc_avc_img_state_xe2_dw4[3][8][4][2] = {
++   {
++      {
++         { 0, 0 },
++         { 0, 0 },
++         { 0, 0 },
++         { 0, 0 },
++      },
++      {
++         { 0x2000000, 0x2000000 },
++         { 0x2000000, 0x2000000 },
++         { 0x2000000, 0x2000000 },
++         { 0x2000000, 0x2000000 },
++      },
++      {
++         { 0x2000000, 0x2000000 },
++         { 0x2000000, 0x2000000 },
++         { 0x2000000, 0x2000000 },
++         { 0x2000000, 0x2000000 },
++      },
++      {
++         { 0, 0 },
++         { 0, 0 },
++         { 0, 0 },
++         { 0, 0 },
++      },
++      {
++         { 0, 0 },
++         { 0, 0 },
++         { 0, 0 },
++         { 0, 0 },
++      },
++      {
++         { 0, 0 },
++         { 0, 0 },
++         { 0, 0 },
++         { 0, 0 },
++      },
++      {
++         { 0x800, 0x800 },
++         { 0x800, 0x800 },
++         { 0x800, 0x800 },
++         { 0x800, 0x800 },
++      },
++      {
++         { 0x800, 0x800 },
++         { 0x800, 0x800 },
++         { 0x800, 0x800 },
++         { 0x800, 0x800 },
++      },
++   },
++   {
++      {
++         { 0, 0 },
++         { 0, 0 },
++         { 0, 0 },
++         { 0, 0 },
++      },
++      {
++         { 0x2000000, 0x2000000 },
++         { 0x2000000, 0x2bd0088 },
++         { 0x2000000, 0x2000000 },
++         { 0x2000000, 0x2000000 },
++      },
++      {
++         { 0x2000000, 0x2000000 },
++         { 0x2000000, 0x2bd0088 },
++         { 0x2000000, 0x2000000 },
++         { 0x2000000, 0x2000000 },
++      },
++      {
++         { 0, 0 },
++         { 0, 0xbd0088 },
++         { 0, 0 },
++         { 0, 0 },
++      },
++      {
++         { 0, 0 },
++         { 0, 0xbd0088 },
++         { 0, 0 },
++         { 0, 0 },
++      },
++      {
++         { 0, 0 },
++         { 0, 0xbd0088 },
++         { 0, 0 },
++         { 0, 0 },
++      },
++      {
++         { 0x800, 0x800 },
++         { 0x800, 0xbd0888 },
++         { 0x800, 0x800 },
++         { 0x800, 0x800 },
++      },
++      {
++         { 0x800, 0x800 },
++         { 0x800, 0xbd0888 },
++         { 0x800, 0x800 },
++         { 0x800, 0x800 },
++      },
++   },
++   {
++      {
++         { 0, 0 },
++         { 0, 0 },
++         { 0, 0 },
++         { 0, 0 },
++      },
++      {
++         { 0x2000000, 0x2000000 },
++         { 0x2000000, 0x2bd0088 },
++         { 0x2000000, 0x2000000 },
++         { 0x2000000, 0x2000000 },
++      },
++      {
++         { 0x2000000, 0x2000000 },
++         { 0x2000000, 0x2bd0088 },
++         { 0x2000000, 0x2000000 },
++         { 0x2000000, 0x2000000 },
++      },
++      {
++         { 0, 0 },
++         { 0, 0xbd0088 },
++         { 0, 0 },
++         { 0, 0 },
++      },
++      {
++         { 0, 0 },
++         { 0, 0xbd0088 },
++         { 0, 0 },
++         { 0, 0 },
++      },
++      {
++         { 0, 0 },
++         { 0, 0xbd0088 },
++         { 0, 0 },
++         { 0, 0 },
++      },
++      {
++         { 0x800, 0x800 },
++         { 0x800, 0xbd0888 },
++         { 0x800, 0x800 },
++         { 0x800, 0x800 },
++      },
++      {
++         { 0x800, 0x800 },
++         { 0x800, 0xbd0888 },
++         { 0x800, 0x800 },
++         { 0x800, 0x800 },
++      },
++   },
++};
++static const uint32_t h264_vdenc_avc_img_state_xe2_dw5[3][8] = {
++   { 0, 0, 0, 0, 0, 0, 0, 0 },
++   { 0, 0x80000000, 0x80000000, 0x80000000, 0x80000000, 0x80000000, 0x80000000, 0x80000000 },
++   { 0, 0x80000000, 0x80000000, 0x80000000, 0x80000000, 0x80000000, 0x80000000, 0x80000000 },
++};
++static const uint32_t h264_vdenc_avc_img_state_xe2_dw7 = 0xffff0000;
++static const uint32_t h264_vdenc_avc_img_state_xe2_dw8[53] = {
++   0x2002000, 0x2002000, 0x2002000, 0x2002000, 0x2002000, 0x2002000, 0x2002000, 0x2002000,
++   0x2002000, 0x1002000, 0x1002000, 0x2002000, 0x2002000, 0x2002000, 0x2002000, 0x2002000,
++   0x2002000, 0x2002000, 0x2002000, 0x2002000, 0x2002000, 0x4002000, 0x4002000, 0x2002000,
++   0x2002000, 0x2002000, 0x2002000, 0x2002000, 0x2002000, 0x2002000, 0x4002000, 0x8002000,
++   0x8002000, 0x2002000, 0x2002000, 0x2002000, 0x2002000, 0x2002000, 0x2002000, 0x2002000,
++   0x8002000, 0x8002000, 0x8002000, 0x2002000, 0x2002000, 0x2002000, 0x2002000, 0x2002000,
++   0x2002000, 0x2002000, 0x8002000, 0x8002000, 0x8002000,
++};
++static const uint32_t h264_vdenc_avc_img_state_xe2_dw10[3] = { 0x3e80000, 0x3200000, 0x2580000 };
++static const uint32_t h264_vdenc_avc_img_state_xe2_dw11[3] = { 0xbb807d0, 0x9600640, 0x70804b0 };
++static const uint32_t h264_vdenc_avc_img_state_xe2_dw12[3][8] = {
++   { 0xf000000, 0xf000000, 0xf000000, 0xf000000, 0xf000000, 0xf000000, 0xf000000, 0xf000000 },
++   { 0xf000000, 0xf000000, 0xf000000, 0xf000000, 0xf000000, 0xf000000, 0xfff0000, 0xfff0000 },
++   { 0xf000000, 0xf000000, 0xf000000, 0xf000000, 0xf000000, 0xf000000, 0xfff0000, 0xfff0000 },
++};
++static const uint32_t h264_vdenc_avc_img_state_xe2_dw13[3][8][2] = {
++   {
++      { 0x7d00000, 0x7d00000 },
++      { 0x7d00000, 0x7d00000 },
++      { 0x7d00000, 0x7d00000 },
++      { 0x7d00000, 0x7d00000 },
++      { 0x7d00000, 0x7d00000 },
++      { 0x7d00000, 0x7d00000 },
++      { 0x7d00000, 0x7d00000 },
++      { 0x7d00000, 0x7d00000 },
++   },
++   {
++      { 0x6400000, 0x6400000 },
++      { 0x6400000, 0x64000c0 },
++      { 0x6400000, 0x6400000 },
++      { 0x6400000, 0x6400000 },
++      { 0x6400000, 0x6400000 },
++      { 0x6400000, 0x6400000 },
++      { 0x6400000, 0x6400000 },
++      { 0x6400000, 0x6400000 },
++   },
++   {
++      { 0x4b00000, 0x4b00000 },
++      { 0x4b000c0, 0x4b000c0 },
++      { 0x4b00000, 0x4b00000 },
++      { 0x4b00000, 0x4b00000 },
++      { 0x4b00000, 0x4b00000 },
++      { 0x4b00000, 0x4b00000 },
++      { 0x4b00000, 0x4b00000 },
++      { 0x4b00000, 0x4b00000 },
++   },
++};
++static const uint32_t h264_vdenc_avc_img_state_xe2_dw14[3][8] = {
++   {
++      0xff200000, 0xff200000, 0xff200000, 0xff200000, 0xff200000, 0xff200000, 0xff200000,
++      0xff200000,
++   },
++   {
++      0xff200000, 0xff200000, 0xff200000, 0xff200000, 0xff200000, 0xff200000, 0xffe00000,
++      0xffe00000,
++   },
++   {
++      0xff200000, 0xff200000, 0xff200000, 0xff200000, 0xff200000, 0xff200000, 0xffe00000,
++      0xffe00000,
++   },
++};
++static const uint32_t h264_vdenc_avc_img_state_xe2_dw15 = 0xbb80002;
++static const uint32_t h264_vdenc_avc_img_state_xe2_dw16 = 0xe100004;
++static const uint32_t h264_vdenc_avc_img_state_xe2_dw17 = 0x13880006;
++static const uint32_t h264_vdenc_avc_img_state_xe2_dw18 = 0x1f40000a;
++static const uint32_t h264_vdenc_avc_img_state_xe2_dw19 = 0x23280012;
++static const uint32_t h264_vdenc_avc_img_state_xe2_dw22 = 0x33000000;
++static const uint32_t h264_vdenc_avc_img_state_xe2_dw25[8] = { 0x6000c0, 0x6000c0, 0, 0x6000c0, 0x6000c0, 0x6000c0, 0x6000c0, 0x6000c0 };
++
++#endif /* GFX_VER >= 20 */
++
+ #endif /* GFX_VERx10 >= 125 */
+ 
+ #endif

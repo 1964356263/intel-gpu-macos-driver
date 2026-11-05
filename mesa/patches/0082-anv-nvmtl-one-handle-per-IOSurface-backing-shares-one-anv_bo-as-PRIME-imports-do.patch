@@ -1,0 +1,284 @@
+From: Yusuf İhsan KILINÇ <78423442+yusufklncc@users.noreply.github.com>
+Subject: [PATCH 0082] anv/nvmtl: one handle per IOSurface backing: imports share one anv_bo, as PRIME imports do
+
+Linux gives a file one GEM handle per object: drm_gem_prime_fd_to_handle returns the existing handle for a dma-buf the
+file imported before, and anv_device_import_bo then finds the anv_bo in its cache and takes a reference, so every import
+of a buffer shares one anv_bo, one VA and one binding, and the last release unbinds it (xe_vm_unbind_bo: UNMAP_ALL of the
+handle). B580.kext's SURFACE_VRAM gave each import of a shared IOSurface backing a new handle, and
+anv_device_import_bo_handle refused a handle it already knew, so the window server's second import of an app's window
+backing was a second anv_bo; releasing the first unbound the second's VA (the black flicker of 2026-10-31, fixed in the
+kernel by rb7l's per-handle UNMAP_ALL).
+
+With B580.kext rb7m the import asks for the client's existing handle (B580_SURFACE_VRAM_SAME_HANDLE) and
+anv_device_import_bo_handle_locked refcounts the anv_bo the cache already holds, with anv_device_import_bo's checks. The
+ioctl and the cache lookup run under the BO cache mutex, as anv_device_import_bo does fd-to-handle, so a release of the
+same handle cannot come between them. A handle the import does not keep is closed only when no anv_bo owns it. An older
+kernel answers EINVAL to the flag: the import retries without it and behaves as before.
+
+Applies to src/intel/vulkan of a3ad934832b and of the newest stack on it (0074-0081).
+---
+--- a/src/intel/vulkan/anv_allocator.c
++++ b/src/intel/vulkan/anv_allocator.c
+@@ -2171,14 +2171,29 @@
+  * DRM_IOCTL_B580_SURFACE_VRAM: an IOSurface's VRAM backing, shared with other processes) and its size. The handle is
+  * this import's: a second import of the same surface gets its own handle (and its own anv_bo); on failure it is closed. */
+ VkResult
+-anv_device_import_bo_handle(struct anv_device *device, uint32_t gem_handle, uint64_t size,
+-                            enum anv_bo_alloc_flags alloc_flags, uint64_t client_address,
+-                            struct anv_bo **bo_out)
++anv_device_import_bo_handle_locked(struct anv_device *device, uint32_t gem_handle, uint64_t size,
++                                   enum anv_bo_alloc_flags alloc_flags, uint64_t client_address,
++                                   struct anv_bo **bo_out)
+ {
+    assert(alloc_flags & ANV_BO_ALLOC_EXTERNAL);
+    struct anv_bo_cache *cache = &device->bo_cache;
+-   simple_mtx_lock(&cache->mutex);
++   simple_mtx_assert_locked(&cache->mutex);
+    struct anv_bo *bo = anv_device_lookup_bo(device, gem_handle);
++   /* A handle this device already imported (B580_SURFACE_VRAM_SAME_HANDLE, as PRIME's fd-to-handle gives the existing
++    * handle): the same anv_bo, one more reference, as anv_device_import_bo does for a dma-buf imported twice. */
++   if (bo && bo->refcount > 0) {
++      if ((bo->alloc_flags & ANV_BO_ALLOC_CLIENT_VISIBLE_ADDRESS) !=
++          (alloc_flags & ANV_BO_ALLOC_CLIENT_VISIBLE_ADDRESS))
++         return vk_errorf(device, VK_ERROR_INVALID_EXTERNAL_HANDLE,
++                          "The same BO was imported with and without buffer device address");
++      if (client_address && client_address != intel_48b_address(bo->offset))
++         return vk_errorf(device, VK_ERROR_INVALID_EXTERNAL_HANDLE, "The same BO was imported at two different addresses");
++      if (size > bo->size)
++         return vk_errorf(device, VK_ERROR_INVALID_EXTERNAL_HANDLE, "The same BO was imported with a larger size");
++      __sync_fetch_and_add(&bo->refcount, 1);
++      *bo_out = bo;
++      return VK_SUCCESS;
++   }
+    struct anv_bo new_bo = {
+       .name = "nvmtl-surface-vram",
+       .gem_handle = gem_handle,
+@@ -2188,40 +2203,46 @@
+       .size = size,
+       .actual_size = size,
+    };
+-   if (!bo || bo->refcount > 0 || !size) {
++   if (!bo || !size) {
+       device->kmd_backend->gem_close(device, &new_bo);
+-      simple_mtx_unlock(&cache->mutex);
+       return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
+    }
+    uint32_t bo_flags;
+    VkResult result = anv_gem_import_bo_alloc_flags_to_bo_flags(device, bo, new_bo.alloc_flags, &bo_flags);
+    if (result != VK_SUCCESS) {
+       device->kmd_backend->gem_close(device, &new_bo);
+-      simple_mtx_unlock(&cache->mutex);
+       return result;
+    }
+    uint32_t alignment = anv_bo_vma_calc_alignment_requirement(device, new_bo.alloc_flags, size);
+    result = anv_bo_vma_alloc_or_close(device, &new_bo, new_bo.alloc_flags, client_address, alignment);
+    if (result != VK_SUCCESS) {
+-      simple_mtx_unlock(&cache->mutex);
+       return result;
+    }
+    result = device->kmd_backend->vm_bind_bo(device, &new_bo);
+    if (result != VK_SUCCESS) {
+       anv_bo_vma_free(device, &new_bo);
+       device->kmd_backend->gem_close(device, &new_bo);
+-      simple_mtx_unlock(&cache->mutex);
+       return result;
+    }
+    *bo = new_bo;
+    ANV_RMV(bo_allocate, device, bo);
+    bo->flags = bo_flags;
+-   simple_mtx_unlock(&cache->mutex);
+    *bo_out = bo;
+    return VK_SUCCESS;
+ }
+ 
+ VkResult
++anv_device_import_bo_handle(struct anv_device *device, uint32_t gem_handle, uint64_t size,
++                            enum anv_bo_alloc_flags alloc_flags, uint64_t client_address,
++                            struct anv_bo **bo_out)
++{
++   simple_mtx_lock(&device->bo_cache.mutex);
++   VkResult r = anv_device_import_bo_handle_locked(device, gem_handle, size, alloc_flags, client_address, bo_out);
++   simple_mtx_unlock(&device->bo_cache.mutex);
++   return r;
++}
++
++VkResult
+ anv_device_export_bo(struct anv_device *device,
+                      struct anv_bo *bo, int *fd_out)
+ {
+--- a/src/intel/vulkan/anv_nvmtl_surface.c
++++ b/src/intel/vulkan/anv_nvmtl_surface.c
+@@ -73,7 +73,14 @@
+ #ifndef DRM_FORMAT_MOD_LINEAR
+ #define DRM_FORMAT_MOD_LINEAR 0ull
+ #endif
++#ifndef B580_SURFACE_VRAM_SAME_HANDLE
++/* B580.kext rb7m (uapi/b580_drm.h): the handle this client already holds for the backing comes back, as
++ * DRM_IOCTL_PRIME_FD_TO_HANDLE returns the file's existing handle for a dma-buf it imported before; older kernels answer
++ * EINVAL. */
++#define B580_SURFACE_VRAM_SAME_HANDLE (1u << 1)
++#endif
+ 
++
+ /* VRAM-shared IOSurfaces (gpuperf phase 2). The plugin stages a request, then calls vkAllocateMemory with a
+  * VkImportMemoryFdInfoKHR (OPAQUE_FD, any placeholder fd it owns, consumed on success) in the same thread: that import
+  * becomes the surface's VRAM backing (DRM_IOCTL_B580_SURFACE_VRAM), the way NVK's nvmtl_nvk_stage_import works. */
+@@ -115,6 +122,38 @@
+    return ret;
+ }
+ 
++/* One handle per backing per device, as PRIME gives Linux (drm_gem_prime_fd_to_handle): with it, the BO cache shares one
++ * anv_bo, one VA and one binding between the imports of a backing (anv_device_import_bo's refcount), and releasing one
++ * import cannot unbind another's VA. Without it (a kernel before rb7m), each import is a handle and an anv_bo of its own,
++ * as before. Called with the BO cache mutex held, like anv_device_import_bo's anv_gem_fd_to_handle, so a release of the
++ * same handle cannot come between the ioctl and the cache lookup. */
++static bool nvmtl_same_handle_refused;
++static int
++nvmtl_surface_vram_ioctl(struct anv_device *device, unsigned long request, void *arg, uint32_t *flags)
++{
++   if (!nvmtl_same_handle_refused)
++      *flags |= B580_SURFACE_VRAM_SAME_HANDLE;
++   int r = nvmtl_ioctl(device->fd, request, arg);
++   if (r && errno == EINVAL && (*flags & B580_SURFACE_VRAM_SAME_HANDLE)) {
++      *flags &= ~B580_SURFACE_VRAM_SAME_HANDLE;
++      r = nvmtl_ioctl(device->fd, request, arg);
++      if (r == 0)
++         nvmtl_same_handle_refused = true;   /* the flag was what it refused: a kernel before rb7m */
++   }
++   return r;
++}
++/* A handle we got but will not use: closed unless an anv_bo already owns it (SAME_HANDLE gave back a live import's). The
++ * BO cache mutex is held. */
++static void
++nvmtl_handle_drop(struct anv_device *device, uint32_t handle)
++{
++   struct anv_bo *owner = anv_device_lookup_bo(device, handle);
++   if (owner && owner->refcount > 0)
++      return;
++   struct anv_bo tmp = { .gem_handle = handle };
++   device->kmd_backend->gem_close(device, &tmp);
++}
++
+ static struct vk_drm_syncobj *
+ nvmtl_syncobj_of(VkFence _fence, VkSemaphore _sem)
+ {
+@@ -241,6 +280,7 @@
+       .surface_id = req->surface_id, .plane = req->plane,
+       .size = req->size > need ? req->size : need, .flags = req->flags & B580_SURFACE_VRAM_CREATE,
+    };
++   simple_mtx_lock(&device->bo_cache.mutex);
+    if (req->version >= 2) {
+       /* SURFACE_VRAM2: a creator records linear (the plugin renders linear); an importer learns the layout. A kernel
+        * without it (ENOTTY) has linear backings only. */
+@@ -250,7 +290,7 @@
+       };
+       req->modifier = DRM_FORMAT_MOD_LINEAR;
+       req->pitch = req->cpp = req->width = req->height = req->linear_pitch = 0;
+-      if (nvmtl_ioctl(device->fd, DRM_IOCTL_B580_SURFACE_VRAM2, &v2) == 0) {
++      if (nvmtl_surface_vram_ioctl(device, DRM_IOCTL_B580_SURFACE_VRAM2, &v2, &v2.flags) == 0) {
+          req->modifier = v2.modifier; req->pitch = v2.pitch; req->cpp = v2.cpp; req->width = v2.width;
+          req->height = v2.height; req->linear_pitch = v2.linear_pitch;
+          v.handle = v2.handle; v.size_out = v2.size_out; v.gen = v2.gen;
+@@ -258,12 +298,14 @@
+       }
+       if (errno != ENOTTY) {
+          req->err = errno;
++         simple_mtx_unlock(&device->bo_cache.mutex);
+          *result = vk_errorf(device, VK_ERROR_INVALID_EXTERNAL_HANDLE, "surface %u VRAM: errno %d", req->surface_id, req->err);
+          return true;
+       }
+    }
+-   if (nvmtl_ioctl(device->fd, DRM_IOCTL_B580_SURFACE_VRAM, &v)) {
++   if (nvmtl_surface_vram_ioctl(device, DRM_IOCTL_B580_SURFACE_VRAM, &v, &v.flags)) {
+       req->err = errno;
++      simple_mtx_unlock(&device->bo_cache.mutex);
+       *result = vk_errorf(device, VK_ERROR_INVALID_EXTERNAL_HANDLE, "surface %u VRAM: errno %d", req->surface_id, req->err);
+       return true;
+    }
+@@ -272,14 +314,15 @@
+    req->size_out = v.size_out;
+    req->gen = v.gen;
+    if (v.size_out < need) {
+-      struct anv_bo tmp = { .gem_handle = v.handle };
+-      device->kmd_backend->gem_close(device, &tmp);
++      nvmtl_handle_drop(device, v.handle);
++      simple_mtx_unlock(&device->bo_cache.mutex);
+       req->err = ENOSPC;
+       *result = vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
+       return true;
+    }
+-   *result = anv_device_import_bo_handle(device, v.handle, v.size_out, alloc_flags | ANV_BO_ALLOC_EXTERNAL,
+-                                         client_address, bo);
++   *result = anv_device_import_bo_handle_locked(device, v.handle, v.size_out, alloc_flags | ANV_BO_ALLOC_EXTERNAL,
++                                                client_address, bo);
++   simple_mtx_unlock(&device->bo_cache.mutex);
+    if (*result != VK_SUCCESS)
+       req->err = EIO;
+    return true;
+@@ -342,35 +385,43 @@
+    struct drm_b580_surface_vram v = {
+       .surface_id = iosurface_id, .plane = 0, .size = size, .flags = B580_SURFACE_VRAM_CREATE,
+    };
++   simple_mtx_lock(&device->bo_cache.mutex);
+    if (modifier != DRM_FORMAT_MOD_LINEAR) {
+       /* the layout goes with the backing (SURFACE_VRAM2); a backing someone else made with another layout is refused */
+       struct drm_b580_surface_vram2 v2 = {
+          .surface_id = iosurface_id, .plane = 0, .size = size, .flags = B580_SURFACE_VRAM_CREATE,
+          .modifier = modifier, .pitch = pitch, .cpp = cpp, .width = width, .height = height, .linear_pitch = linear_pitch,
+       };
+-      if (nvmtl_ioctl(device->fd, DRM_IOCTL_B580_SURFACE_VRAM2, &v2))
++      if (nvmtl_surface_vram_ioctl(device, DRM_IOCTL_B580_SURFACE_VRAM2, &v2, &v2.flags)) {
++         const int e = errno;
++         simple_mtx_unlock(&device->bo_cache.mutex);
+          return vk_errorf(device, VK_ERROR_OUT_OF_DEVICE_MEMORY, "IOSurface %u: no tiled VRAM backing (errno %d)",
+-                          iosurface_id, errno);
++                          iosurface_id, e);
++      }
+       if (v2.modifier != modifier || v2.pitch != pitch) {
+-         struct anv_bo tmp = { .gem_handle = v2.handle };
+-         device->kmd_backend->gem_close(device, &tmp);
++         nvmtl_handle_drop(device, v2.handle);
++         simple_mtx_unlock(&device->bo_cache.mutex);
+          return vk_errorf(device, VK_ERROR_OUT_OF_DEVICE_MEMORY, "IOSurface %u: its backing has another layout",
+                           iosurface_id);
+       }
+       v.handle = v2.handle;
+       v.size_out = v2.size_out;
+       v.gen = v2.gen;
+-   } else if (nvmtl_ioctl(device->fd, DRM_IOCTL_B580_SURFACE_VRAM, &v)) {
++   } else if (nvmtl_surface_vram_ioctl(device, DRM_IOCTL_B580_SURFACE_VRAM, &v, &v.flags)) {
++      const int e = errno;
++      simple_mtx_unlock(&device->bo_cache.mutex);
+       return vk_errorf(device, VK_ERROR_OUT_OF_DEVICE_MEMORY, "IOSurface %u: no VRAM backing (errno %d)",
+-                       iosurface_id, errno);
++                       iosurface_id, e);
+    }
+    if (v.size_out < size) {
+-      struct anv_bo tmp = { .gem_handle = v.handle };
+-      device->kmd_backend->gem_close(device, &tmp);
++      nvmtl_handle_drop(device, v.handle);
++      simple_mtx_unlock(&device->bo_cache.mutex);
+       return vk_errorf(device, VK_ERROR_OUT_OF_DEVICE_MEMORY, "IOSurface %u: VRAM backing of %llu bytes < %llu",
+                        iosurface_id, (unsigned long long)v.size_out, (unsigned long long)size);
+    }
+-   return anv_device_import_bo_handle(device, v.handle, v.size_out, alloc_flags, client_address, bo);
++   VkResult r = anv_device_import_bo_handle_locked(device, v.handle, v.size_out, alloc_flags, client_address, bo);
++   simple_mtx_unlock(&device->bo_cache.mutex);
++   return r;
+ }
+ 
+ /* The Metal plugin's VRAM tag (NVMTLDevice.m nvmtl_vram_tag): the IOSurface value "NVMTLVramAt:p<plane>" says which
+--- a/src/intel/vulkan/anv_private.h
++++ b/src/intel/vulkan/anv_private.h
+@@ -3188,6 +3188,11 @@
+ VkResult anv_device_import_bo_handle(struct anv_device *device, uint32_t gem_handle, uint64_t size,
+                                      enum anv_bo_alloc_flags alloc_flags, uint64_t client_address,
+                                      struct anv_bo **bo);
++/* the same with device->bo_cache.mutex held by the caller (the SURFACE_VRAM ioctl and the cache lookup under one lock, as
++ * anv_device_import_bo does fd-to-handle); a handle the cache already holds gets the existing anv_bo, refcounted */
++VkResult anv_device_import_bo_handle_locked(struct anv_device *device, uint32_t gem_handle, uint64_t size,
++                                            enum anv_bo_alloc_flags alloc_flags, uint64_t client_address,
++                                            struct anv_bo **bo);
+ #if defined(VK_USE_PLATFORM_METAL_EXT) && defined(HAVE_XEMAC)
+ /* VK_EXT_metal_surface swapchains (wsi_device::iosurface, anv_nvmtl_surface.c) */
+ bool anv_wsi_iosurface_supports_gpu_memory(VkDevice device);

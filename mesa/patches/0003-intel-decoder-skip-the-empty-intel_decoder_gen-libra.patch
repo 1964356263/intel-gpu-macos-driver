@@ -1,0 +1,61 @@
+From aa24e9c5bca656de88ecce79344c866fee9e9861 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Yusuf=20=C4=B0hsan=20KILIN=C3=87?= <78423442+yusufklncc@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 05:24:48 +0300
+Subject: [PATCH 3/6] intel/decoder: skip the empty intel_decoder_gen library
+ without expat
+
+Without expat, intel_decoder_gen has no sources, and macOS ar refuses to
+create an empty archive. Hand out a plain dependency instead.
+
+Generated-by: LLM
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/intel/decoder/meson.build | 34 +++++++++++++++++++++-------------
+ 1 file changed, 21 insertions(+), 13 deletions(-)
+
+diff --git a/src/intel/decoder/meson.build b/src/intel/decoder/meson.build
+index 1f0a8442c94..485189130b4 100644
+--- a/src/intel/decoder/meson.build
++++ b/src/intel/decoder/meson.build
+@@ -40,20 +40,28 @@ idep_intel_decoder = declare_dependency(
+   dependencies : libintel_decoder_deps,
+ )
+ 
+-libintel_decoder_gen = static_library(
+-  'intel_decoder_gen',
+-  [libintel_decoder_gen_files, genX_xml_h, sha1_h],
+-  include_directories : [inc_include, inc_src, inc_intel],
+-  c_args : [no_override_init_args, soong_compat_c_args, sse2_args],
+-  gnu_symbol_visibility : 'hidden',
+-  dependencies : [idep_intel_decoder, idep_intel_compiler_gen],
+-  build_by_default : false,
+-)
++# Without expat there is nothing to put in it, and an empty archive fails
++# with some ar implementations (macOS).
++if dep_expat.found()
++  libintel_decoder_gen = static_library(
++    'intel_decoder_gen',
++    [libintel_decoder_gen_files, genX_xml_h, sha1_h],
++    include_directories : [inc_include, inc_src, inc_intel],
++    c_args : [no_override_init_args, soong_compat_c_args, sse2_args],
++    gnu_symbol_visibility : 'hidden',
++    dependencies : [idep_intel_decoder, idep_intel_compiler_gen],
++    build_by_default : false,
++  )
+ 
+-idep_intel_decoder_gen = declare_dependency(
+-  link_with : [libintel_decoder_gen],
+-  dependencies : [idep_intel_decoder, idep_intel_compiler_gen],
+-)
++  idep_intel_decoder_gen = declare_dependency(
++    link_with : [libintel_decoder_gen],
++    dependencies : [idep_intel_decoder, idep_intel_compiler_gen],
++  )
++else
++  idep_intel_decoder_gen = declare_dependency(
++    dependencies : [idep_intel_decoder, idep_intel_compiler_gen],
++  )
++endif
+ 
+ if with_intel_elk
+   libintel_decoder_elk = static_library(

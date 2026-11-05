@@ -1,0 +1,39 @@
+From 39e5666c3d624421de12c6cd8734104b7a6d49f8 Mon Sep 17 00:00:00 2001
+From: "Emil J. Tywoniak" <emil@tywoniak.eu>
+Date: Thu, 15 Oct 2026 00:41:10 +0200
+Subject: [PATCH 05/18] anv: derive HEVC BRC SLB offsets from command lengths
+
+---
+ src/intel/vulkan/genX_huc_brc.h | 10 ++++++----
+ 1 file changed, 6 insertions(+), 4 deletions(-)
+
+diff --git a/src/intel/vulkan/genX_huc_brc.h b/src/intel/vulkan/genX_huc_brc.h
+index ef16a9a190f..272fb9cdec5 100644
+--- a/src/intel/vulkan/genX_huc_brc.h
++++ b/src/intel/vulkan/genX_huc_brc.h
+@@ -904,16 +904,18 @@ anv_h264_brc_emit_huc_update(struct anv_cmd_buffer *cmd,
+ 
+ #if GFX_VERx10 >= 125
+ #define ANV_H265_BRC_SLB_GROUP1_SIZE      64
+-#define ANV_H265_BRC_SLB_PIC_STATE_OFFSET 196
+-#define ANV_H265_BRC_SLB_CMD2_OFFSET      360
+ #define ANV_H265_BRC_SLB_GROUP3_OFFSET    640
+ #else
+ #define ANV_H265_BRC_SLB_GROUP1_SIZE      40
+-#define ANV_H265_BRC_SLB_PIC_STATE_OFFSET 164
+-#define ANV_H265_BRC_SLB_CMD2_OFFSET      328
+ #define ANV_H265_BRC_SLB_GROUP3_OFFSET    536
+ #endif
+ 
++/* Group 2 is VDENC_CMD1, HCP_PIC_STATE and VDENC_CMD2 back to back. */
++#define ANV_H265_BRC_SLB_PIC_STATE_OFFSET \
++   (ANV_H265_BRC_SLB_GROUP1_SIZE + GENX(VDENC_CMD1_length) * 4)
++#define ANV_H265_BRC_SLB_CMD2_OFFSET \
++   (ANV_H265_BRC_SLB_PIC_STATE_OFFSET + GENX(HCP_PIC_STATE_length) * 4)
++
+ #define ANV_H265_HCP_BITSTREAM_BYTECOUNT_FRAME_OFFSET          0x28a0
+ #define ANV_H265_HCP_BITSTREAM_BYTECOUNT_FRAME_NOHEADER_OFFSET 0x28a4
+ #define ANV_H265_HCP_IMAGE_STATUS_CONTROL_OFFSET               0x28bc
+-- 
+2.54.0 (Apple Git-157)
+

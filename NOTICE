@@ -1,0 +1,58 @@
+intel-gpu-macos-driver
+Copyright (c) 2026 Yusuf İhsan Kılınç
+
+Original work in this repository is under the MIT license (LICENSE). Third-party material and derived work:
+
+Linux xe / i915 (MIT, Copyright Intel Corporation)
+  kernel/IntelXe/guc_abi.h     from drivers/gpu/drm/xe: xe_guc_fwif.h, abi/guc_capture_abi.h,
+                               abi/guc_scheduler_abi.h, abi/uc_fw_abi.h, xe_guc_ads.c (full notice in the file)
+  kernel/IntelXe/lrc.h         from drivers/gpu/drm/xe: xe_lrc.c, regs/xe_lrc_layout.h (full notice in the file)
+  kernel/IntelXeFB/IntelXeLink.cpp
+                               from drivers/gpu/drm/i915/display: intel_cx0_phy.c, intel_ddi_buf_trans.c
+                               (full notice in the file)
+  kernel/IntelXe/IntelXe.cpp, xe_core.cpp
+                               register values and tables taken from drivers/gpu/drm/xe xe_pat.c (Xe2 PAT table),
+                               xe_mocs.c (BMG MOCS table), xe_wa.c and xe_tuning.c (Xe2/graphics 20.01 and media 13.01
+                               workarounds and tunings), xe_guc_pc.c (SLPC parameters); Copyright Intel Corporation, MIT.
+                               The sequences of the rest of the driver follow Linux xe and i915 as documented in the
+                               comments of each function.
+  kernel/IntelXeFB/IntelXeEdid.cpp, IntelXeEdid.h, IntelXeEdidTables.h
+                               ported from Linux v6.17 drivers/gpu/drm drm_edid.c, drm_modes.c, drm_displayid.c and
+                               i915 intel_dp.c (MIT/X11 licences; Copyright Luc Verhaegen, Intel Corporation, Red Hat,
+                               The XFree86 Project, Dave Airlie and others); full notices in kernel/IntelXeFB/LICENSE.linux-drm
+  kernel/IntelXe/uapi/xe_drm.h
+                               Linux/Mesa include/drm-uapi, MIT, Copyright Intel Corporation
+  kernel/IntelXe/uapi/drm.h,   Linux/Mesa include/drm-uapi, MIT-style licences as stated in each file
+  kernel/IntelXe/uapi/drm_mode.h
+
+nullmoth (PolyForm Noncommercial 1.0.0)
+  nullmoth/ (plugin, kexts)    https://github.com/nullmoth/nvidia-macos-driver, modified; see nullmoth/CHANGES.md
+  kernel/IntelXeFB/IntelXeFB.cpp
+                               derived from nullmoth's NMIntelFB and NVRMFB
+  Required Notice: Copyright (c) 2026 NullMoth Systems (https://nullmothsystems.com)
+
+metal2vulkan (LGPL-3.0-or-later)
+  nullmoth/translator/         based on https://github.com/steelbrain/metal2vulkan, Copyright (C) Anees Iqbal;
+                               modifications by NullMoth Systems and by us under the same licence
+                               (nullmoth/translator/LICENSE, nullmoth/translator/COPYING)
+
+Mesa (MIT)
+  mesa/                        patches to Mesa; mesa/xe2-venc/0002-0018 by Emil J. Tywoniak (widlarizer/mesa);
+                               mesa/intelxe.diff is the whole difference to upstream f01e9b07a91
+
+FFmpeg (LGPL-2.1-or-later)
+  videotoolbox/ffmpeg/         patches to FFmpeg 9.0.2 (libavcodec/libavutil Vulkan decode and encode) and the configure
+                               line of the shared libraries the codecs load: LGPL-2.1-or-later only (no --enable-gpl,
+                               --enable-version3 or --enable-nonfree)
+
+Intel firmware (LICENSE.xe)
+  firmware/LICENSE.xe          linux-firmware LICENSES/LICENSE.xe; the GuC/HuC blobs are fetched, not included
+
+See docs/LICENSING.md for the per-directory table and the obligations of the built products.
+
+Release packages
+  A binary release bundles builds of the components above under their own licences (the licence texts travel in the
+  package). As a whole, a package contains nullmoth-derived code under the PolyForm Noncommercial License 1.0.0, so the
+  package may not be used for a commercial purpose. Each release lists where the source of every binary is in this
+  repository; FFmpeg and the translator (LGPL) are dynamic libraries that can be replaced by builds of the same source.
+  No Apple software is included in the repository or in a package.

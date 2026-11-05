@@ -1,0 +1,96 @@
+From 4352005ecd2c806117352aa79ef27c654f703831 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Yusuf=20=C4=B0hsan=20KILIN=C3=87?= <78423442+yusufklncc@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 05:24:48 +0300
+Subject: [PATCH 1/6] util/futex: implement futexes on macOS with
+ os_sync_wait_on_address
+
+macOS 14.4 added os_sync_wait_on_address() and os_sync_wake_by_address_*(),
+which have futex semantics. Use them when the deployment target allows,
+so code that needs futex_wait()/futex_wake() (anv's block pool, for one)
+builds on macOS. Absolute CLOCK_MONOTONIC timeouts are turned into the
+relative timeout os_sync_wait_on_address_with_timeout() takes.
+
+Generated-by: LLM
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/util/futex.c | 46 ++++++++++++++++++++++++++++++++++++++++++++++
+ src/util/futex.h |  9 +++++++++
+ 2 files changed, 55 insertions(+)
+
+diff --git a/src/util/futex.c b/src/util/futex.c
+index df3e949de3d..518611f981c 100644
+--- a/src/util/futex.c
++++ b/src/util/futex.c
+@@ -151,6 +151,52 @@ int futex_wait(uint32_t *addr, int32_t value, const struct timespec *timeout)
+    return GetLastError() == ERROR_TIMEOUT ? ETIMEDOUT : -1;
+ }
+ 
++#elif defined(__APPLE__)
++
++#include <assert.h>
++#include <errno.h>
++#include <limits.h>
++#include <time.h>
++#include <os/clock.h>
++#include <os/os_sync_wait_on_address.h>
++
++int futex_wake(uint32_t *addr, int32_t count)
++{
++   assert(count == 1 || count == INT32_MAX);
++   /* Fails with ENOENT when nobody waits, which is not an error here. */
++   if (count == 1)
++      os_sync_wake_by_address_any(addr, sizeof(*addr), OS_SYNC_WAKE_BY_ADDRESS_NONE);
++   else
++      os_sync_wake_by_address_all(addr, sizeof(*addr), OS_SYNC_WAKE_BY_ADDRESS_NONE);
++   return 0;
++}
++
++int futex_wait(uint32_t *addr, int32_t value, const struct timespec *timeout)
++{
++   int ret;
++
++   if (timeout == NULL) {
++      ret = os_sync_wait_on_address(addr, (uint32_t)value, sizeof(*addr),
++                                    OS_SYNC_WAIT_ON_ADDRESS_NONE);
++   } else {
++      /* The timeout is absolute on CLOCK_MONOTONIC, like FUTEX_WAIT_BITSET. */
++      struct timespec now;
++      clock_gettime(CLOCK_MONOTONIC, &now);
++      int64_t ns = (int64_t)(timeout->tv_sec - now.tv_sec) * 1000000000 +
++                   (timeout->tv_nsec - now.tv_nsec);
++      if (ns <= 0) {
++         errno = ETIMEDOUT;
++         return -1;
++      }
++      ret = os_sync_wait_on_address_with_timeout(addr, (uint32_t)value,
++                                                 sizeof(*addr),
++                                                 OS_SYNC_WAIT_ON_ADDRESS_NONE,
++                                                 OS_CLOCK_MACH_ABSOLUTE_TIME,
++                                                 ns);
++   }
++   return ret < 0 ? -1 : 0;
++}
++
+ #else
+ #error UTIL_FUTEX_SUPPORTED is not implemented but the header told it is supported on this platform
+ #endif
+diff --git a/src/util/futex.h b/src/util/futex.h
+index b7ce0884155..92851f56c34 100644
+--- a/src/util/futex.h
++++ b/src/util/futex.h
+@@ -35,6 +35,15 @@
+ #define UTIL_FUTEX_SUPPORTED 1
+ #elif defined(_WIN32) && !defined(WINDOWS_NO_FUTEX)
+ #define UTIL_FUTEX_SUPPORTED 1
++#elif defined(__APPLE__)
++#include <Availability.h>
++#include <TargetConditionals.h>
++/* os_sync_wait_on_address() */
++#if TARGET_OS_OSX && __MAC_OS_X_VERSION_MIN_REQUIRED >= 140400
++#define UTIL_FUTEX_SUPPORTED 1
++#else
++#define UTIL_FUTEX_SUPPORTED 0
++#endif
+ #else
+ #define UTIL_FUTEX_SUPPORTED 0
+ #endif

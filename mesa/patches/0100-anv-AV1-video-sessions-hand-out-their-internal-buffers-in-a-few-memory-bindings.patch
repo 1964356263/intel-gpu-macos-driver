@@ -1,0 +1,252 @@
+From: Yusuf İhsan KILINÇ
+Subject: [PATCH 0100] anv: AV1 video sessions hand out their internal buffers in a few memory bindings
+
+On top of 0099 (src/mesa-vb1 = mesa-fd2 + this, build-vb1). NOT installed.
+
+vkGetVideoSessionMemoryRequirementsKHR reported one binding per internal buffer: an Xe2 AV1 encode session with HuC
+BRC had 57, an Xe2 AV1 film-grain decode session 41 (upstream ANV reports the same 41 on Xe2: its enum has 41 AV1
+entries and none is skipped there). The Vulkan Video samples, and the CTS AV1 encoder built on them, read the
+requirements into a fixed array of 40 (VulkanVideoSession.cpp, MAX_BOUND_MEMORY): every AV1 encode case overflowed
+the stack (SIGSEGV / __stack_chk_fail), the CTS decode path refused film grain with InternalError.
+
+AV1 sessions now group their buffers into memory bindings (memoryBindIndex 0..n-1): the AVP line/tile buffers, the
+default CDF tables (CPU-written), DBD + tile size/bitstream streamout, the Xe2 VDEnc row stores + statistics, and the
+HuC BRC buffers. Decode: 3 bindings, encode: 5 (4 without BRC). Inside a binding each buffer sits at its own
+alignment (4096) in enum order, with its old size; the binding's memoryTypeBits are the buffers' (all identical, the
+xemac CPU-visible VRAM selection of 0011 included) and its alignment their maximum. vkBindVideoSessionMemoryKHR fans
+a binding out into vid->vid_mem[type] (memory, memoryOffset + sub-offset, size), so command emission, CPU
+initialisation and queries keep addressing vid_mem[type] unchanged. One layout function answers both entry points.
+H.264, H.265 and VP9 keep one binding per buffer with the same memoryBindIndex values and sizes as before.
+The requirements query now returns VK_INCOMPLETE when the array is short (spec; it returned VK_SUCCESS).
+
+Validation (Mac, fake device with VCS/VECS + HuC, scratch instrumented builds of fd2 and this):
+- bindings AV1 decode 39/41 -> 3, AV1 encode 57 -> 5 (176x144 ... 7680x4320, 8/10-bit, film grain up to 16K);
+  H.264/H.265/VP9 identical; every internal buffer keeps its size, lies 4K-aligned inside its binding, no overlap;
+  bytes: at most the per-buffer 4K page rounding the separate bindings had (AV1 encode 9,448,320 vs 9,457,664).
+- AV1 encode batches of 13 configurations (CQP/CBR/VBR, quality 0/1/2, 8/10-bit, up to 8K multi-tile): every
+  differing dword is an address resolving to the same internal buffer + offset (or same app BO + offset); with the
+  session memory in one allocation the batches are byte-identical.
+- CTS AV1/H.264/H.265/VP9 decode and H.264/H.265 encode cases: same results; non-AV1 batches byte-identical, AV1
+  equal modulo addresses. gv00-gv04 case by case identical; gv07 film grain InternalError 6 -> 0; gv13 AV1 encode
+  CRASH 56 -> 0 (the encoder now runs; the fake device writes no bitstream).
+
+Generated-by: LLM
+---
+diff --git a/src/intel/vulkan/anv_video.c b/src/intel/vulkan/anv_video.c
+index 5927af6..937f9cd 100644
+--- a/src/intel/vulkan/anv_video.c
++++ b/src/intel/vulkan/anv_video.c
+@@ -1392,15 +1392,15 @@ get_av1_video_session_mem_reqs(struct anv_device *dev,
+       get_brc_video_session_mem_reqs(vid, &out.base, memory_types);
+ }
+ 
+-VkResult
+-anv_GetVideoSessionMemoryRequirementsKHR(VkDevice _device,
+-                                         VkVideoSessionKHR videoSession,
+-                                         uint32_t *pVideoSessionMemoryRequirementsCount,
+-                                         VkVideoSessionMemoryRequirementsKHR *mem_reqs)
++/* The session's internal buffers, one entry each: memoryBindIndex is the buffer's ANV_VID_MEM_* type (its index in
++ * vid->vid_mem[]), size and alignment are what the engines need for it.
++ */
++static void
++get_video_session_buffer_reqs(struct anv_device *device,
++                              struct anv_video_session *vid,
++                              VkVideoSessionMemoryRequirementsKHR *mem_reqs,
++                              uint32_t *pVideoSessionMemoryRequirementsCount)
+ {
+-   ANV_FROM_HANDLE(anv_device, device, _device);
+-   ANV_FROM_HANDLE(anv_video_session, vid, videoSession);
+-
+    uint32_t memory_types =
+       (vid->vk.flags & VK_VIDEO_SESSION_CREATE_PROTECTED_CONTENT_BIT_KHR) ?
+       device->physical->memory.protected_mem_types :
+@@ -1461,8 +1461,130 @@ anv_GetVideoSessionMemoryRequirementsKHR(VkDevice _device,
+    default:
+       UNREACHABLE("unknown codec");
+    }
++}
+ 
+-   return VK_SUCCESS;
++/* AV1 has far more internal buffers than the other codecs (39-41 for decode on Xe2, 57 for Xe2 encode with HuC BRC),
++ * more than applications expect a session to have: the Vulkan Video samples (and the CTS encoder built on them) read
++ * the requirements into a fixed array of 40. The AV1 buffers are therefore handed out in a few memory bindings, each
++ * holding a group of them back to back at their own alignment. Only where a buffer lives changes: every buffer keeps
++ * its size, its alignment and its memory types, and the command emission still finds it in vid->vid_mem[type].
++ */
++static uint32_t
++av1_video_mem_group(uint32_t type)
++{
++   if (type < ANV_VID_MEM_AV1_CDF_DEFAULTS_0)
++      return 0;   /* AVP line, tile line and tile column buffers */
++   if (type <= ANV_VID_MEM_AV1_CDF_DEFAULTS_3)
++      return 1;   /* the default CDF tables, written by the CPU */
++   if (type <= ANV_VID_MEM_AV1_ENCODE_TILE_BITSTREAM_ACCUM)
++      return 2;   /* DBD, tile size and tile bitstream streamout */
++   if (type <= ANV_VID_MEM_AV1_ENCODE_PAK_TILE_STATS)
++      return 3;   /* Xe2 VDEnc row stores and VDEnc / PAK statistics */
++   return 4;      /* HuC BRC: the AV1 CDF, data and SLB buffers and the shared BRC buffers */
++}
++
++struct anv_video_mem_slot {
++   uint32_t type;          /* ANV_VID_MEM_*, index in vid_mem[] */
++   uint32_t binding;       /* index in anv_video_mem_layout::bindings[] */
++   VkDeviceSize offset;    /* from the start of the binding */
++   VkDeviceSize size;
++};
++
++struct anv_video_mem_layout {
++   uint32_t slot_count;
++   uint32_t binding_count;
++   struct anv_video_mem_slot slots[ANV_VID_MEM_BRC_MAX];
++   uint32_t group[ANV_VID_MEM_BRC_MAX];
++   VkVideoSessionMemoryRequirementsKHR bindings[ANV_VID_MEM_BRC_MAX];
++};
++
++/* Where each internal buffer of the session lives: the same answer for vkGetVideoSessionMemoryRequirementsKHR and
++ * vkBindVideoSessionMemoryKHR, as it only depends on the session's creation parameters. Codecs other than AV1 keep
++ * one binding per buffer, with the buffer's type as memoryBindIndex, exactly as before.
++ */
++static void
++get_video_session_mem_layout(struct anv_device *device,
++                             struct anv_video_session *vid,
++                             struct anv_video_mem_layout *layout)
++{
++   VkVideoSessionMemoryRequirementsKHR reqs[ANV_VID_MEM_BRC_MAX];
++   uint32_t count = ARRAY_SIZE(reqs);
++
++   for (uint32_t i = 0; i < count; i++)
++      reqs[i] = (VkVideoSessionMemoryRequirementsKHR) {
++         .sType = VK_STRUCTURE_TYPE_VIDEO_SESSION_MEMORY_REQUIREMENTS_KHR,
++      };
++   get_video_session_buffer_reqs(device, vid, reqs, &count);
++   assert(count <= ARRAY_SIZE(reqs));
++
++   const bool grouped = vid->vk.op & (VK_VIDEO_CODEC_OPERATION_DECODE_AV1_BIT_KHR |
++                                      VK_VIDEO_CODEC_OPERATION_ENCODE_AV1_BIT_KHR);
++
++   layout->slot_count = count;
++   layout->binding_count = 0;
++   for (uint32_t i = 0; i < count; i++) {
++      const uint32_t type = reqs[i].memoryBindIndex;
++      const VkMemoryRequirements *req = &reqs[i].memoryRequirements;
++      const uint32_t group = grouped ? av1_video_mem_group(type) : type;
++
++      uint32_t b = 0;
++      while (b < layout->binding_count &&
++             !(grouped && layout->group[b] == group &&
++               layout->bindings[b].memoryRequirements.memoryTypeBits == req->memoryTypeBits))
++         b++;
++
++      if (b == layout->binding_count) {
++         layout->binding_count++;
++         layout->group[b] = group;
++         layout->bindings[b] = (VkVideoSessionMemoryRequirementsKHR) {
++            .sType = VK_STRUCTURE_TYPE_VIDEO_SESSION_MEMORY_REQUIREMENTS_KHR,
++            .memoryBindIndex = grouped ? b : type,
++            .memoryRequirements = {
++               .size = 0,
++               .alignment = req->alignment,
++               .memoryTypeBits = req->memoryTypeBits,
++            },
++         };
++      }
++
++      VkMemoryRequirements *bind_req = &layout->bindings[b].memoryRequirements;
++      const VkDeviceSize offset = align64(bind_req->size, req->alignment);
++
++      bind_req->alignment = MAX2(bind_req->alignment, req->alignment);
++      bind_req->size = offset + req->size;
++      layout->slots[i] = (struct anv_video_mem_slot) {
++         .type = type,
++         .binding = b,
++         .offset = offset,
++         .size = req->size,
++      };
++   }
++}
++
++VkResult
++anv_GetVideoSessionMemoryRequirementsKHR(VkDevice _device,
++                                         VkVideoSessionKHR videoSession,
++                                         uint32_t *pVideoSessionMemoryRequirementsCount,
++                                         VkVideoSessionMemoryRequirementsKHR *mem_reqs)
++{
++   ANV_FROM_HANDLE(anv_device, device, _device);
++   ANV_FROM_HANDLE(anv_video_session, vid, videoSession);
++   VK_OUTARRAY_MAKE_TYPED(VkVideoSessionMemoryRequirementsKHR,
++                          out,
++                          mem_reqs,
++                          pVideoSessionMemoryRequirementsCount);
++   struct anv_video_mem_layout layout;
++
++   get_video_session_mem_layout(device, vid, &layout);
++
++   for (uint32_t b = 0; b < layout.binding_count; b++) {
++      vk_outarray_append_typed(VkVideoSessionMemoryRequirementsKHR, &out, p) {
++         p->memoryBindIndex = layout.bindings[b].memoryBindIndex;
++         p->memoryRequirements = layout.bindings[b].memoryRequirements;
++      }
++   }
++
++   return vk_outarray_status(&out);
+ }
+ 
+ static void
+@@ -1496,26 +1618,40 @@ anv_BindVideoSessionMemoryKHR(VkDevice _device,
+                               uint32_t bind_mem_count,
+                               const VkBindVideoSessionMemoryInfoKHR *bind_mem)
+ {
++   ANV_FROM_HANDLE(anv_device, device, _device);
+    ANV_FROM_HANDLE(anv_video_session, vid, videoSession);
++   struct anv_video_mem_layout layout;
++
++   get_video_session_mem_layout(device, vid, &layout);
++
++   for (unsigned i = 0; i < bind_mem_count; i++) {
++      uint32_t b = 0;
++      while (b < layout.binding_count &&
++             layout.bindings[b].memoryBindIndex != bind_mem[i].memoryBindIndex)
++         b++;
++      assert(b < layout.binding_count);
++      if (b == layout.binding_count)
++         continue;
++
++      unsigned slots = 0;
++      for (uint32_t s = 0; s < layout.slot_count; s++)
++         slots += layout.slots[s].binding == b;
++
++      for (uint32_t s = 0; s < layout.slot_count; s++) {
++         const struct anv_video_mem_slot *slot = &layout.slots[s];
++         if (slot->binding != b)
++            continue;
+ 
+-   switch (vid->vk.op) {
+-   case VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR:
+-   case VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR:
+-   case VK_VIDEO_CODEC_OPERATION_DECODE_AV1_BIT_KHR:
+-   case VK_VIDEO_CODEC_OPERATION_DECODE_VP9_BIT_KHR:
+-      for (unsigned i = 0; i < bind_mem_count; i++) {
+-         copy_bind(&vid->vid_mem[bind_mem[i].memoryBindIndex], &bind_mem[i]);
+-      }
+-      break;
+-   case VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR:
+-   case VK_VIDEO_CODEC_OPERATION_ENCODE_H265_BIT_KHR:
+-   case VK_VIDEO_CODEC_OPERATION_ENCODE_AV1_BIT_KHR:
+-      for (unsigned i = 0; i < bind_mem_count; i++) {
+-         copy_bind(&vid->vid_mem[bind_mem[i].memoryBindIndex], &bind_mem[i]);
++         struct anv_vid_mem *dst = &vid->vid_mem[slot->type];
++         if (slots == 1) {
++            /* the binding is the buffer */
++            copy_bind(dst, &bind_mem[i]);
++         } else {
++            dst->mem = anv_device_memory_from_handle(bind_mem[i].memory);
++            dst->offset = bind_mem[i].memoryOffset + slot->offset;
++            dst->size = slot->size;
++         }
+       }
+-      break;
+-   default:
+-      UNREACHABLE("unknown codec");
+    }
+    return VK_SUCCESS;
+ }

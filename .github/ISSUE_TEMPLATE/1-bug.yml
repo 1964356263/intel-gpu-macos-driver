@@ -1,0 +1,67 @@
+name: Something is broken
+description: Boot stops, black screen, an app crashes, video or sleep fails, or something else does not work.
+title: "[Bug] <what happens>"
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **First make a report.** On macOS, run `sh collect-macos.sh` from [`tools/report`](../tree/main/tools/report). It takes about a minute and prints a report ID like `XR-1A2B3C4D`. Then drag the file it wrote (`xe-report-XR-….tar.gz`) into the "What happens" box below.
+
+        It collects your hardware, the driver's state, logs and the OpenCore config, with serial numbers, names, MAC addresses and Wi-Fi names removed. Nothing is uploaded until you attach the file.
+
+        For display or boot problems, a Linux live-USB report (`collect-linux.sh`) or a Windows one (`collect-windows.ps1`) from the same machine helps a lot.
+  - type: input
+    id: report
+    attributes:
+      label: Report ID
+      description: Looks like XR-1A2B3C4D. If you made several (macOS, Linux, Windows), list all of them, separated by commas.
+      placeholder: XR-
+    validations:
+      required: true
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Where does it go wrong?
+      options:
+        - "Boot: before or in the OpenCore picker"
+        - "Boot: after picking macOS (Apple logo, restart, kernel panic)"
+        - "Kext load: IntelXe.kext or IntelXeFB.kext does not load, or the GPU is not found"
+        - "Display: black screen, no desktop, wrong resolution or refresh rate, flicker"
+        - "Desktop: slow, glitches, frozen or restarting WindowServer"
+        - "Metal or OpenGL apps: an app crashes, hangs or draws wrong"
+        - "Vulkan or games"
+        - "Video: playback, VideoToolbox decode or encode"
+        - "Sleep and wake (display sleep or system sleep)"
+        - Something else
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happens
+      description: What you see, and the last line on screen if it stops. A photo of the screen helps. Attach the report file here.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to make it happen
+      description: The steps, if you know them. "It happens at every boot" is a fine answer.
+  - type: input
+    id: app
+    attributes:
+      label: App or game (if it is one)
+      placeholder: name and version
+  - type: textarea
+    id: changed
+    attributes:
+      label: Did you change anything yourself?
+      description: Extra boot-args, kexts, SSDTs or settings that are not in the install outline, or someone else's EFI. "No" is a fine answer.
+  - type: checkboxes
+    id: attached
+    attributes:
+      label: Report file
+      options:
+        - label: I attached the report file (xe-report-XR-….tar.gz or .zip) whose ID is above.
+          required: true

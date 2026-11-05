@@ -1,0 +1,264 @@
+wsi/metal: IOSurface swapchains: at most two Core Animation commits per refresh, kernel calls only for shown frames
+
+Minecraft 26.3 at ~950 fps (IMMEDIATE) spent 8.7% of its render thread in vkQueuePresentKHR, 6.4% of it in
+CA::Transaction::commit, plus the IOSurface write-fence ioctls of every present and the acquire's GPU-idle wait.
+The window server composites once per display refresh, so frames beyond that are never shown.
+
+- IMMEDIATE still shows a frame at present when the last one went out at least half a refresh ago; a frame
+  presented sooner is held, and the refresh thread shows the newest held one (latest-wins, without waiting for its
+  rendering: implicit sync). At most two commits per refresh instead of one per frame.
+- IMMEDIATE never makes acquire wait for that: an acquire that finds no free image shows the held frame at once, and
+  IMMEDIATE swapchains, like MAILBOX ones, get at least four images (the shown one, the one the window server is
+  letting go of, the held one, one to render into; more images than minImageCount is allowed). Images the window
+  server still holds are polled every 50 us instead of 200 us.
+- A frame's write fence is attached to its IOSurface (and the VRAM copy marked newer, the VRAM tag bumped) when it is
+  shown, not when it is presented: a frame replaced before it was shown costs no kernel calls.
+- Acquire waits for the window server's GPU reads only of an image that was shown since the application last had it.
+
+wsitest 1280x720, IMMEDIATE, 3 images asked: 13914 fps, acquire 0.002 ms, 466 shown/s (wsi2: 4591 fps, acquire
+0.100 ms, every frame committed); 2560x1302: 5726 fps (wsi2: 4779). MAILBOX 6313 fps; all VERIFY PASS.
+
+--- a/src/vulkan/wsi/wsi_common_metal.c
++++ b/src/vulkan/wsi/wsi_common_metal.c
+@@ -1101,6 +1101,14 @@
+    uint32_t iosurface_id;
+    enum wsi_iosurface_image_state state;
+    uint64_t present_id;
++   /* Presented, its write fence not attached yet: that happens when it is
++    * shown, so a frame replaced before it was shown costs no kernel calls.
++    */
++   bool signal_pending;
++   /* Shown since the application last had it: the window server may still
++    * be reading it on the GPU (acquire waits for that).
++    */
++   bool idle_pending;
+    /* When it stopped being shown: the oldest free image is acquired first,
+     * the one the window server most likely let go of.
+     */
+@@ -1130,7 +1138,13 @@
+    VkResult status;
+    uint64_t serial;
+    int32_t shown;
+-   /* Presented, not shown yet (FIFO, MAILBOX), oldest first */
++   /* IMMEDIATE commits at most one frame per display refresh to Core
++    * Animation (the window server composites once per refresh anyway): a
++    * frame presented sooner after the last one waits for the next refresh,
++    * where the newest one wins.
++    */
++   uint64_t refresh_ns, last_show_ns;
++   /* Presented, not shown yet (FIFO, MAILBOX, IMMEDIATE within a refresh), oldest first */
+    uint32_t queue[WSI_IOSURFACE_MAX_IMAGES];
+    uint32_t queue_head, queue_count;
+ 
+@@ -1330,6 +1344,23 @@
+                           uint32_t index)
+ {
+    struct wsi_iosurface_image *image = &chain->images[index];
++   const struct wsi_device *wsi = chain->base.wsi;
++
++   /* The frame's fence becomes the IOSurface's write fence: the window
++    * server's GPU waits for it, nobody's CPU does.  If the driver could not
++    * attach it, wait here so the window server never reads a frame that is
++    * still being rendered.
++    */
++   if (image->signal_pending) {
++      VkFence fence = chain->base.fences[index];
++      if (wsi->iosurface.signal_write(chain->base.device, fence,
++                                      image->iosurface,
++                                      chain->gpu_memory) != VK_SUCCESS)
++         wsi->WaitForFences(chain->base.device, 1, &fence, true, UINT64_MAX);
++      image->signal_pending = false;
++   }
++   image->idle_pending = true;
++   chain->last_show_ns = os_time_get_nano();
+ 
+    if (chain->shown >= 0 && chain->shown != (int32_t)index) {
+       struct wsi_iosurface_image *old = &chain->images[chain->shown];
+@@ -1376,6 +1407,7 @@
+    struct wsi_iosurface_image *image = &chain->images[index];
+    image->state = WSI_IOSURFACE_IMAGE_FREE;
+    image->present_id = 0;
++   image->signal_pending = false;   /* never shown: nobody else reads it */
+    image->retired = ++chain->serial;
+    chain->fps_dropped++;
+    u_cnd_monotonic_broadcast(&chain->cond);
+@@ -1388,6 +1420,12 @@
+ static void
+ wsi_iosurface_prune_locked(struct wsi_iosurface_swapchain *chain)
+ {
++   if (chain->base.present_mode == VK_PRESENT_MODE_IMMEDIATE_KHR) {
++      /* The newest frame wins, finished or not (implicit sync). */
++      while (chain->queue_count > 1)
++         wsi_iosurface_drop_locked(chain, wsi_iosurface_queue_pop_locked(chain));
++      return;
++   }
+    if (chain->base.present_mode != VK_PRESENT_MODE_MAILBOX_KHR)
+       return;
+ 
+@@ -1413,7 +1451,8 @@
+    mtx_lock(&chain->lock);
+    if (chain->status == VK_SUCCESS && chain->queue_count) {
+       wsi_iosurface_prune_locked(chain);
+-      if (wsi_iosurface_image_fence_done(chain, chain->queue[chain->queue_head]))
++      if (chain->base.present_mode == VK_PRESENT_MODE_IMMEDIATE_KHR ||
++          wsi_iosurface_image_fence_done(chain, chain->queue[chain->queue_head]))
+          wsi_iosurface_show_locked(chain, wsi_iosurface_queue_pop_locked(chain));
+    }
+    mtx_unlock(&chain->lock);
+@@ -1448,25 +1487,11 @@
+ {
+    struct wsi_iosurface_swapchain *chain =
+       (struct wsi_iosurface_swapchain *)wsi_chain;
+-   const struct wsi_device *wsi = chain->base.wsi;
+    struct wsi_iosurface_image *image = &chain->images[image_index];
+-   VkFence fence = chain->base.fences[image_index];
+-
+-   /* The frame's fence becomes the IOSurface's write fence: the window
+-    * server's GPU waits for it, nobody's CPU does.  If the driver could not
+-    * attach it, wait here so the window server never reads a frame that is
+-    * still being rendered.
+-    */
+-   VkResult result = wsi->iosurface.signal_write(chain->base.device, fence,
+-                                                 image->iosurface,
+-                                                 chain->gpu_memory);
+-   if (result != VK_SUCCESS) {
+-      result = wsi->WaitForFences(chain->base.device, 1, &fence, true, UINT64_MAX);
+-      if (result != VK_SUCCESS)
+-         return result;
+-   }
++   VkResult result = VK_SUCCESS;
+ 
+    mtx_lock(&chain->lock);
++   image->signal_pending = true;   /* attached when it is shown */
+    if (chain->status != VK_SUCCESS) {
+       result = chain->status;
+       image->state = WSI_IOSURFACE_IMAGE_FREE;
+@@ -1476,9 +1501,10 @@
+ 
+    image->present_id = chain->base.present_wait_enabled ? present_id : 0;
+ 
+-   if (chain->base.present_mode == VK_PRESENT_MODE_IMMEDIATE_KHR) {
+-      /* Frames still queued from before a switch to IMMEDIATE
+-       * (VK_KHR_swapchain_maintenance1) are behind this one.
++   if (chain->base.present_mode == VK_PRESENT_MODE_IMMEDIATE_KHR &&
++       os_time_get_nano() - chain->last_show_ns >= chain->refresh_ns) {
++      /* Frames still queued (within the last refresh, or from before a
++       * switch to IMMEDIATE) are behind this one.
+        */
+       while (chain->queue_count)
+          wsi_iosurface_drop_locked(chain, wsi_iosurface_queue_pop_locked(chain));
+@@ -1573,6 +1599,17 @@
+       if (best >= 0)
+          break;
+ 
++      /* IMMEDIATE never waits for a refresh: a frame held back to coalesce
++       * commits goes out now when the application needs an image (showing
++       * it lets the window server drop the one before).
++       */
++      if (chain->base.present_mode == VK_PRESENT_MODE_IMMEDIATE_KHR &&
++          chain->queue_count) {
++         wsi_iosurface_prune_locked(chain);
++         wsi_iosurface_show_locked(chain, wsi_iosurface_queue_pop_locked(chain));
++         continue;
++      }
++
+       if (info->timeout == 0) {
+          mtx_unlock(&chain->lock);
+          return VK_NOT_READY;
+@@ -1587,7 +1624,7 @@
+        * to be overtaken, come back without a wake-up: poll for them;
+        * anything else (a frame shown) wakes us.
+        */
+-      uint64_t until = in_use ? MIN2(abs_timeout, now + 200 * 1000) : abs_timeout;
++      uint64_t until = in_use ? MIN2(abs_timeout, now + 50 * 1000) : abs_timeout;
+       if (until == UINT64_MAX) {
+          u_cnd_monotonic_wait(&chain->cond, &chain->lock);
+       } else {
+@@ -1600,10 +1637,14 @@
+    image->state = WSI_IOSURFACE_IMAGE_ACQUIRED;
+    mtx_unlock(&chain->lock);
+ 
+-   /* The window server's last GPU reads of the IOSurface. */
+-   VkResult result = wsi->iosurface.wait_idle(chain->base.device,
+-                                              image->iosurface,
+-                                              info->timeout == 0 ? 0 : abs_timeout);
++   /* The window server's last GPU reads of the IOSurface, if it was shown
++    * since (a frame replaced before it was shown was never read).
++    */
++   VkResult result = !image->idle_pending ? VK_SUCCESS :
++      wsi->iosurface.wait_idle(chain->base.device, image->iosurface,
++                               info->timeout == 0 ? 0 : abs_timeout);
++   if (result == VK_SUCCESS)
++      image->idle_pending = false;
+    if (result != VK_SUCCESS) {
+       mtx_lock(&chain->lock);
+       image->state = WSI_IOSURFACE_IMAGE_FREE;
+@@ -1733,14 +1774,18 @@
+                                bool gpu_memory,
+                                struct wsi_swapchain **swapchain_out)
+ {
+-   /* MAILBOX holds a finished frame for the next refresh next to the shown
+-    * one: a fourth image lets the application keep rendering meanwhile
+-    * (with three it waits for each frame's GPU work, ~4x slower measured).
+-    * Creating more images than minImageCount is allowed.
++   /* MAILBOX holds a finished frame for the next refresh, and IMMEDIATE
++    * one presented within a refresh of the last commit, next to the shown
++    * one and the one the window server is letting go of: a fourth image
++    * lets the application keep rendering meanwhile (with three, MAILBOX
++    * waits for each frame's GPU work, ~4x slower measured, and IMMEDIATE
++    * for the window server).  Creating more images than minImageCount is
++    * allowed.
+     */
++   const VkPresentModeKHR mode = wsi_swapchain_get_present_mode(wsi_device, pCreateInfo);
+    const uint32_t min_images =
+-      wsi_swapchain_get_present_mode(wsi_device, pCreateInfo) ==
+-         VK_PRESENT_MODE_MAILBOX_KHR ? 4 : WSI_IOSURFACE_MIN_IMAGES;
++      (mode == VK_PRESENT_MODE_MAILBOX_KHR || mode == VK_PRESENT_MODE_IMMEDIATE_KHR) ?
++         4 : WSI_IOSURFACE_MIN_IMAGES;
+    const uint32_t num_images = CLAMP(pCreateInfo->minImageCount, min_images,
+                                      WSI_IOSURFACE_MAX_IMAGES);
+    VkResult result;
+@@ -1783,6 +1828,10 @@
+    chain->base.present_mode = wsi_swapchain_get_present_mode(wsi_device, pCreateInfo);
+    chain->base.image_count = num_images;
+    chain->shown = -1;
++   /* At most one Core Animation commit per refresh; the period is halved so
++    * a frame right after a refresh still makes the next composite.
++    */
++   chain->refresh_ns = wsi_metal_display_refresh_ns() / 2;
+ 
+    if (mtx_init(&chain->lock, mtx_plain) != thrd_success) {
+       result = VK_ERROR_OUT_OF_HOST_MEMORY;
+--- a/src/vulkan/wsi/wsi_common_metal_layer.m
++++ b/src/vulkan/wsi/wsi_common_metal_layer.m
+@@ -706,4 +706,19 @@
+    free(v);
+ }
+ 
++uint64_t
++wsi_metal_display_refresh_ns(void)
++{
++   uint64_t ns = 1000000000ull / 60;
++   CVDisplayLinkRef link;
++   if (CVDisplayLinkCreateWithActiveCGDisplays(&link) == kCVReturnSuccess) {
++      CVDisplayLinkSetCurrentCGDisplay(link, CGMainDisplayID());
++      const CVTime t = CVDisplayLinkGetNominalOutputVideoRefreshPeriod(link);
++      if (!(t.flags & kCVTimeIsIndefinite) && t.timeValue > 0 && t.timeScale > 0)
++         ns = (uint64_t)((double)t.timeValue * 1e9 / (double)t.timeScale);
++      CVDisplayLinkRelease(link);
++   }
++   return ns;
++}
++
+ #pragma clang diagnostic pop
+--- a/src/vulkan/wsi/wsi_common_metal_layer.h
++++ b/src/vulkan/wsi/wsi_common_metal_layer.h
+@@ -125,4 +125,8 @@
+ void
+ wsi_metal_vblank_stop(struct wsi_metal_vblank *vblank);
+ 
++/* The main display's nominal refresh period in ns (1/60 s if unknown). */
++uint64_t
++wsi_metal_display_refresh_ns(void);
++
+ #endif // WSI_COMMON_METAL_LAYER_H

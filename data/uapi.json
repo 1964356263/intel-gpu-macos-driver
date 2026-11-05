@@ -1,0 +1,6142 @@
+{
+ "meta": {
+  "header": "include/uapi/drm/xe_drm.h",
+  "linux": "abf8c33470f7",
+  "ours": {
+   "kernel": {
+    "path": "kernel/IntelXe",
+    "repo": "intel-gpu-macos-driver",
+    "repo_head": "030bfae",
+    "last_commit": "8ae346e 2026-10-31",
+    "dirty": false
+   },
+   "fb": {
+    "path": "kernel/IntelXeFB",
+    "repo": "intel-gpu-macos-driver",
+    "repo_head": "030bfae",
+    "last_commit": "fa6e59a 2026-10-31",
+    "dirty": false
+   }
+  },
+  "method": "by name, then by value (our uapi names, field contexts, switch case labels/defaults, rejected parent ioctls, unread extension chains); see tools/parity/uapi.py"
+ },
+ "summary": {
+  "cells": 182,
+  "implemented": 77,
+  "noop": 0,
+  "rejected": 83,
+  "absent": 3,
+  "unverified": 19,
+  "pct_implemented": 42.3,
+  "ioctls": 16,
+  "ioctls_implemented": 11
+ },
+ "cells": [
+  {
+   "token": "DRM_IOCTL_XE_DEVICE_QUERY",
+   "area": "ioctls",
+   "value": 64,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:5688",
+     "kind": "use",
+     "code": "case DRM_IOCTL_XE_DEVICE_QUERY:"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/common/xe/intel_device_query.c:18",
+      "src/intel/common/xe/intel_engine.c:119",
+      "src/intel/common/xe/intel_gem.c:54"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:168",
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe_perf.cpp:61"
+     ]
+    }
+   ],
+   "doc": "",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_IOCTL_XE_GEM_CREATE",
+   "area": "ioctls",
+   "value": 65,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:5691",
+     "kind": "use",
+     "code": "case DRM_IOCTL_XE_GEM_CREATE: {"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/vulkan/xe/anv_kmd_backend.c:136"
+     ]
+    },
+    {
+     "consumer": "iris (Mesa)",
+     "kind": "future",
+     "feature": "native OpenGL via iris",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/gallium/drivers/iris/xe/iris_kmd_backend.c:105"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:756"
+     ]
+    }
+   ],
+   "doc": "",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_IOCTL_XE_GEM_MMAP_OFFSET",
+   "area": "ioctls",
+   "value": 66,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:5774",
+     "kind": "use",
+     "code": "case DRM_IOCTL_XE_GEM_MMAP_OFFSET: {"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/vulkan/xe/anv_kmd_backend.c:166"
+     ]
+    },
+    {
+     "consumer": "iris (Mesa)",
+     "kind": "future",
+     "feature": "native OpenGL via iris",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/gallium/drivers/iris/xe/iris_kmd_backend.c:123"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:2319"
+     ]
+    }
+   ],
+   "doc": "",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_IOCTL_XE_VM_CREATE",
+   "area": "ioctls",
+   "value": 67,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:5806",
+     "kind": "use",
+     "code": "case DRM_IOCTL_XE_VM_CREATE: {"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/vulkan/xe/anv_device.c:50"
+     ]
+    },
+    {
+     "consumer": "iris (Mesa)",
+     "kind": "future",
+     "feature": "native OpenGL via iris",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/gallium/drivers/iris/xe/iris_bufmgr.c:36"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:2315"
+     ]
+    }
+   ],
+   "doc": "",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_IOCTL_XE_VM_DESTROY",
+   "area": "ioctls",
+   "value": 68,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:5828",
+     "kind": "use",
+     "code": "case DRM_IOCTL_XE_VM_DESTROY: {"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/vulkan/xe/anv_device.c:41"
+     ]
+    },
+    {
+     "consumer": "iris (Mesa)",
+     "kind": "future",
+     "feature": "native OpenGL via iris",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/gallium/drivers/iris/xe/iris_bufmgr.c:49"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:2317"
+     ]
+    }
+   ],
+   "doc": "",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_IOCTL_XE_VM_BIND",
+   "area": "ioctls",
+   "value": 69,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:5839",
+     "kind": "use",
+     "code": "case DRM_IOCTL_XE_VM_BIND: {"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/vulkan/xe/anv_kmd_backend.c:331",
+      "src/intel/vulkan/xe/anv_queue.c:266"
+     ]
+    },
+    {
+     "consumer": "iris (Mesa)",
+     "kind": "future",
+     "feature": "native OpenGL via iris",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/gallium/drivers/iris/xe/iris_kmd_backend.c:182"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:2325"
+     ]
+    }
+   ],
+   "doc": "",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_IOCTL_XE_EXEC_QUEUE_CREATE",
+   "area": "ioctls",
+   "value": 70,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:5876",
+     "kind": "use",
+     "code": "case DRM_IOCTL_XE_EXEC_QUEUE_CREATE: {"
+    }
+   ],
+   "why": "",
+   "comments": [
+    "kernel/IntelXe/xe_core.cpp:321 (file scope)",
+    "kernel/IntelXe/xe_core.cpp:1872 (file scope)"
+   ],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/vulkan/xe/anv_queue.c:158"
+     ]
+    },
+    {
+     "consumer": "iris (Mesa)",
+     "kind": "future",
+     "feature": "native OpenGL via iris",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/gallium/drivers/iris/xe/iris_batch.c:120"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:2333"
+     ]
+    }
+   ],
+   "doc": "",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_IOCTL_XE_EXEC_QUEUE_DESTROY",
+   "area": "ioctls",
+   "value": 71,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:5914",
+     "kind": "use",
+     "code": "case DRM_IOCTL_XE_EXEC_QUEUE_DESTROY: {"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/vulkan/anv_nvmtl_recover.c:69",
+      "src/intel/vulkan/xe/anv_queue.c:62"
+     ]
+    },
+    {
+     "consumer": "iris (Mesa)",
+     "kind": "future",
+     "feature": "native OpenGL via iris",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/gallium/drivers/iris/xe/iris_batch.c:219"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:2335"
+     ]
+    }
+   ],
+   "doc": "",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_IOCTL_XE_EXEC_QUEUE_GET_PROPERTY",
+   "area": "ioctls",
+   "value": 72,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:5959",
+     "kind": "use",
+     "code": "case DRM_IOCTL_XE_EXEC_QUEUE_GET_PROPERTY: {"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/vulkan/anv_nvmtl_recover.c:54",
+      "src/intel/vulkan/xe/anv_device.c:188"
+     ]
+    },
+    {
+     "consumer": "iris (Mesa)",
+     "kind": "future",
+     "feature": "native OpenGL via iris",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/gallium/drivers/iris/xe/iris_kmd_backend.c:250"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:2357"
+     ]
+    }
+   ],
+   "doc": "",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_IOCTL_XE_EXEC",
+   "area": "ioctls",
+   "value": 73,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:5968",
+     "kind": "use",
+     "code": "case DRM_IOCTL_XE_EXEC: {"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/vulkan/xe/anv_queue.c:212",
+      "src/intel/common/xe/intel_gem.h:65",
+      "src/intel/common/xe/intel_queue.c:38"
+     ]
+    },
+    {
+     "consumer": "iris (Mesa)",
+     "kind": "future",
+     "feature": "native OpenGL via iris",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/gallium/drivers/iris/xe/iris_batch.c:178"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:2323"
+     ]
+    }
+   ],
+   "doc": "",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_IOCTL_XE_WAIT_USER_FENCE",
+   "area": "ioctls",
+   "value": 74,
+   "status": "rejected",
+   "by": "switch default",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "no case for value 74 in the switch at kernel/IntelXe/xe_core.cpp:5661; its default returns an error",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:2339"
+     ]
+    }
+   ],
+   "doc": "",
+   "need": "needed_future",
+   "need_why": "only for: OpenCL / oneAPI (Intel compute-runtime)"
+  },
+  {
+   "token": "DRM_IOCTL_XE_OBSERVATION",
+   "area": "ioctls",
+   "value": 75,
+   "status": "rejected",
+   "by": "switch default",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "no case for value 75 in the switch at kernel/IntelXe/xe_core.cpp:5661; its default returns an error",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa intel/perf",
+     "kind": "future",
+     "feature": "GPU profiler (OA metrics, VK_KHR_performance_query)",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/perf/xe/intel_perf.c:206"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe_perf.cpp:118"
+     ]
+    }
+   ],
+   "doc": "",
+   "need": "needed_future",
+   "need_why": "only for: GPU profiler (OA metrics, VK_KHR_performance_query); OpenCL / oneAPI (Intel compute-runtime)"
+  },
+  {
+   "token": "DRM_IOCTL_XE_MADVISE",
+   "area": "ioctls",
+   "value": 76,
+   "status": "rejected",
+   "by": "switch default",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "no case for value 76 in the switch at kernel/IntelXe/xe_core.cpp:5661; its default returns an error",
+   "comments": [
+    "kernel/IntelXe/xe_core.cpp:3429 (deviceQuery)"
+   ],
+   "consumers": [
+    {
+     "consumer": "iris (Mesa)",
+     "kind": "future",
+     "feature": "native OpenGL via iris",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/gallium/drivers/iris/xe/iris_kmd_backend.c:225"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:2327"
+     ]
+    }
+   ],
+   "doc": "",
+   "need": "needed_future",
+   "need_why": "only for: OpenCL / oneAPI (Intel compute-runtime); native OpenGL via iris"
+  },
+  {
+   "token": "DRM_IOCTL_XE_VM_QUERY_MEM_RANGE_ATTRS",
+   "area": "ioctls",
+   "value": 77,
+   "status": "rejected",
+   "by": "switch default",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "no case for value 77 in the switch at kernel/IntelXe/xe_core.cpp:5661; its default returns an error",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:2329"
+     ]
+    }
+   ],
+   "doc": "",
+   "need": "needed_future",
+   "need_why": "only for: OpenCL / oneAPI (Intel compute-runtime)"
+  },
+  {
+   "token": "DRM_IOCTL_XE_EXEC_QUEUE_SET_PROPERTY",
+   "area": "ioctls",
+   "value": 78,
+   "status": "rejected",
+   "by": "switch default",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "no case for value 78 in the switch at kernel/IntelXe/xe_core.cpp:5661; its default returns an error",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:2337"
+     ]
+    }
+   ],
+   "doc": "",
+   "need": "needed_future",
+   "need_why": "only for: OpenCL / oneAPI (Intel compute-runtime)"
+  },
+  {
+   "token": "DRM_IOCTL_XE_VM_GET_PROPERTY",
+   "area": "ioctls",
+   "value": 79,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:5921",
+     "kind": "use",
+     "code": "case DRM_IOCTL_XE_VM_GET_PROPERTY: {"
+    }
+   ],
+   "why": "",
+   "comments": [
+    "kernel/IntelXe/xe_core.cpp:279 (file scope)"
+   ],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/common/xe/intel_gem.c:154"
+     ]
+    }
+   ],
+   "doc": "",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_ENGINE_CLASS_RENDER",
+   "area": "engine classes",
+   "value": 0,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:1895",
+     "kind": "use",
+     "code": "q->stateCacheFix = props->stateCacheFix && eng->drmClass == DRM_XE_ENGINE_CLASS_RENDER;"
+    },
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:5650",
+     "kind": "use",
+     "code": "if (cls != DRM_XE_ENGINE_CLASS_RENDER) return EOPNOTSUPP;"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/common/xe/intel_engine.c:36"
+     ]
+    },
+    {
+     "consumer": "Mesa intel/perf",
+     "kind": "future",
+     "feature": "GPU profiler (OA metrics, VK_KHR_performance_query)",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/perf/xe/intel_perf.c:156"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:52"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_engine_class_instance",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_ENGINE_CLASS_COPY",
+   "area": "engine classes",
+   "value": 1,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:2846",
+     "kind": "use",
+     "code": "if (!gMigQ && queueCreate(gMigVm, DRM_XE_ENGINE_CLASS_COPY, 0, &gMigQ)) { gMigQ = nullptr; return; }"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/common/xe/intel_engine.c:38"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:54"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_engine_class_instance",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_ENGINE_CLASS_VIDEO_DECODE",
+   "area": "engine classes",
+   "value": 2,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:1838",
+     "kind": "use",
+     "code": "if ((cls == DRM_XE_ENGINE_CLASS_VIDEO_DECODE || cls == DRM_XE_ENGINE_CLASS_VIDEO_ENHANCE) && gVideoWanted && gDev->mediaUp())"
+    }
+   ],
+   "why": "",
+   "comments": [
+    "kernel/IntelXe/IntelXe.cpp:2177 (IntelXe::mediaGucLoad)"
+   ],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/common/xe/intel_engine.c:40"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:56"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_engine_class_instance",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_ENGINE_CLASS_VIDEO_ENHANCE",
+   "area": "engine classes",
+   "value": 3,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:1838",
+     "kind": "use",
+     "code": "if ((cls == DRM_XE_ENGINE_CLASS_VIDEO_DECODE || cls == DRM_XE_ENGINE_CLASS_VIDEO_ENHANCE) && gVideoWanted && gDev->mediaUp())"
+    }
+   ],
+   "why": "",
+   "comments": [
+    "kernel/IntelXe/IntelXe.cpp:2180 (IntelXe::mediaGucLoad)"
+   ],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/common/xe/intel_engine.c:42"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:58"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_engine_class_instance",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_ENGINE_CLASS_COMPUTE",
+   "area": "engine classes",
+   "value": 4,
+   "status": "implemented",
+   "by": "value 4",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/IntelXe.cpp:1791",
+     "kind": "use",
+     "code": "if (ccs & 1u << i) gEngines[gNumEngines++] = {4, l++, i, 4, ccsBase[i], 0x3000, 0x3000u + i * 0x1000};"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/common/xe/intel_engine.c:44"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:60"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_engine_class_instance",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_ENGINE_CLASS_VM_BIND",
+   "area": "engine classes",
+   "value": 5,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:5888",
+     "kind": "use",
+     "code": "if (eci.engine_class == DRM_XE_ENGINE_CLASS_VM_BIND) {"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/vulkan/xe/anv_queue.c:175"
+     ]
+    }
+   ],
+   "doc": "Kernel only classes (not actual hardware engine class). Used for creating ordered queues of VM bind operations.",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_QUERY_CONFIG_REV_AND_DEVICE_ID",
+   "area": "DEVICE_QUERY contents",
+   "value": 0,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3426",
+     "kind": "use",
+     "code": "r.info[DRM_XE_QUERY_CONFIG_REV_AND_DEVICE_ID] = gDev->devId | (uint32_t)gDev->revId << 16;"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/dev/xe/intel_device_info.c:86"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:186"
+     ]
+    }
+   ],
+   "doc": "Device ID (lower 16 bits) and the device revision (next 8 bits)",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_QUERY_CONFIG_FLAGS",
+   "area": "DEVICE_QUERY contents",
+   "value": 1,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3431",
+     "kind": "use",
+     "code": "r.info[DRM_XE_QUERY_CONFIG_FLAGS] = DRM_XE_QUERY_CONFIG_FLAG_HAS_VRAM | DRM_XE_QUERY_CONFIG_FLAG_HAS_NO_COMPRESSION_HINT |"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/dev/xe/intel_device_info.c:74"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:189"
+     ]
+    }
+   ],
+   "doc": "Flags describing the device configuration, see list below",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_QUERY_CONFIG_FLAG_HAS_VRAM",
+   "area": "DEVICE_QUERY contents",
+   "value": 1,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3431",
+     "kind": "use",
+     "code": "r.info[DRM_XE_QUERY_CONFIG_FLAGS] = DRM_XE_QUERY_CONFIG_FLAG_HAS_VRAM | DRM_XE_QUERY_CONFIG_FLAG_HAS_NO_COMPRESSION_HINT |"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/dev/xe/intel_device_info.c:74"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:229"
+     ]
+    }
+   ],
+   "doc": "Flag is set if the device has usable VRAM",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_QUERY_CONFIG_FLAG_HAS_LOW_LATENCY",
+   "area": "DEVICE_QUERY contents",
+   "value": 2,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3432",
+     "kind": "use",
+     "code": "DRM_XE_QUERY_CONFIG_FLAG_HAS_LOW_LATENCY | DRM_XE_QUERY_CONFIG_FLAG_HAS_DISABLE_STATE_CACHE_PERF_FIX;"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/dev/xe/intel_device_info.c:76"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:241"
+     ]
+    }
+   ],
+   "doc": "Flag is set if the device has low latency hint support",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_QUERY_CONFIG_FLAG_HAS_CPU_ADDR_MIRROR",
+   "area": "DEVICE_QUERY contents",
+   "value": 4,
+   "status": "absent",
+   "by": "not reported",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3431",
+     "kind": "use",
+     "code": "r.info[DRM_XE_QUERY_CONFIG_FLAGS] = DRM_XE_QUERY_CONFIG_FLAG_HAS_VRAM | DRM_XE_QUERY_CONFIG_FLAG_HAS_NO_COMPRESSION_HINT |"
+    }
+   ],
+   "why": "the handler that reports DRM_XE_QUERY_CONFIG_FLAG* values does not set this one",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:189"
+     ]
+    }
+   ],
+   "doc": "Flag is set if the device has CPU address mirroring support",
+   "need": "needed_future",
+   "need_why": "only for: OpenCL / oneAPI (Intel compute-runtime)"
+  },
+  {
+   "token": "DRM_XE_QUERY_CONFIG_FLAG_HAS_NO_COMPRESSION_HINT",
+   "area": "DEVICE_QUERY contents",
+   "value": 8,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3431",
+     "kind": "use",
+     "code": "r.info[DRM_XE_QUERY_CONFIG_FLAGS] = DRM_XE_QUERY_CONFIG_FLAG_HAS_VRAM | DRM_XE_QUERY_CONFIG_FLAG_HAS_NO_COMPRESSION_HINT |"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/dev/xe/intel_device_info.c:78"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:249"
+     ]
+    }
+   ],
+   "doc": "Flag is set if the device supports the userspace hint %DRM_XE_GEM_CREATE_FLAG_NO_COMPRESSION. This is exposed only on Xe2+.",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_QUERY_CONFIG_FLAG_HAS_DISABLE_STATE_CACHE_PERF_FIX",
+   "area": "DEVICE_QUERY contents",
+   "value": 16,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3432",
+     "kind": "use",
+     "code": "DRM_XE_QUERY_CONFIG_FLAG_HAS_LOW_LATENCY | DRM_XE_QUERY_CONFIG_FLAG_HAS_DISABLE_STATE_CACHE_PERF_FIX;"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/dev/xe/intel_device_info.c:80"
+     ]
+    }
+   ],
+   "doc": "Flag is set if a queue can be created with %DRM_XE_EXEC_QUEUE_SET_DISABLE_STATE_CACHE_PERF_FIX",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_QUERY_CONFIG_FLAG_HAS_PURGING_SUPPORT",
+   "area": "DEVICE_QUERY contents",
+   "value": 32,
+   "status": "absent",
+   "by": "not reported",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3431",
+     "kind": "use",
+     "code": "r.info[DRM_XE_QUERY_CONFIG_FLAGS] = DRM_XE_QUERY_CONFIG_FLAG_HAS_VRAM | DRM_XE_QUERY_CONFIG_FLAG_HAS_NO_COMPRESSION_HINT |"
+    }
+   ],
+   "why": "the handler that reports DRM_XE_QUERY_CONFIG_FLAG* values does not set this one",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/dev/xe/intel_device_info.c:82"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_query_config",
+   "need": "needed_now",
+   "need_why": "used by Mesa ANV / intel common (as run on macOS); our kernel: absent"
+  },
+  {
+   "token": "DRM_XE_QUERY_CONFIG_MIN_ALIGNMENT",
+   "area": "DEVICE_QUERY contents",
+   "value": 2,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3433",
+     "kind": "use",
+     "code": "r.info[DRM_XE_QUERY_CONFIG_MIN_ALIGNMENT] = 0x1000;"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/dev/xe/intel_device_info.c:88"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:234"
+     ]
+    }
+   ],
+   "doc": "Minimal memory alignment required by this device, typically SZ_4K or SZ_64K",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_QUERY_CONFIG_VA_BITS",
+   "area": "DEVICE_QUERY contents",
+   "value": 3,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3434",
+     "kind": "use",
+     "code": "r.info[DRM_XE_QUERY_CONFIG_VA_BITS] = 48;"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/dev/xe/intel_device_info.c:87"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:236"
+     ]
+    }
+   ],
+   "doc": "Maximum bits of a virtual address",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_QUERY_CONFIG_MAX_EXEC_QUEUE_PRIORITY",
+   "area": "DEVICE_QUERY contents",
+   "value": 4,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3435",
+     "kind": "use",
+     "code": "r.info[DRM_XE_QUERY_CONFIG_MAX_EXEC_QUEUE_PRIORITY] = 1;"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/vulkan/xe/anv_device.c:97"
+     ]
+    },
+    {
+     "consumer": "iris (Mesa)",
+     "kind": "future",
+     "feature": "native OpenGL via iris",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/gallium/drivers/iris/xe/iris_batch.c:79"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:239"
+     ]
+    }
+   ],
+   "doc": "Value of the highest available exec queue priority",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_QUERY_GT_TYPE_MAIN",
+   "area": "DEVICE_QUERY contents",
+   "value": 0,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3441",
+     "kind": "use",
+     "code": "r.g[0].type = DRM_XE_QUERY_GT_TYPE_MAIN;"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/dev/xe/intel_device_info.c:157"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:282"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_gt",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_QUERY_GT_TYPE_MEDIA",
+   "area": "DEVICE_QUERY contents",
+   "value": 1,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3449",
+     "kind": "use",
+     "code": "r.g[1].type = DRM_XE_QUERY_GT_TYPE_MEDIA;"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:295"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_gt",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_TOPO_DSS_GEOMETRY",
+   "area": "DEVICE_QUERY contents",
+   "value": 1,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3469",
+     "kind": "use",
+     "code": "r.g = {0, DRM_XE_TOPO_DSS_GEOMETRY, 16};"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/dev/xe/intel_device_info.c:312"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:642"
+     ]
+    }
+   ],
+   "doc": "To query the mask of Dual Sub Slices (DSS) available for geometry operations. For example a query response containing the following in mask: ``DSS_GEOMETRY    ff ff ff ff 00 00 00 00`` means 32 DSS ar",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_TOPO_DSS_COMPUTE",
+   "area": "DEVICE_QUERY contents",
+   "value": 2,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3471",
+     "kind": "use",
+     "code": "r.c = {0, DRM_XE_TOPO_DSS_COMPUTE, 16};"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:645"
+     ]
+    }
+   ],
+   "doc": "To query the mask of Dual Sub Slices (DSS) available for compute operations. For example a query response containing the following in mask: ``DSS_COMPUTE    ff ff ff ff 00 00 00 00`` means 32 DSS are ",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_TOPO_L3_BANK",
+   "area": "DEVICE_QUERY contents",
+   "value": 3,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3473",
+     "kind": "use",
+     "code": "r.l = {0, DRM_XE_TOPO_L3_BANK, 8};"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/dev/xe/intel_device_info.c:316"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:648"
+     ]
+    }
+   ],
+   "doc": "To query the mask of enabled L3 banks.  This type may be omitted if the driver is unable to query the mask from the hardware.",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_TOPO_EU_PER_DSS",
+   "area": "DEVICE_QUERY contents",
+   "value": 4,
+   "status": "absent",
+   "by": "not reported",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3469",
+     "kind": "use",
+     "code": "r.g = {0, DRM_XE_TOPO_DSS_GEOMETRY, 16};"
+    }
+   ],
+   "why": "the handler that reports DRM_XE_TOPO* values does not set this one",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/dev/xe/intel_device_info.c:320"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:651"
+     ]
+    }
+   ],
+   "doc": "To query the mask of Execution Units (EU) available per Dual Sub Slices (DSS). For example a query response containing the following in mask: ``EU_PER_DSS    ff ff 00 00 00 00 00 00`` means each DSS h",
+   "need": "not_needed",
+   "need_why": "not reported on Xe2 by Linux either: load_eu_mask() picks XE_GT_EU_TYPE_SIMD16 for graphics >= 20 (xe_gt_topology.c) and xe_query.c then reports DRM_XE_TOPO_SIMD16_EU_PER_DSS, which we report; Mesa (intel/dev/xe/intel_device_info.c) handles both"
+  },
+  {
+   "token": "DRM_XE_TOPO_SIMD16_EU_PER_DSS",
+   "area": "DEVICE_QUERY contents",
+   "value": 5,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3475",
+     "kind": "use",
+     "code": "r.e = {0, DRM_XE_TOPO_SIMD16_EU_PER_DSS, 8};"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/dev/xe/intel_device_info.c:321"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:652"
+     ]
+    }
+   ],
+   "doc": "To query the mask of SIMD16 Execution Units (EU) available per Dual Sub Slices (DSS). For example a query response containing the following in mask: ``SIMD16_EU_PER_DSS    ff ff 00 00 00 00 00 00`` me",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_DEVICE_QUERY_ENGINES",
+   "area": "DEVICE_QUERY types",
+   "value": 0,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3392",
+     "kind": "use",
+     "code": "case DRM_XE_DEVICE_QUERY_ENGINES: {"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/common/xe/intel_engine.c:75",
+      "src/intel/common/xe/intel_gem.c:52"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:389"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_device_query",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_DEVICE_QUERY_MEM_REGIONS",
+   "area": "DEVICE_QUERY types",
+   "value": 1,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3401",
+     "kind": "use",
+     "code": "case DRM_XE_DEVICE_QUERY_MEM_REGIONS: {"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/dev/xe/intel_device_info.c:99"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:491",
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.h:238"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_device_query",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_DEVICE_QUERY_CONFIG",
+   "area": "DEVICE_QUERY types",
+   "value": 2,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3423",
+     "kind": "use",
+     "code": "case DRM_XE_DEVICE_QUERY_CONFIG: {"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/vulkan/xe/anv_device.c:90",
+      "src/intel/dev/xe/intel_device_info.c:70"
+     ]
+    },
+    {
+     "consumer": "iris (Mesa)",
+     "kind": "future",
+     "feature": "native OpenGL via iris",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/gallium/drivers/iris/xe/iris_batch.c:77"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:166"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_device_query",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_DEVICE_QUERY_GT_LIST",
+   "area": "DEVICE_QUERY types",
+   "value": 3,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3438",
+     "kind": "use",
+     "code": "case DRM_XE_DEVICE_QUERY_GT_LIST: {"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/dev/xe/intel_device_info.c:152"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:266"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_device_query",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_DEVICE_QUERY_HWCONFIG",
+   "area": "DEVICE_QUERY types",
+   "value": 4,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3458",
+     "kind": "use",
+     "code": "case DRM_XE_DEVICE_QUERY_HWCONFIG:"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/dev/xe/intel_device_info.c:176"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:256"
+     ]
+    }
+   ],
+   "doc": "Query type to retrieve the hardware configuration of the device such as information on slices, memory, caches, and so on. It is provided as a table of key / value attributes.",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_DEVICE_QUERY_GT_TOPOLOGY",
+   "area": "DEVICE_QUERY types",
+   "value": 5,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3460",
+     "kind": "use",
+     "code": "case DRM_XE_DEVICE_QUERY_GT_TOPOLOGY: {"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/dev/xe/intel_device_info.c:296"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:623"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_device_query",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_DEVICE_QUERY_ENGINE_CYCLES",
+   "area": "DEVICE_QUERY types",
+   "value": 6,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3479",
+     "kind": "use",
+     "code": "case DRM_XE_DEVICE_QUERY_ENGINE_CYCLES: {"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/common/xe/intel_gem.c:68"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:590"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_device_query",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_DEVICE_QUERY_UC_FW_VERSION",
+   "area": "DEVICE_QUERY types",
+   "value": 7,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3508",
+     "kind": "use",
+     "code": "case DRM_XE_DEVICE_QUERY_UC_FW_VERSION: {"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/common/xe/intel_engine.c:113",
+      "src/intel/common/xe/intel_gem.c:139"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_device_query",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_DEVICE_QUERY_OA_UNITS",
+   "area": "DEVICE_QUERY types",
+   "value": 8,
+   "status": "rejected",
+   "by": "switch default",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3534",
+     "kind": "reject",
+     "code": "default: return EINVAL;"
+    }
+   ],
+   "why": "no case for value 8 in the switch at kernel/IntelXe/xe_core.cpp:3391; its default returns an error",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa intel/perf",
+     "kind": "future",
+     "feature": "GPU profiler (OA metrics, VK_KHR_performance_query)",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/perf/xe/intel_perf.c:144"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_device_query",
+   "need": "needed_future",
+   "need_why": "only for: GPU profiler (OA metrics, VK_KHR_performance_query)"
+  },
+  {
+   "token": "DRM_XE_DEVICE_QUERY_PXP_STATUS",
+   "area": "DEVICE_QUERY types",
+   "value": 9,
+   "status": "rejected",
+   "by": "switch default",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3534",
+     "kind": "reject",
+     "code": "default: return EINVAL;"
+    }
+   ],
+   "why": "no case for value 9 in the switch at kernel/IntelXe/xe_core.cpp:3391; its default returns an error",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/common/xe/intel_gem.c:120"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_device_query",
+   "need": "not_needed",
+   "need_why": "Linux-only concept: PXP protected content (Linux/Windows DRM content protection; no macOS path)"
+  },
+  {
+   "token": "DRM_XE_DEVICE_QUERY_EU_STALL",
+   "area": "DEVICE_QUERY types",
+   "value": 10,
+   "status": "rejected",
+   "by": "switch default",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3534",
+     "kind": "reject",
+     "code": "default: return EINVAL;"
+    }
+   ],
+   "why": "no case for value 10 in the switch at kernel/IntelXe/xe_core.cpp:3391; its default returns an error",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa intel/perf",
+     "kind": "future",
+     "feature": "GPU profiler (OA metrics, VK_KHR_performance_query)",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/perf/xe/intel_perf.c:535"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe_perf.cpp:54"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_device_query",
+   "need": "needed_future",
+   "need_why": "only for: GPU profiler (OA metrics, VK_KHR_performance_query); OpenCL / oneAPI (Intel compute-runtime)"
+  },
+  {
+   "token": "DRM_XE_GEM_CREATE_EXTENSION_SET_PROPERTY",
+   "area": "GEM_CREATE / MMAP_OFFSET",
+   "value": 0,
+   "status": "unverified",
+   "by": null,
+   "uses": [],
+   "why": "no use by name or by value 0; no dispatch switch, field match or proof decides it",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/vulkan/xe/anv_kmd_backend.c:72"
+     ]
+    },
+    {
+     "consumer": "iris (Mesa)",
+     "kind": "future",
+     "feature": "native OpenGL via iris",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/gallium/drivers/iris/xe/iris_kmd_backend.c:47"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_gem_create",
+   "need": "needed_now",
+   "need_why": "used by Mesa ANV / intel common (as run on macOS); our kernel: unverified"
+  },
+  {
+   "token": "DRM_XE_GEM_CREATE_SET_PROPERTY_PXP_TYPE",
+   "area": "GEM_CREATE / MMAP_OFFSET",
+   "value": 0,
+   "status": "unverified",
+   "by": null,
+   "uses": [],
+   "why": "no use by name or by value 0; no dispatch switch, field match or proof decides it",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/vulkan/xe/anv_kmd_backend.c:73"
+     ]
+    },
+    {
+     "consumer": "iris (Mesa)",
+     "kind": "future",
+     "feature": "native OpenGL via iris",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/gallium/drivers/iris/xe/iris_kmd_backend.c:48"
+     ]
+    }
+   ],
+   "doc": "set the type of PXP session this object will be used with. Valid values are listed in enum drm_xe_pxp_session_type. %DRM_XE_PXP_TYPE_NONE is the default behavior, so there is no need to explicitly set",
+   "need": "not_needed",
+   "need_why": "Linux-only concept: PXP protected content (Linux/Windows DRM content protection; no macOS path)"
+  },
+  {
+   "token": "DRM_XE_GEM_CREATE_FLAG_DEFER_BACKING",
+   "area": "GEM_CREATE / MMAP_OFFSET",
+   "value": 1,
+   "status": "unverified",
+   "by": null,
+   "uses": [],
+   "why": "no use by name or by value 1; no dispatch switch, field match or proof decides it",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:750"
+     ]
+    }
+   ],
+   "doc": "Modify the GEM object allocation strategy by deferring physical memory allocation until the object is either bound to a virtual memory region via VM_BIND or accessed by the CPU. As a result, no backin",
+   "need": "needed_future",
+   "need_why": "only for: OpenCL / oneAPI (Intel compute-runtime)"
+  },
+  {
+   "token": "DRM_XE_GEM_CREATE_FLAG_SCANOUT",
+   "area": "GEM_CREATE / MMAP_OFFSET",
+   "value": 2,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:5707",
+     "kind": "use",
+     "code": "const bool scanout = g->flags & DRM_XE_GEM_CREATE_FLAG_SCANOUT;"
+    },
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6284",
+     "kind": "use",
+     "code": "bo->gemFlags & DRM_XE_GEM_CREATE_FLAG_SCANOUT ? \"s\" : \"\", bo->placement & 1 ? \"+sys\" : \"\","
+    }
+   ],
+   "why": "",
+   "comments": [
+    "kernel/IntelXe/xe_core.cpp:246 (file scope)",
+    "kernel/IntelXe/xe_core.cpp:4142 (file scope)"
+   ],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/vulkan/xe/anv_kmd_backend.c:83"
+     ]
+    },
+    {
+     "consumer": "Metal plugin / VideoToolbox (this repository)",
+     "kind": "now",
+     "feature": null,
+     "commit": "030bfaed7ca8",
+     "at": [
+      "nullmoth/plugin/nvmtl_vk.c:2439"
+     ]
+    },
+    {
+     "consumer": "iris (Mesa)",
+     "kind": "future",
+     "feature": "native OpenGL via iris",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/gallium/drivers/iris/xe/iris_kmd_backend.c:61"
+     ]
+    }
+   ],
+   "doc": "Indicates that the GEM object is intended for scanout via the display engine. When set, kernel ensures that the allocation is placed in a memory region compatible with the display engine requirements.",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_GEM_CREATE_FLAG_NEEDS_VISIBLE_VRAM",
+   "area": "GEM_CREATE / MMAP_OFFSET",
+   "value": 4,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:5703",
+     "kind": "use",
+     "code": "const bool visible = g->flags & DRM_XE_GEM_CREATE_FLAG_NEEDS_VISIBLE_VRAM;"
+    },
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6283",
+     "kind": "use",
+     "code": "put(\" %llu KB %s%s%s%s%s\", bo->size >> 10, bo->gemFlags & DRM_XE_GEM_CREATE_FLAG_NEEDS_VISIBLE_VRAM ? \"v\" : \"\","
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/vulkan/xe/anv_kmd_backend.c:96"
+     ]
+    },
+    {
+     "consumer": "Metal plugin / VideoToolbox (this repository)",
+     "kind": "now",
+     "feature": null,
+     "commit": "030bfaed7ca8",
+     "at": [
+      "nullmoth/plugin/nvmtl_vk.c:2443"
+     ]
+    },
+    {
+     "consumer": "iris (Mesa)",
+     "kind": "future",
+     "feature": "native OpenGL via iris",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/gallium/drivers/iris/xe/iris_kmd_backend.c:74"
+     ]
+    }
+   ],
+   "doc": "When using VRAM as a possible placement, ensure that the corresponding VRAM allocation will always use the CPU accessible part of VRAM. This is important for small-bar systems (on full-bar systems thi",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_GEM_CREATE_FLAG_NO_COMPRESSION",
+   "area": "GEM_CREATE / MMAP_OFFSET",
+   "value": 8,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:5709",
+     "kind": "use",
+     "code": "bo->noComp = g->flags & DRM_XE_GEM_CREATE_FLAG_NO_COMPRESSION;"
+    }
+   ],
+   "why": "",
+   "comments": [
+    "kernel/IntelXe/xe_core.cpp:247 (file scope)"
+   ],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/vulkan/xe/anv_kmd_backend.c:100"
+     ]
+    },
+    {
+     "consumer": "iris (Mesa)",
+     "kind": "future",
+     "feature": "native OpenGL via iris",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/gallium/drivers/iris/xe/iris_kmd_backend.c:78"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:753"
+     ]
+    }
+   ],
+   "doc": "Allows userspace to hint that compression (CCS) should be disabled for the buffer being created. This can avoid unnecessary memory operations and CCS state management. On pre-Xe2 platforms, this flag ",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_GEM_CPU_CACHING_WB",
+   "area": "GEM_CREATE / MMAP_OFFSET",
+   "value": 1,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3818",
+     "kind": "use",
+     "code": "bo->size = op.range; bo->user = md; bo->caching = DRM_XE_GEM_CPU_CACHING_WB; bo->refs = 1;"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/vulkan/xe/anv_kmd_backend.c:126"
+     ]
+    },
+    {
+     "consumer": "iris (Mesa)",
+     "kind": "future",
+     "feature": "native OpenGL via iris",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/gallium/drivers/iris/xe/iris_kmd_backend.c:95"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:710"
+     ]
+    }
+   ],
+   "doc": "Allocate the pages with write-back caching. On iGPU this can't be used for scanout surfaces. Currently not allowed for objects placed in VRAM.",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_GEM_CPU_CACHING_WC",
+   "area": "GEM_CREATE / MMAP_OFFSET",
+   "value": 2,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:4952",
+     "kind": "use",
+     "code": "bo->caching = DRM_XE_GEM_CPU_CACHING_WC;"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/vulkan/xe/anv_kmd_backend.c:123"
+     ]
+    },
+    {
+     "consumer": "iris (Mesa)",
+     "kind": "future",
+     "feature": "native OpenGL via iris",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/gallium/drivers/iris/xe/iris_kmd_backend.c:92"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:710"
+     ]
+    }
+   ],
+   "doc": "Allocate the pages as write-combined. This is uncached. Scanout surfaces should likely use this. All objects that can be placed in VRAM must use this.",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_MMAP_OFFSET_FLAG_PCI_BARRIER",
+   "area": "GEM_CREATE / MMAP_OFFSET",
+   "value": 1,
+   "status": "unverified",
+   "by": null,
+   "uses": [],
+   "why": "no use by name or by value 1; no dispatch switch, field match or proof decides it",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:2436"
+     ]
+    }
+   ],
+   "doc": "For user to query special offset for use in mmap ioctl. Writing to the returned mmap address will generate a PCI memory barrier with low overhead (avoiding IOCTL call as well as writing to VRAM which ",
+   "need": "needed_future",
+   "need_why": "only for: OpenCL / oneAPI (Intel compute-runtime)"
+  },
+  {
+   "token": "DRM_XE_VM_CREATE_FLAG_SCRATCH_PAGE",
+   "area": "VM_CREATE",
+   "value": 1,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:5812",
+     "kind": "use",
+     "code": "constexpr uint32_t kAll = DRM_XE_VM_CREATE_FLAG_SCRATCH_PAGE | DRM_XE_VM_CREATE_FLAG_LR_MODE |"
+    },
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:5819",
+     "kind": "use",
+     "code": "XeVm *vm = vmCreate(0, v->flags & DRM_XE_VM_CREATE_FLAG_SCRATCH_PAGE);"
+    }
+   ],
+   "why": "",
+   "comments": [
+    "kernel/IntelXe/xe_core.cpp:274 (file scope)",
+    "kernel/IntelXe/xe_core.cpp:1287 (file scope)"
+   ],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/vulkan/xe/anv_device.c:48"
+     ]
+    },
+    {
+     "consumer": "iris (Mesa)",
+     "kind": "future",
+     "feature": "native OpenGL via iris",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/gallium/drivers/iris/xe/iris_bufmgr.c:34"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:1345"
+     ]
+    }
+   ],
+   "doc": "Map the whole virtual address space of the VM to scratch page. A vm_bind would overwrite the scratch page mapping. This flag is mutually exclusive with the %DRM_XE_VM_CREATE_FLAG_FAULT_MODE flag, with",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_VM_CREATE_FLAG_LR_MODE",
+   "area": "VM_CREATE",
+   "value": 2,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:5812",
+     "kind": "use",
+     "code": "constexpr uint32_t kAll = DRM_XE_VM_CREATE_FLAG_SCRATCH_PAGE | DRM_XE_VM_CREATE_FLAG_LR_MODE |"
+    },
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:5815",
+     "kind": "reject",
+     "code": "if ((v->flags & DRM_XE_VM_CREATE_FLAG_FAULT_MODE) && !(v->flags & DRM_XE_VM_CREATE_FLAG_LR_MODE)) return EINVAL;"
+    },
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:5818",
+     "kind": "reject",
+     "code": "if (v->flags & (DRM_XE_VM_CREATE_FLAG_LR_MODE | DRM_XE_VM_CREATE_FLAG_FAULT_MODE)) return EINVAL;"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:1301"
+     ]
+    }
+   ],
+   "doc": "An LR, or Long Running VM accepts exec submissions to its exec_queues that don't have an upper time limit on the job execution time. But exec submissions to these don't allow any of the sync types DRM",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_VM_CREATE_FLAG_FAULT_MODE",
+   "area": "VM_CREATE",
+   "value": 4,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:5813",
+     "kind": "use",
+     "code": "DRM_XE_VM_CREATE_FLAG_FAULT_MODE | DRM_XE_VM_CREATE_FLAG_NO_VM_OVERCOMMIT;"
+    },
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:5815",
+     "kind": "reject",
+     "code": "if ((v->flags & DRM_XE_VM_CREATE_FLAG_FAULT_MODE) && !(v->flags & DRM_XE_VM_CREATE_FLAG_LR_MODE)) return EINVAL;"
+    },
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:5816",
+     "kind": "use",
+     "code": "if ((v->flags & DRM_XE_VM_CREATE_FLAG_NO_VM_OVERCOMMIT) && !(v->flags & DRM_XE_VM_CREATE_FLAG_FAULT_MODE))"
+    },
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:5818",
+     "kind": "reject",
+     "code": "if (v->flags & (DRM_XE_VM_CREATE_FLAG_LR_MODE | DRM_XE_VM_CREATE_FLAG_FAULT_MODE)) return EINVAL;"
+    }
+   ],
+   "why": "",
+   "comments": [
+    "kernel/IntelXe/xe_core.cpp:1512 (file scope)"
+   ],
+   "consumers": [
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:1301"
+     ]
+    }
+   ],
+   "doc": "Requires also DRM_XE_VM_CREATE_FLAG_LR_MODE. It allows memory to be allocated on demand when accessed, and also allows per-VM overcommit of memory. The xe driver internally uses recoverable pagefaults",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_VM_CREATE_FLAG_NO_VM_OVERCOMMIT",
+   "area": "VM_CREATE",
+   "value": 8,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:5813",
+     "kind": "use",
+     "code": "DRM_XE_VM_CREATE_FLAG_FAULT_MODE | DRM_XE_VM_CREATE_FLAG_NO_VM_OVERCOMMIT;"
+    },
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:5816",
+     "kind": "use",
+     "code": "if ((v->flags & DRM_XE_VM_CREATE_FLAG_NO_VM_OVERCOMMIT) && !(v->flags & DRM_XE_VM_CREATE_FLAG_FAULT_MODE))"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:1341"
+     ]
+    }
+   ],
+   "doc": "Requires also DRM_XE_VM_CREATE_FLAG_FAULT_MODE. This disallows per-VM overcommit but only during a &DRM_IOCTL_XE_VM_BIND operation with the %DRM_XE_VM_BIND_FLAG_IMMEDIATE flag set. This may be useful ",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_VM_BIND_OP_MAP",
+   "area": "VM_BIND",
+   "value": 0,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3750",
+     "kind": "use",
+     "code": "if (op.op != DRM_XE_VM_BIND_OP_MAP && (decomp || isNull)) return EINVAL;"
+    },
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3751",
+     "kind": "reject",
+     "code": "if (!op.obj && op.op == DRM_XE_VM_BIND_OP_MAP && !isNull) return EINVAL;"
+    },
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3763",
+     "kind": "use",
+     "code": "case DRM_XE_VM_BIND_OP_MAP: {"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/vulkan/xe/anv_kmd_backend.c:229"
+     ]
+    },
+    {
+     "consumer": "iris (Mesa)",
+     "kind": "future",
+     "feature": "native OpenGL via iris",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/gallium/drivers/iris/xe/iris_kmd_backend.c:158"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:68"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_vm_bind_op",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_VM_BIND_OP_UNMAP",
+   "area": "VM_BIND",
+   "value": 1,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3754",
+     "kind": "use",
+     "code": "op.op == DRM_XE_VM_BIND_OP_UNMAP))"
+    },
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3832",
+     "kind": "use",
+     "code": "case DRM_XE_VM_BIND_OP_UNMAP:"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/vulkan/xe/anv_kmd_backend.c:221"
+     ]
+    },
+    {
+     "consumer": "iris (Mesa)",
+     "kind": "future",
+     "feature": "native OpenGL via iris",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/gallium/drivers/iris/xe/iris_kmd_backend.c:137"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:70"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_vm_bind_op",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_VM_BIND_OP_MAP_USERPTR",
+   "area": "VM_BIND",
+   "value": 2,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3753",
+     "kind": "use",
+     "code": "if (op.obj && (op.op == DRM_XE_VM_BIND_OP_MAP_USERPTR || op.op == DRM_XE_VM_BIND_OP_PREFETCH ||"
+    },
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3788",
+     "kind": "use",
+     "code": "case DRM_XE_VM_BIND_OP_MAP_USERPTR: {"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/vulkan/xe/anv_kmd_backend.c:233"
+     ]
+    },
+    {
+     "consumer": "Metal plugin / VideoToolbox (this repository)",
+     "kind": "now",
+     "feature": null,
+     "commit": "030bfaed7ca8",
+     "at": [
+      "nullmoth/plugin/NVMTLObjects.m:1346"
+     ]
+    },
+    {
+     "consumer": "iris (Mesa)",
+     "kind": "future",
+     "feature": "native OpenGL via iris",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/gallium/drivers/iris/xe/iris_kmd_backend.c:159"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:72"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_vm_bind_op",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_VM_BIND_OP_UNMAP_ALL",
+   "area": "VM_BIND",
+   "value": 3,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3752",
+     "kind": "reject",
+     "code": "if (op.op == DRM_XE_VM_BIND_OP_UNMAP_ALL && (!op.obj || op.addr || op.range)) return EINVAL;"
+    },
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3837",
+     "kind": "use",
+     "code": "case DRM_XE_VM_BIND_OP_UNMAP_ALL: {"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/vulkan/xe/anv_kmd_backend.c:242"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:74"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_vm_bind_op",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_VM_BIND_OP_PREFETCH",
+   "area": "VM_BIND",
+   "value": 4,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3747",
+     "kind": "reject",
+     "code": "if (op.op > DRM_XE_VM_BIND_OP_PREFETCH || (op.flags & ~kSupported)) return EINVAL;"
+    },
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3753",
+     "kind": "use",
+     "code": "if (op.obj && (op.op == DRM_XE_VM_BIND_OP_MAP_USERPTR || op.op == DRM_XE_VM_BIND_OP_PREFETCH ||"
+    },
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3756",
+     "kind": "use",
+     "code": "if (op.prefetch_mem_region_instance && op.op != DRM_XE_VM_BIND_OP_PREFETCH) return EINVAL;"
+    },
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3843",
+     "kind": "noop",
+     "code": "case DRM_XE_VM_BIND_OP_PREFETCH:"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:76"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_vm_bind_op",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_VM_BIND_FLAG_READONLY",
+   "area": "VM_BIND",
+   "value": 1,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:1433",
+     "kind": "use",
+     "code": "if (!(flags & DRM_XE_VM_BIND_FLAG_READONLY)) v |= 2;"
+    },
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3742",
+     "kind": "use",
+     "code": "constexpr uint32_t kSupported = DRM_XE_VM_BIND_FLAG_READONLY | DRM_XE_VM_BIND_FLAG_IMMEDIATE | DRM_XE_VM_BIND_FLAG_NULL |"
+    },
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3798",
+     "kind": "use",
+     "code": "IODirection dir = (flags & DRM_XE_VM_BIND_FLAG_READONLY) ? kIODirectionOut : kIODirectionInOut;"
+    },
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3805",
+     "kind": "use",
+     "code": "flags |= DRM_XE_VM_BIND_FLAG_READONLY;"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:100"
+     ]
+    }
+   ],
+   "doc": "Setup the page tables as read-only to ensure write protection",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_VM_BIND_FLAG_IMMEDIATE",
+   "area": "VM_BIND",
+   "value": 2,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3742",
+     "kind": "use",
+     "code": "constexpr uint32_t kSupported = DRM_XE_VM_BIND_FLAG_READONLY | DRM_XE_VM_BIND_FLAG_IMMEDIATE | DRM_XE_VM_BIND_FLAG_NULL |"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:104"
+     ]
+    }
+   ],
+   "doc": "On a faulting VM, do the MAP operation immediately rather than deferring the MAP to the page fault handler. This is implied on a non-faulting VM as there is no fault handler to defer to.",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_VM_BIND_FLAG_NULL",
+   "area": "VM_BIND",
+   "value": 4,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:1617",
+     "kind": "use",
+     "code": "MapReq r = {(flags & DRM_XE_VM_BIND_FLAG_NULL) ? nullptr : bo, off, addr, range, pat, flags, ctx, 0, 0, 0,"
+    },
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:1618",
+     "kind": "use",
+     "code": "kernelHuge || gHugePages != 0, (flags & DRM_XE_VM_BIND_FLAG_NULL) != 0};"
+    },
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3742",
+     "kind": "use",
+     "code": "constexpr uint32_t kSupported = DRM_XE_VM_BIND_FLAG_READONLY | DRM_XE_VM_BIND_FLAG_IMMEDIATE | DRM_XE_VM_BIND_FLAG_NULL |"
+    },
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3745",
+     "kind": "use",
+     "code": "const bool isNull = op.flags & DRM_XE_VM_BIND_FLAG_NULL, mirror = op.flags & DRM_XE_VM_BIND_FLAG_CPU_ADDR_MIRROR,"
+    },
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3769",
+     "kind": "use",
+     "code": "if (!(op.flags & DRM_XE_VM_BIND_FLAG_NULL)) {"
+    }
+   ],
+   "why": "",
+   "comments": [
+    "kernel/IntelXe/xe_core.cpp:1293 (file scope)",
+    "kernel/IntelXe/xe_core.cpp:1410 (file scope)"
+   ],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/vulkan/xe/anv_kmd_backend.c:230"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:108"
+     ]
+    }
+   ],
+   "doc": "When the NULL flag is set, the page tables are setup with a special bit which indicates writes are dropped and all reads return zero. In the future, the NULL flags will only be valid for DRM_XE_VM_BIN",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_VM_BIND_FLAG_DUMPABLE",
+   "area": "VM_BIND",
+   "value": 8,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3743",
+     "kind": "use",
+     "code": "DRM_XE_VM_BIND_FLAG_DUMPABLE | DRM_XE_VM_BIND_FLAG_CHECK_PXP | DRM_XE_VM_BIND_FLAG_CPU_ADDR_MIRROR |"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/vulkan/xe/anv_kmd_backend.c:203"
+     ]
+    },
+    {
+     "consumer": "iris (Mesa)",
+     "kind": "future",
+     "feature": "native OpenGL via iris",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/gallium/drivers/iris/xe/iris_kmd_backend.c:163"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:112"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_vm_bind_op",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_VM_BIND_FLAG_CHECK_PXP",
+   "area": "VM_BIND",
+   "value": 16,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3743",
+     "kind": "use",
+     "code": "DRM_XE_VM_BIND_FLAG_DUMPABLE | DRM_XE_VM_BIND_FLAG_CHECK_PXP | DRM_XE_VM_BIND_FLAG_CPU_ADDR_MIRROR |"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/vulkan/xe/anv_kmd_backend.c:240"
+     ]
+    },
+    {
+     "consumer": "iris (Mesa)",
+     "kind": "future",
+     "feature": "native OpenGL via iris",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/gallium/drivers/iris/xe/iris_kmd_backend.c:165"
+     ]
+    }
+   ],
+   "doc": "If the object is encrypted via PXP, reject the binding if the encryption key is no longer valid. This flag has no effect on BOs that are not marked as using PXP.",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_VM_BIND_FLAG_CPU_ADDR_MIRROR",
+   "area": "VM_BIND",
+   "value": 32,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3743",
+     "kind": "use",
+     "code": "DRM_XE_VM_BIND_FLAG_DUMPABLE | DRM_XE_VM_BIND_FLAG_CHECK_PXP | DRM_XE_VM_BIND_FLAG_CPU_ADDR_MIRROR |"
+    },
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3745",
+     "kind": "use",
+     "code": "const bool isNull = op.flags & DRM_XE_VM_BIND_FLAG_NULL, mirror = op.flags & DRM_XE_VM_BIND_FLAG_CPU_ADDR_MIRROR,"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/drm_neo.cpp:2241",
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:116"
+     ]
+    }
+   ],
+   "doc": "When the CPU address mirror flag is set, no mappings are created rather the range is reserved for CPU address mirroring which will be populated on GPU page faults or prefetches. Only valid on VMs with",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_VM_BIND_FLAG_MADVISE_AUTORESET",
+   "area": "VM_BIND",
+   "value": 64,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3744",
+     "kind": "use",
+     "code": "DRM_XE_VM_BIND_FLAG_MADVISE_AUTORESET | DRM_XE_VM_BIND_FLAG_DECOMPRESS;"
+    },
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3748",
+     "kind": "reject",
+     "code": "if (mirror || (op.flags & DRM_XE_VM_BIND_FLAG_MADVISE_AUTORESET)) return EINVAL;"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/drm_neo.cpp:2243",
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:120"
+     ]
+    }
+   ],
+   "doc": "Can be used in combination with %DRM_XE_VM_BIND_FLAG_CPU_ADDR_MIRROR to reset madvises when the underlying CPU address space range is unmapped (typically with munmap(2) or brk(2)). The madvise values ",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_VM_BIND_FLAG_DECOMPRESS",
+   "area": "VM_BIND",
+   "value": 128,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3744",
+     "kind": "use",
+     "code": "DRM_XE_VM_BIND_FLAG_MADVISE_AUTORESET | DRM_XE_VM_BIND_FLAG_DECOMPRESS;"
+    },
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3746",
+     "kind": "use",
+     "code": "decomp = op.flags & DRM_XE_VM_BIND_FLAG_DECOMPRESS;"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:124"
+     ]
+    }
+   ],
+   "doc": "Request on-device decompression for a MAP. When set on a MAP bind operation, request the driver schedule an on-device in-place decompression (via the migrate/resolve path) for the GPU mapping created ",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_CONSULT_MEM_ADVISE_PREF_LOC",
+   "area": "MADVISE / memory ranges",
+   "value": -1,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_MADVISE, DRM_IOCTL_XE_VM_QUERY_MEM_RANGE_ATTRS, which our dispatch rejects",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:1159"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_vm_bind_op",
+   "need": "needed_future",
+   "need_why": "only for: OpenCL / oneAPI (Intel compute-runtime)"
+  },
+  {
+   "token": "DRM_XE_VM_GET_PROPERTY_FAULTS",
+   "area": "VM_GET_PROPERTY",
+   "value": 0,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:5930",
+     "kind": "use",
+     "code": "if (g->property != DRM_XE_VM_GET_PROPERTY_FAULTS) return EINVAL;"
+    }
+   ],
+   "why": "",
+   "comments": [
+    "kernel/IntelXe/xe_core.cpp:279 (file scope)"
+   ],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/common/xe/intel_gem.c:151"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_vm_get_property",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_EXEC_QUEUE_EXTENSION_SET_PROPERTY",
+   "area": "EXEC_QUEUE",
+   "value": 0,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:5626",
+     "kind": "use",
+     "code": "if (sp.base.pad || sp.base.name != DRM_XE_EXEC_QUEUE_EXTENSION_SET_PROPERTY) return EINVAL;"
+    }
+   ],
+   "why": "",
+   "comments": [
+    "kernel/IntelXe/xe_core.cpp:5612 (file scope)"
+   ],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/vulkan/xe/anv_queue.c:138"
+     ]
+    },
+    {
+     "consumer": "iris (Mesa)",
+     "kind": "future",
+     "feature": "native OpenGL via iris",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/gallium/drivers/iris/xe/iris_batch.c:110"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:2210"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_exec_queue_create",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_EXEC_QUEUE_SET_PROPERTY_PRIORITY",
+   "area": "EXEC_QUEUE",
+   "value": 0,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:5631",
+     "kind": "use",
+     "code": "case DRM_XE_EXEC_QUEUE_SET_PROPERTY_PRIORITY:"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/vulkan/xe/anv_queue.c:118"
+     ]
+    },
+    {
+     "consumer": "iris (Mesa)",
+     "kind": "future",
+     "feature": "native OpenGL via iris",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/gallium/drivers/iris/xe/iris_batch.c:96"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:2227"
+     ]
+    }
+   ],
+   "doc": "set the queue priority. CAP_SYS_NICE is required to set a value above normal.",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_EXEC_QUEUE_SET_PROPERTY_TIMESLICE",
+   "area": "EXEC_QUEUE",
+   "value": 1,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:5636",
+     "kind": "use",
+     "code": "case DRM_XE_EXEC_QUEUE_SET_PROPERTY_TIMESLICE:"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [],
+   "doc": "set the queue timeslice duration in microseconds.",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_EXEC_QUEUE_SET_PROPERTY_PXP_TYPE",
+   "area": "EXEC_QUEUE",
+   "value": 2,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:5640",
+     "kind": "use",
+     "code": "case DRM_XE_EXEC_QUEUE_SET_PROPERTY_PXP_TYPE:"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/vulkan/xe/anv_queue.c:126"
+     ]
+    },
+    {
+     "consumer": "iris (Mesa)",
+     "kind": "future",
+     "feature": "native OpenGL via iris",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/gallium/drivers/iris/xe/iris_batch.c:100"
+     ]
+    }
+   ],
+   "doc": "set the type of PXP session this queue will be used with. Valid values are listed in enum drm_xe_pxp_session_type. %DRM_XE_PXP_TYPE_NONE is the default behavior, so there is no need to explicitly set ",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_EXEC_QUEUE_SET_HANG_REPLAY_STATE",
+   "area": "EXEC_QUEUE",
+   "value": 3,
+   "status": "rejected",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:5643",
+     "kind": "reject",
+     "code": "case DRM_XE_EXEC_QUEUE_SET_HANG_REPLAY_STATE:"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [],
+   "doc": "value of a field in struct drm_xe_exec_queue_create",
+   "need": "not_needed",
+   "need_why": "no consumer found in: Mesa ANV / intel common (as run on macOS) @ a3ad934832bb (193 files); Metal plugin / VideoToolbox (this repository) @ 030bfaed7ca8 (44 files); iris (Mesa) @ a3ad934832bb (57 files); Mesa intel/perf @ a3ad934832bb (18 files); Intel compute-runtime (NEO) @ 248eb54f8441 (137 files)"
+  },
+  {
+   "token": "DRM_XE_EXEC_QUEUE_SET_PROPERTY_MULTI_GROUP",
+   "area": "EXEC_QUEUE",
+   "value": 4,
+   "status": "rejected",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:5645",
+     "kind": "reject",
+     "code": "case DRM_XE_EXEC_QUEUE_SET_PROPERTY_MULTI_GROUP:"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:2240"
+     ]
+    }
+   ],
+   "doc": "Create a multi-queue group or add secondary queues to a multi-queue group. If the extension's 'value' field has %DRM_XE_MULTI_GROUP_CREATE flag set, then a new multi-queue group is created with this q",
+   "need": "needed_future",
+   "need_why": "only for: OpenCL / oneAPI (Intel compute-runtime)"
+  },
+  {
+   "token": "DRM_XE_MULTI_GROUP_CREATE",
+   "area": "EXEC_QUEUE",
+   "value": 9223372036854775808,
+   "status": "unverified",
+   "by": null,
+   "uses": [],
+   "why": "no use by name or by value 9223372036854775808; no dispatch switch, field match or proof decides it",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:2277"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_exec_queue_create",
+   "need": "needed_future",
+   "need_why": "only for: OpenCL / oneAPI (Intel compute-runtime)"
+  },
+  {
+   "token": "DRM_XE_EXEC_QUEUE_SET_PROPERTY_MULTI_QUEUE_PRIORITY",
+   "area": "EXEC_QUEUE",
+   "value": 5,
+   "status": "rejected",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:5647",
+     "kind": "reject",
+     "code": "case DRM_XE_EXEC_QUEUE_SET_PROPERTY_MULTI_QUEUE_PRIORITY:"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:2266"
+     ]
+    }
+   ],
+   "doc": "Set the queue priority within the multi-queue group. Current valid priority values are 0\u20132 (default is 1), with higher values indicating higher priority.",
+   "need": "needed_future",
+   "need_why": "only for: OpenCL / oneAPI (Intel compute-runtime)"
+  },
+  {
+   "token": "DRM_XE_EXEC_QUEUE_SET_DISABLE_STATE_CACHE_PERF_FIX",
+   "area": "EXEC_QUEUE",
+   "value": 6,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:5627",
+     "kind": "reject",
+     "code": "if (sp.property > DRM_XE_EXEC_QUEUE_SET_DISABLE_STATE_CACHE_PERF_FIX || sp.pad) return EINVAL;"
+    },
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:5649",
+     "kind": "use",
+     "code": "case DRM_XE_EXEC_QUEUE_SET_DISABLE_STATE_CACHE_PERF_FIX:"
+    }
+   ],
+   "why": "",
+   "comments": [
+    "kernel/IntelXe/xe_core.cpp:323 (file scope)"
+   ],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/vulkan/xe/anv_queue.c:122"
+     ]
+    }
+   ],
+   "doc": "Set the queue to enable render color cache keying on BTP+BTI instead of just BTI (only valid for render queues).",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_EXEC_QUEUE_LOW_LATENCY_HINT",
+   "area": "EXEC_QUEUE",
+   "value": 1,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:5882",
+     "kind": "reject",
+     "code": "if ((e->flags & ~(uint32_t)DRM_XE_EXEC_QUEUE_LOW_LATENCY_HINT) || e->reserved[0] || e->reserved[1]) return EINVAL;"
+    },
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:5899",
+     "kind": "use",
+     "code": "props.lowLatency = e->flags & DRM_XE_EXEC_QUEUE_LOW_LATENCY_HINT;"
+    }
+   ],
+   "why": "",
+   "comments": [
+    "kernel/IntelXe/xe_core.cpp:322 (file scope)",
+    "kernel/IntelXe/xe_core.cpp:1858 (queueRegister)",
+    "kernel/IntelXe/xe_core.cpp:3427 (deviceQuery)"
+   ],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/vulkan/xe/anv_queue.c:153"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:1720"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_exec_queue_create",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_EXEC_QUEUE_GET_PROPERTY_BAN",
+   "area": "EXEC_QUEUE",
+   "value": 0,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:5964",
+     "kind": "use",
+     "code": "if (p->property != DRM_XE_EXEC_QUEUE_GET_PROPERTY_BAN) return EINVAL;"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/vulkan/anv_nvmtl_recover.c:52",
+      "src/intel/vulkan/xe/anv_device.c:186"
+     ]
+    },
+    {
+     "consumer": "iris (Mesa)",
+     "kind": "future",
+     "feature": "native OpenGL via iris",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/gallium/drivers/iris/xe/iris_kmd_backend.c:247"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:1396"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_exec_queue_get_property",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_EXEC_QUEUE_BAN_REASON_GPU_HANG",
+   "area": "EXEC_QUEUE",
+   "value": 1,
+   "status": "unverified",
+   "by": null,
+   "uses": [],
+   "why": "no use by name or by value 1; no dispatch switch, field match or proof decides it",
+   "comments": [],
+   "consumers": [],
+   "doc": "banned due to GPU hang/timeout",
+   "need": "not_needed",
+   "need_why": "no consumer found in: Mesa ANV / intel common (as run on macOS) @ a3ad934832bb (193 files); Metal plugin / VideoToolbox (this repository) @ 030bfaed7ca8 (44 files); iris (Mesa) @ a3ad934832bb (57 files); Mesa intel/perf @ a3ad934832bb (18 files); Intel compute-runtime (NEO) @ 248eb54f8441 (137 files)"
+  },
+  {
+   "token": "DRM_XE_EXEC_QUEUE_BAN_REASON_PAGE_OFFLINE",
+   "area": "EXEC_QUEUE",
+   "value": 2,
+   "status": "unverified",
+   "by": null,
+   "uses": [],
+   "why": "no use by name or by value 2; no dispatch switch, field match or proof decides it",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:1407"
+     ]
+    }
+   ],
+   "doc": "banned due to memory page offline",
+   "need": "needed_future",
+   "need_why": "only for: OpenCL / oneAPI (Intel compute-runtime)"
+  },
+  {
+   "token": "DRM_XE_SYNC_TYPE_SYNCOBJ",
+   "area": "syncs (EXEC / VM_BIND)",
+   "value": 0,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3561",
+     "kind": "use",
+     "code": "if (s.type != DRM_XE_SYNC_TYPE_SYNCOBJ && s.type != DRM_XE_SYNC_TYPE_TIMELINE_SYNCOBJ) return EINVAL;"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/vulkan/xe/anv_batch_chain.c:45",
+      "src/intel/vulkan/xe/anv_queue.c:248",
+      "src/intel/common/xe/intel_queue.c:21"
+     ]
+    },
+    {
+     "consumer": "iris (Mesa)",
+     "kind": "future",
+     "feature": "native OpenGL via iris",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/gallium/drivers/iris/xe/iris_kmd_backend.c:419"
+     ]
+    },
+    {
+     "consumer": "Mesa intel/perf",
+     "kind": "future",
+     "feature": "GPU profiler (OA metrics, VK_KHR_performance_query)",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/perf/xe/intel_perf.c:370"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_sync",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_SYNC_TYPE_TIMELINE_SYNCOBJ",
+   "area": "syncs (EXEC / VM_BIND)",
+   "value": 1,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3561",
+     "kind": "use",
+     "code": "if (s.type != DRM_XE_SYNC_TYPE_SYNCOBJ && s.type != DRM_XE_SYNC_TYPE_TIMELINE_SYNCOBJ) return EINVAL;"
+    },
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3563",
+     "kind": "use",
+     "code": "*point = s.type == DRM_XE_SYNC_TYPE_TIMELINE_SYNCOBJ ? s.timeline_value : 0;"
+    },
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3651",
+     "kind": "use",
+     "code": "if (s.type == DRM_XE_SYNC_TYPE_TIMELINE_SYNCOBJ) {"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/vulkan/xe/anv_batch_chain.c:44",
+      "src/intel/vulkan/xe/anv_kmd_backend.c:287"
+     ]
+    },
+    {
+     "consumer": "iris (Mesa)",
+     "kind": "future",
+     "feature": "native OpenGL via iris",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/gallium/drivers/iris/xe/iris_kmd_backend.c:139"
+     ]
+    },
+    {
+     "consumer": "Mesa intel/perf",
+     "kind": "future",
+     "feature": "GPU profiler (OA metrics, VK_KHR_performance_query)",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/perf/xe/intel_perf.c:264"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_sync",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_SYNC_TYPE_USER_FENCE",
+   "area": "syncs (EXEC / VM_BIND)",
+   "value": 2,
+   "status": "rejected",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3560",
+     "kind": "reject",
+     "code": "if (s.type == DRM_XE_SYNC_TYPE_USER_FENCE) return EINVAL;"
+    },
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3648",
+     "kind": "reject",
+     "code": "if (s.type == DRM_XE_SYNC_TYPE_USER_FENCE) { err = EINVAL; break; }"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:1236",
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe_debugger.cpp:267"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_sync",
+   "need": "needed_future",
+   "need_why": "only for: OpenCL / oneAPI (Intel compute-runtime)"
+  },
+  {
+   "token": "DRM_XE_SYNC_FLAG_SIGNAL",
+   "area": "syncs (EXEC / VM_BIND)",
+   "value": 1,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3612",
+     "kind": "use",
+     "code": "if (s.flags & DRM_XE_SYNC_FLAG_SIGNAL) continue;"
+    },
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3647",
+     "kind": "use",
+     "code": "if (!(s.flags & DRM_XE_SYNC_FLAG_SIGNAL)) continue;"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/vulkan/xe/anv_batch_chain.c:46",
+      "src/intel/vulkan/xe/anv_kmd_backend.c:288",
+      "src/intel/vulkan/xe/anv_queue.c:249"
+     ]
+    },
+    {
+     "consumer": "iris (Mesa)",
+     "kind": "future",
+     "feature": "native OpenGL via iris",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/gallium/drivers/iris/xe/iris_kmd_backend.c:140"
+     ]
+    },
+    {
+     "consumer": "Mesa intel/perf",
+     "kind": "future",
+     "feature": "GPU profiler (OA metrics, VK_KHR_performance_query)",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/perf/xe/intel_perf.c:265"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:1237",
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe_debugger.cpp:268"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_sync",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_MAX_SYNCS",
+   "area": "syncs (EXEC / VM_BIND)",
+   "value": 1024,
+   "status": "implemented",
+   "by": "value 1024",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3545",
+     "kind": "use",
+     "code": "if (num > 1024) return EINVAL;"
+    }
+   ],
+   "why": "",
+   "comments": [
+    "kernel/IntelXe/xe_core.cpp:3539 (file scope)"
+   ],
+   "consumers": [],
+   "doc": "value of a field in struct drm_xe_exec",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_UFENCE_WAIT_OP_EQ",
+   "area": "WAIT_USER_FENCE",
+   "value": 0,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_WAIT_USER_FENCE, which our dispatch rejects",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:1927",
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe_debugger.cpp:298"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_wait_user_fence",
+   "need": "needed_future",
+   "need_why": "only for: OpenCL / oneAPI (Intel compute-runtime)"
+  },
+  {
+   "token": "DRM_XE_UFENCE_WAIT_OP_NEQ",
+   "area": "WAIT_USER_FENCE",
+   "value": 1,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_WAIT_USER_FENCE, which our dispatch rejects",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:873"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_wait_user_fence",
+   "need": "needed_future",
+   "need_why": "only for: OpenCL / oneAPI (Intel compute-runtime)"
+  },
+  {
+   "token": "DRM_XE_UFENCE_WAIT_OP_GT",
+   "area": "WAIT_USER_FENCE",
+   "value": 2,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_WAIT_USER_FENCE, which our dispatch rejects",
+   "comments": [],
+   "consumers": [],
+   "doc": "value of a field in struct drm_xe_wait_user_fence",
+   "need": "not_needed",
+   "need_why": "no consumer found in: Mesa ANV / intel common (as run on macOS) @ a3ad934832bb (193 files); Metal plugin / VideoToolbox (this repository) @ 030bfaed7ca8 (44 files); iris (Mesa) @ a3ad934832bb (57 files); Mesa intel/perf @ a3ad934832bb (18 files); Intel compute-runtime (NEO) @ 248eb54f8441 (137 files)"
+  },
+  {
+   "token": "DRM_XE_UFENCE_WAIT_OP_GTE",
+   "area": "WAIT_USER_FENCE",
+   "value": 3,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_WAIT_USER_FENCE, which our dispatch rejects",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:857"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_wait_user_fence",
+   "need": "needed_future",
+   "need_why": "only for: OpenCL / oneAPI (Intel compute-runtime)"
+  },
+  {
+   "token": "DRM_XE_UFENCE_WAIT_OP_LT",
+   "area": "WAIT_USER_FENCE",
+   "value": 4,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_WAIT_USER_FENCE, which our dispatch rejects",
+   "comments": [],
+   "consumers": [],
+   "doc": "value of a field in struct drm_xe_wait_user_fence",
+   "need": "not_needed",
+   "need_why": "no consumer found in: Mesa ANV / intel common (as run on macOS) @ a3ad934832bb (193 files); Metal plugin / VideoToolbox (this repository) @ 030bfaed7ca8 (44 files); iris (Mesa) @ a3ad934832bb (57 files); Mesa intel/perf @ a3ad934832bb (18 files); Intel compute-runtime (NEO) @ 248eb54f8441 (137 files)"
+  },
+  {
+   "token": "DRM_XE_UFENCE_WAIT_OP_LTE",
+   "area": "WAIT_USER_FENCE",
+   "value": 5,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_WAIT_USER_FENCE, which our dispatch rejects",
+   "comments": [],
+   "consumers": [],
+   "doc": "value of a field in struct drm_xe_wait_user_fence",
+   "need": "not_needed",
+   "need_why": "no consumer found in: Mesa ANV / intel common (as run on macOS) @ a3ad934832bb (193 files); Metal plugin / VideoToolbox (this repository) @ 030bfaed7ca8 (44 files); iris (Mesa) @ a3ad934832bb (57 files); Mesa intel/perf @ a3ad934832bb (18 files); Intel compute-runtime (NEO) @ 248eb54f8441 (137 files)"
+  },
+  {
+   "token": "DRM_XE_UFENCE_WAIT_FLAG_ABSTIME",
+   "area": "WAIT_USER_FENCE",
+   "value": 1,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_WAIT_USER_FENCE, which our dispatch rejects",
+   "comments": [],
+   "consumers": [],
+   "doc": "value of a field in struct drm_xe_wait_user_fence",
+   "need": "not_needed",
+   "need_why": "no consumer found in: Mesa ANV / intel common (as run on macOS) @ a3ad934832bb (193 files); Metal plugin / VideoToolbox (this repository) @ 030bfaed7ca8 (44 files); iris (Mesa) @ a3ad934832bb (57 files); Mesa intel/perf @ a3ad934832bb (18 files); Intel compute-runtime (NEO) @ 248eb54f8441 (137 files)"
+  },
+  {
+   "token": "DRM_XE_OA_CAPS_BASE",
+   "area": "OBSERVATION: OA / EU stall",
+   "value": 1,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_OBSERVATION, which our dispatch rejects",
+   "comments": [],
+   "consumers": [],
+   "doc": "value of a field in struct drm_xe_oa_unit",
+   "need": "not_needed",
+   "need_why": "no consumer found in: Mesa ANV / intel common (as run on macOS) @ a3ad934832bb (193 files); Metal plugin / VideoToolbox (this repository) @ 030bfaed7ca8 (44 files); iris (Mesa) @ a3ad934832bb (57 files); Mesa intel/perf @ a3ad934832bb (18 files); Intel compute-runtime (NEO) @ 248eb54f8441 (137 files)"
+  },
+  {
+   "token": "DRM_XE_OA_CAPS_SYNCS",
+   "area": "OBSERVATION: OA / EU stall",
+   "value": 2,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_OBSERVATION, which our dispatch rejects",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa intel/perf",
+     "kind": "future",
+     "feature": "GPU profiler (OA metrics, VK_KHR_performance_query)",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/perf/xe/intel_perf.c:165"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_oa_unit",
+   "need": "needed_future",
+   "need_why": "only for: GPU profiler (OA metrics, VK_KHR_performance_query)"
+  },
+  {
+   "token": "DRM_XE_OA_CAPS_OA_BUFFER_SIZE",
+   "area": "OBSERVATION: OA / EU stall",
+   "value": 4,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_OBSERVATION, which our dispatch rejects",
+   "comments": [],
+   "consumers": [],
+   "doc": "value of a field in struct drm_xe_oa_unit",
+   "need": "not_needed",
+   "need_why": "no consumer found in: Mesa ANV / intel common (as run on macOS) @ a3ad934832bb (193 files); Metal plugin / VideoToolbox (this repository) @ 030bfaed7ca8 (44 files); iris (Mesa) @ a3ad934832bb (57 files); Mesa intel/perf @ a3ad934832bb (18 files); Intel compute-runtime (NEO) @ 248eb54f8441 (137 files)"
+  },
+  {
+   "token": "DRM_XE_OA_CAPS_WAIT_NUM_REPORTS",
+   "area": "OBSERVATION: OA / EU stall",
+   "value": 8,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_OBSERVATION, which our dispatch rejects",
+   "comments": [],
+   "consumers": [],
+   "doc": "value of a field in struct drm_xe_oa_unit",
+   "need": "not_needed",
+   "need_why": "no consumer found in: Mesa ANV / intel common (as run on macOS) @ a3ad934832bb (193 files); Metal plugin / VideoToolbox (this repository) @ 030bfaed7ca8 (44 files); iris (Mesa) @ a3ad934832bb (57 files); Mesa intel/perf @ a3ad934832bb (18 files); Intel compute-runtime (NEO) @ 248eb54f8441 (137 files)"
+  },
+  {
+   "token": "DRM_XE_OA_CAPS_OAM",
+   "area": "OBSERVATION: OA / EU stall",
+   "value": 16,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_OBSERVATION, which our dispatch rejects",
+   "comments": [],
+   "consumers": [],
+   "doc": "value of a field in struct drm_xe_oa_unit",
+   "need": "not_needed",
+   "need_why": "no consumer found in: Mesa ANV / intel common (as run on macOS) @ a3ad934832bb (193 files); Metal plugin / VideoToolbox (this repository) @ 030bfaed7ca8 (44 files); iris (Mesa) @ a3ad934832bb (57 files); Mesa intel/perf @ a3ad934832bb (18 files); Intel compute-runtime (NEO) @ 248eb54f8441 (137 files)"
+  },
+  {
+   "token": "DRM_XE_OA_CAPS_OA_UNIT_GT_ID",
+   "area": "OBSERVATION: OA / EU stall",
+   "value": 32,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_OBSERVATION, which our dispatch rejects",
+   "comments": [],
+   "consumers": [],
+   "doc": "value of a field in struct drm_xe_oa_unit",
+   "need": "not_needed",
+   "need_why": "no consumer found in: Mesa ANV / intel common (as run on macOS) @ a3ad934832bb (193 files); Metal plugin / VideoToolbox (this repository) @ 030bfaed7ca8 (44 files); iris (Mesa) @ a3ad934832bb (57 files); Mesa intel/perf @ a3ad934832bb (18 files); Intel compute-runtime (NEO) @ 248eb54f8441 (137 files)"
+  },
+  {
+   "token": "DRM_XE_OA_EXTENSION_SET_PROPERTY",
+   "area": "OBSERVATION: OA / EU stall",
+   "value": 0,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_OBSERVATION, which our dispatch rejects",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa intel/perf",
+     "kind": "future",
+     "feature": "GPU profiler (OA metrics, VK_KHR_performance_query)",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/perf/xe/intel_perf.c:230"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_query_oa_units",
+   "need": "needed_future",
+   "need_why": "only for: GPU profiler (OA metrics, VK_KHR_performance_query)"
+  },
+  {
+   "token": "DRM_XE_OA_FORMAT_MASK_FMT_TYPE",
+   "area": "OBSERVATION: OA / EU stall",
+   "value": 255,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_OBSERVATION, which our dispatch rejects",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa intel/perf",
+     "kind": "future",
+     "feature": "GPU profiler (OA metrics, VK_KHR_performance_query)",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/perf/xe/intel_perf.c:94"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_query_oa_units",
+   "need": "needed_future",
+   "need_why": "only for: GPU profiler (OA metrics, VK_KHR_performance_query)"
+  },
+  {
+   "token": "DRM_XE_OA_FORMAT_MASK_COUNTER_SEL",
+   "area": "OBSERVATION: OA / EU stall",
+   "value": 65280,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_OBSERVATION, which our dispatch rejects",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa intel/perf",
+     "kind": "future",
+     "feature": "GPU profiler (OA metrics, VK_KHR_performance_query)",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/perf/xe/intel_perf.c:95"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_query_oa_units",
+   "need": "needed_future",
+   "need_why": "only for: GPU profiler (OA metrics, VK_KHR_performance_query)"
+  },
+  {
+   "token": "DRM_XE_OA_FORMAT_MASK_COUNTER_SIZE",
+   "area": "OBSERVATION: OA / EU stall",
+   "value": 16711680,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_OBSERVATION, which our dispatch rejects",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa intel/perf",
+     "kind": "future",
+     "feature": "GPU profiler (OA metrics, VK_KHR_performance_query)",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/perf/xe/intel_perf.c:96"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_query_oa_units",
+   "need": "needed_future",
+   "need_why": "only for: GPU profiler (OA metrics, VK_KHR_performance_query)"
+  },
+  {
+   "token": "DRM_XE_OA_FORMAT_MASK_BC_REPORT",
+   "area": "OBSERVATION: OA / EU stall",
+   "value": 4278190080,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_OBSERVATION, which our dispatch rejects",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa intel/perf",
+     "kind": "future",
+     "feature": "GPU profiler (OA metrics, VK_KHR_performance_query)",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/perf/xe/intel_perf.c:97"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_query_oa_units",
+   "need": "needed_future",
+   "need_why": "only for: GPU profiler (OA metrics, VK_KHR_performance_query)"
+  },
+  {
+   "token": "DRM_XE_OASTATUS_MMIO_TRG_Q_FULL",
+   "area": "OBSERVATION: OA / EU stall",
+   "value": 8,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_OBSERVATION, which our dispatch rejects",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa intel/perf",
+     "kind": "future",
+     "feature": "GPU profiler (OA metrics, VK_KHR_performance_query)",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/perf/xe/intel_perf.c:429"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_oa_stream_status",
+   "need": "needed_future",
+   "need_why": "only for: GPU profiler (OA metrics, VK_KHR_performance_query)"
+  },
+  {
+   "token": "DRM_XE_OASTATUS_COUNTER_OVERFLOW",
+   "area": "OBSERVATION: OA / EU stall",
+   "value": 4,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_OBSERVATION, which our dispatch rejects",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa intel/perf",
+     "kind": "future",
+     "feature": "GPU profiler (OA metrics, VK_KHR_performance_query)",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/perf/xe/intel_perf.c:427"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_oa_stream_status",
+   "need": "needed_future",
+   "need_why": "only for: GPU profiler (OA metrics, VK_KHR_performance_query)"
+  },
+  {
+   "token": "DRM_XE_OASTATUS_BUFFER_OVERFLOW",
+   "area": "OBSERVATION: OA / EU stall",
+   "value": 2,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_OBSERVATION, which our dispatch rejects",
+   "comments": [],
+   "consumers": [],
+   "doc": "value of a field in struct drm_xe_oa_stream_status",
+   "need": "not_needed",
+   "need_why": "no consumer found in: Mesa ANV / intel common (as run on macOS) @ a3ad934832bb (193 files); Metal plugin / VideoToolbox (this repository) @ 030bfaed7ca8 (44 files); iris (Mesa) @ a3ad934832bb (57 files); Mesa intel/perf @ a3ad934832bb (18 files); Intel compute-runtime (NEO) @ 248eb54f8441 (137 files)"
+  },
+  {
+   "token": "DRM_XE_OASTATUS_REPORT_LOST",
+   "area": "OBSERVATION: OA / EU stall",
+   "value": 1,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_OBSERVATION, which our dispatch rejects",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa intel/perf",
+     "kind": "future",
+     "feature": "GPU profiler (OA metrics, VK_KHR_performance_query)",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/perf/xe/intel_perf.c:425"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_oa_stream_status",
+   "need": "needed_future",
+   "need_why": "only for: GPU profiler (OA metrics, VK_KHR_performance_query)"
+  },
+  {
+   "token": "DRM_XE_PXP_HWDRM_DEFAULT_SESSION",
+   "area": "PXP",
+   "value": 15,
+   "status": "unverified",
+   "by": null,
+   "uses": [],
+   "why": "no use by name or by value 15; no dispatch switch, field match or proof decides it",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/vulkan/xe/anv_device.c:62"
+     ]
+    }
+   ],
+   "doc": "",
+   "need": "not_needed",
+   "need_why": "Linux-only concept: PXP protected content (Linux/Windows DRM content protection; no macOS path)"
+  },
+  {
+   "token": "DRM_XE_EU_STALL_EXTENSION_SET_PROPERTY",
+   "area": "OBSERVATION: OA / EU stall",
+   "value": 0,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_OBSERVATION, which our dispatch rejects",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe_perf.cpp:104"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_oa_stream_info",
+   "need": "needed_future",
+   "need_why": "only for: OpenCL / oneAPI (Intel compute-runtime)"
+  },
+  {
+   "token": "DRM_XE_EU_STALL_CAPS_BASE",
+   "area": "OBSERVATION: OA / EU stall",
+   "value": 1,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_OBSERVATION, which our dispatch rejects",
+   "comments": [],
+   "consumers": [],
+   "doc": "value of a field in struct drm_xe_query_eu_stall",
+   "need": "not_needed",
+   "need_why": "no consumer found in: Mesa ANV / intel common (as run on macOS) @ a3ad934832bb (193 files); Metal plugin / VideoToolbox (this repository) @ 030bfaed7ca8 (44 files); iris (Mesa) @ a3ad934832bb (57 files); Mesa intel/perf @ a3ad934832bb (18 files); Intel compute-runtime (NEO) @ 248eb54f8441 (137 files)"
+  },
+  {
+   "token": "DRM_XE_MEM_RANGE_ATTR_PREFERRED_LOC",
+   "area": "MADVISE / memory ranges",
+   "value": 0,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_MADVISE, DRM_IOCTL_XE_VM_QUERY_MEM_RANGE_ATTRS, which our dispatch rejects",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:84"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_madvise",
+   "need": "needed_future",
+   "need_why": "only for: OpenCL / oneAPI (Intel compute-runtime)"
+  },
+  {
+   "token": "DRM_XE_MEM_RANGE_ATTR_ATOMIC",
+   "area": "MADVISE / memory ranges",
+   "value": 1,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_MADVISE, DRM_IOCTL_XE_VM_QUERY_MEM_RANGE_ATTRS, which our dispatch rejects",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:86"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_madvise",
+   "need": "needed_future",
+   "need_why": "only for: OpenCL / oneAPI (Intel compute-runtime)"
+  },
+  {
+   "token": "DRM_XE_MEM_RANGE_ATTR_PAT",
+   "area": "MADVISE / memory ranges",
+   "value": 2,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_MADVISE, DRM_IOCTL_XE_VM_QUERY_MEM_RANGE_ATTRS, which our dispatch rejects",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:88"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_madvise",
+   "need": "needed_future",
+   "need_why": "only for: OpenCL / oneAPI (Intel compute-runtime)"
+  },
+  {
+   "token": "DRM_XE_VMA_ATTR_PURGEABLE_STATE",
+   "area": "MADVISE / memory ranges",
+   "value": 3,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_MADVISE, DRM_IOCTL_XE_VM_QUERY_MEM_RANGE_ATTRS, which our dispatch rejects",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "iris (Mesa)",
+     "kind": "future",
+     "feature": "native OpenGL via iris",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/gallium/drivers/iris/xe/iris_kmd_backend.c:218"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_madvise",
+   "need": "needed_future",
+   "need_why": "only for: native OpenGL via iris"
+  },
+  {
+   "token": "DRM_XE_PREFERRED_LOC_DEFAULT_DEVICE",
+   "area": "MADVISE / memory ranges",
+   "value": 0,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_MADVISE, DRM_IOCTL_XE_VM_QUERY_MEM_RANGE_ATTRS, which our dispatch rejects",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:1459"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_madvise",
+   "need": "needed_future",
+   "need_why": "only for: OpenCL / oneAPI (Intel compute-runtime)"
+  },
+  {
+   "token": "DRM_XE_PREFERRED_LOC_DEFAULT_SYSTEM",
+   "area": "MADVISE / memory ranges",
+   "value": -1,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_MADVISE, DRM_IOCTL_XE_VM_QUERY_MEM_RANGE_ATTRS, which our dispatch rejects",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:1461"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_madvise",
+   "need": "needed_future",
+   "need_why": "only for: OpenCL / oneAPI (Intel compute-runtime)"
+  },
+  {
+   "token": "DRM_XE_MIGRATE_ALL_PAGES",
+   "area": "MADVISE / memory ranges",
+   "value": 0,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_MADVISE, DRM_IOCTL_XE_VM_QUERY_MEM_RANGE_ATTRS, which our dispatch rejects",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:1463"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_madvise",
+   "need": "needed_future",
+   "need_why": "only for: OpenCL / oneAPI (Intel compute-runtime)"
+  },
+  {
+   "token": "DRM_XE_MIGRATE_ONLY_SYSTEM_PAGES",
+   "area": "MADVISE / memory ranges",
+   "value": 1,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_MADVISE, DRM_IOCTL_XE_VM_QUERY_MEM_RANGE_ATTRS, which our dispatch rejects",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:1465"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_madvise",
+   "need": "needed_future",
+   "need_why": "only for: OpenCL / oneAPI (Intel compute-runtime)"
+  },
+  {
+   "token": "DRM_XE_ATOMIC_UNDEFINED",
+   "area": "MADVISE / memory ranges",
+   "value": 0,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_MADVISE, DRM_IOCTL_XE_VM_QUERY_MEM_RANGE_ATTRS, which our dispatch rejects",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:1447"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_madvise",
+   "need": "needed_future",
+   "need_why": "only for: OpenCL / oneAPI (Intel compute-runtime)"
+  },
+  {
+   "token": "DRM_XE_ATOMIC_DEVICE",
+   "area": "MADVISE / memory ranges",
+   "value": 1,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_MADVISE, DRM_IOCTL_XE_VM_QUERY_MEM_RANGE_ATTRS, which our dispatch rejects",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:1449"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_madvise",
+   "need": "needed_future",
+   "need_why": "only for: OpenCL / oneAPI (Intel compute-runtime)"
+  },
+  {
+   "token": "DRM_XE_ATOMIC_GLOBAL",
+   "area": "MADVISE / memory ranges",
+   "value": 2,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_MADVISE, DRM_IOCTL_XE_VM_QUERY_MEM_RANGE_ATTRS, which our dispatch rejects",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:1451"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_madvise",
+   "need": "needed_future",
+   "need_why": "only for: OpenCL / oneAPI (Intel compute-runtime)"
+  },
+  {
+   "token": "DRM_XE_ATOMIC_CPU",
+   "area": "MADVISE / memory ranges",
+   "value": 3,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_MADVISE, DRM_IOCTL_XE_VM_QUERY_MEM_RANGE_ATTRS, which our dispatch rejects",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:1453"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_madvise",
+   "need": "needed_future",
+   "need_why": "only for: OpenCL / oneAPI (Intel compute-runtime)"
+  },
+  {
+   "token": "DRM_XE_VMA_PURGEABLE_STATE_WILLNEED",
+   "area": "MADVISE / memory ranges",
+   "value": 0,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_MADVISE, DRM_IOCTL_XE_VM_QUERY_MEM_RANGE_ATTRS, which our dispatch rejects",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "iris (Mesa)",
+     "kind": "future",
+     "feature": "native OpenGL via iris",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/gallium/drivers/iris/xe/iris_kmd_backend.c:220"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_madvise",
+   "need": "needed_future",
+   "need_why": "only for: native OpenGL via iris"
+  },
+  {
+   "token": "DRM_XE_VMA_PURGEABLE_STATE_DONTNEED",
+   "area": "MADVISE / memory ranges",
+   "value": 1,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_MADVISE, DRM_IOCTL_XE_VM_QUERY_MEM_RANGE_ATTRS, which our dispatch rejects",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "iris (Mesa)",
+     "kind": "future",
+     "feature": "native OpenGL via iris",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/gallium/drivers/iris/xe/iris_kmd_backend.c:221"
+     ]
+    }
+   ],
+   "doc": "value of a field in struct drm_xe_madvise",
+   "need": "needed_future",
+   "need_why": "only for: native OpenGL via iris"
+  },
+  {
+   "token": "DRM_XE_RAS_ERROR_SEVERITY_NAMES",
+   "area": "RAS",
+   "value": null,
+   "status": "unverified",
+   "by": null,
+   "uses": [],
+   "why": "no use by name (value not resolvable); no dispatch switch, field match or proof decides it",
+   "comments": [],
+   "consumers": [],
+   "doc": "",
+   "need": "not_needed",
+   "need_why": "Linux-only concept: RAS error reporting over Linux netlink (drm_ras), not an ioctl a macOS client calls"
+  },
+  {
+   "token": "DRM_XE_RAS_ERROR_COMPONENT_NAMES",
+   "area": "RAS",
+   "value": null,
+   "status": "unverified",
+   "by": null,
+   "uses": [],
+   "why": "no use by name (value not resolvable); no dispatch switch, field match or proof decides it",
+   "comments": [],
+   "consumers": [],
+   "doc": "",
+   "need": "not_needed",
+   "need_why": "Linux-only concept: RAS error reporting over Linux netlink (drm_ras), not an ioctl a macOS client calls"
+  },
+  {
+   "token": "DRM_XE_MEM_REGION_CLASS_SYSMEM",
+   "area": "DEVICE_QUERY contents",
+   "value": 0,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3407",
+     "kind": "use",
+     "code": "r.m[0].mem_class = DRM_XE_MEM_REGION_CLASS_SYSMEM;"
+    }
+   ],
+   "why": "",
+   "comments": [
+    "kernel/IntelXe/xe_core.cpp:162 (file scope)"
+   ],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/dev/xe/intel_device_info.c:107"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:505"
+     ]
+    }
+   ],
+   "doc": "",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_MEM_REGION_CLASS_VRAM",
+   "area": "DEVICE_QUERY contents",
+   "value": 1,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:3412",
+     "kind": "use",
+     "code": "r.m[1].mem_class = DRM_XE_MEM_REGION_CLASS_VRAM;"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/dev/xe/intel_device_info.c:121"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe.cpp:1455"
+     ]
+    }
+   ],
+   "doc": "",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_OBSERVATION_TYPE_OA",
+   "area": "OBSERVATION: OA / EU stall",
+   "value": 0,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_OBSERVATION, which our dispatch rejects",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa intel/perf",
+     "kind": "future",
+     "feature": "GPU profiler (OA metrics, VK_KHR_performance_query)",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/perf/xe/intel_perf.c:185"
+     ]
+    }
+   ],
+   "doc": "",
+   "need": "needed_future",
+   "need_why": "only for: GPU profiler (OA metrics, VK_KHR_performance_query)"
+  },
+  {
+   "token": "DRM_XE_OBSERVATION_TYPE_EU_STALL",
+   "area": "OBSERVATION: OA / EU stall",
+   "value": 1,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_OBSERVATION, which our dispatch rejects",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa intel/perf",
+     "kind": "future",
+     "feature": "GPU profiler (OA metrics, VK_KHR_performance_query)",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/perf/xe/intel_perf.c:503"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe_perf.cpp:96"
+     ]
+    }
+   ],
+   "doc": "",
+   "need": "needed_future",
+   "need_why": "only for: GPU profiler (OA metrics, VK_KHR_performance_query); OpenCL / oneAPI (Intel compute-runtime)"
+  },
+  {
+   "token": "DRM_XE_OBSERVATION_OP_STREAM_OPEN",
+   "area": "OBSERVATION: OA / EU stall",
+   "value": 0,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_OBSERVATION, which our dispatch rejects",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa intel/perf",
+     "kind": "future",
+     "feature": "GPU profiler (OA metrics, VK_KHR_performance_query)",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/perf/xe/intel_perf.c:260"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe_perf.cpp:97"
+     ]
+    }
+   ],
+   "doc": "",
+   "need": "needed_future",
+   "need_why": "only for: GPU profiler (OA metrics, VK_KHR_performance_query); OpenCL / oneAPI (Intel compute-runtime)"
+  },
+  {
+   "token": "DRM_XE_OBSERVATION_OP_ADD_CONFIG",
+   "area": "OBSERVATION: OA / EU stall",
+   "value": 1,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_OBSERVATION, which our dispatch rejects",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa intel/perf",
+     "kind": "future",
+     "feature": "GPU profiler (OA metrics, VK_KHR_performance_query)",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/perf/xe/intel_perf.c:186"
+     ]
+    }
+   ],
+   "doc": "",
+   "need": "needed_future",
+   "need_why": "only for: GPU profiler (OA metrics, VK_KHR_performance_query)"
+  },
+  {
+   "token": "DRM_XE_OBSERVATION_OP_REMOVE_CONFIG",
+   "area": "OBSERVATION: OA / EU stall",
+   "value": 2,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_OBSERVATION, which our dispatch rejects",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa intel/perf",
+     "kind": "future",
+     "feature": "GPU profiler (OA metrics, VK_KHR_performance_query)",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/perf/xe/intel_perf.c:216"
+     ]
+    }
+   ],
+   "doc": "",
+   "need": "needed_future",
+   "need_why": "only for: GPU profiler (OA metrics, VK_KHR_performance_query)"
+  },
+  {
+   "token": "DRM_XE_OA_UNIT_TYPE_OAG",
+   "area": "OBSERVATION: OA / EU stall",
+   "value": 0,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_OBSERVATION, which our dispatch rejects",
+   "comments": [],
+   "consumers": [],
+   "doc": "",
+   "need": "not_needed",
+   "need_why": "no consumer found in: Mesa ANV / intel common (as run on macOS) @ a3ad934832bb (193 files); Metal plugin / VideoToolbox (this repository) @ 030bfaed7ca8 (44 files); iris (Mesa) @ a3ad934832bb (57 files); Mesa intel/perf @ a3ad934832bb (18 files); Intel compute-runtime (NEO) @ 248eb54f8441 (137 files)"
+  },
+  {
+   "token": "DRM_XE_OA_UNIT_TYPE_OAM",
+   "area": "OBSERVATION: OA / EU stall",
+   "value": 1,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_OBSERVATION, which our dispatch rejects",
+   "comments": [],
+   "consumers": [],
+   "doc": "",
+   "need": "not_needed",
+   "need_why": "no consumer found in: Mesa ANV / intel common (as run on macOS) @ a3ad934832bb (193 files); Metal plugin / VideoToolbox (this repository) @ 030bfaed7ca8 (44 files); iris (Mesa) @ a3ad934832bb (57 files); Mesa intel/perf @ a3ad934832bb (18 files); Intel compute-runtime (NEO) @ 248eb54f8441 (137 files)"
+  },
+  {
+   "token": "DRM_XE_OA_UNIT_TYPE_OAM_SAG",
+   "area": "OBSERVATION: OA / EU stall",
+   "value": 2,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_OBSERVATION, which our dispatch rejects",
+   "comments": [],
+   "consumers": [],
+   "doc": "",
+   "need": "not_needed",
+   "need_why": "no consumer found in: Mesa ANV / intel common (as run on macOS) @ a3ad934832bb (193 files); Metal plugin / VideoToolbox (this repository) @ 030bfaed7ca8 (44 files); iris (Mesa) @ a3ad934832bb (57 files); Mesa intel/perf @ a3ad934832bb (18 files); Intel compute-runtime (NEO) @ 248eb54f8441 (137 files)"
+  },
+  {
+   "token": "DRM_XE_OA_UNIT_TYPE_MERT",
+   "area": "OBSERVATION: OA / EU stall",
+   "value": 3,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_OBSERVATION, which our dispatch rejects",
+   "comments": [],
+   "consumers": [],
+   "doc": "",
+   "need": "not_needed",
+   "need_why": "no consumer found in: Mesa ANV / intel common (as run on macOS) @ a3ad934832bb (193 files); Metal plugin / VideoToolbox (this repository) @ 030bfaed7ca8 (44 files); iris (Mesa) @ a3ad934832bb (57 files); Mesa intel/perf @ a3ad934832bb (18 files); Intel compute-runtime (NEO) @ 248eb54f8441 (137 files)"
+  },
+  {
+   "token": "DRM_XE_OA_FMT_TYPE_OAG",
+   "area": "OBSERVATION: OA / EU stall",
+   "value": 0,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_OBSERVATION, which our dispatch rejects",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa intel/perf",
+     "kind": "future",
+     "feature": "GPU profiler (OA metrics, VK_KHR_performance_query)",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/perf/xe/intel_perf.c:104"
+     ]
+    }
+   ],
+   "doc": "",
+   "need": "needed_future",
+   "need_why": "only for: GPU profiler (OA metrics, VK_KHR_performance_query)"
+  },
+  {
+   "token": "DRM_XE_OA_FMT_TYPE_OAR",
+   "area": "OBSERVATION: OA / EU stall",
+   "value": 1,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_OBSERVATION, which our dispatch rejects",
+   "comments": [],
+   "consumers": [],
+   "doc": "",
+   "need": "not_needed",
+   "need_why": "no consumer found in: Mesa ANV / intel common (as run on macOS) @ a3ad934832bb (193 files); Metal plugin / VideoToolbox (this repository) @ 030bfaed7ca8 (44 files); iris (Mesa) @ a3ad934832bb (57 files); Mesa intel/perf @ a3ad934832bb (18 files); Intel compute-runtime (NEO) @ 248eb54f8441 (137 files)"
+  },
+  {
+   "token": "DRM_XE_OA_FMT_TYPE_OAM",
+   "area": "OBSERVATION: OA / EU stall",
+   "value": 2,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_OBSERVATION, which our dispatch rejects",
+   "comments": [],
+   "consumers": [],
+   "doc": "",
+   "need": "not_needed",
+   "need_why": "no consumer found in: Mesa ANV / intel common (as run on macOS) @ a3ad934832bb (193 files); Metal plugin / VideoToolbox (this repository) @ 030bfaed7ca8 (44 files); iris (Mesa) @ a3ad934832bb (57 files); Mesa intel/perf @ a3ad934832bb (18 files); Intel compute-runtime (NEO) @ 248eb54f8441 (137 files)"
+  },
+  {
+   "token": "DRM_XE_OA_FMT_TYPE_OAC",
+   "area": "OBSERVATION: OA / EU stall",
+   "value": 3,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_OBSERVATION, which our dispatch rejects",
+   "comments": [],
+   "consumers": [],
+   "doc": "",
+   "need": "not_needed",
+   "need_why": "no consumer found in: Mesa ANV / intel common (as run on macOS) @ a3ad934832bb (193 files); Metal plugin / VideoToolbox (this repository) @ 030bfaed7ca8 (44 files); iris (Mesa) @ a3ad934832bb (57 files); Mesa intel/perf @ a3ad934832bb (18 files); Intel compute-runtime (NEO) @ 248eb54f8441 (137 files)"
+  },
+  {
+   "token": "DRM_XE_OA_FMT_TYPE_OAM_MPEC",
+   "area": "OBSERVATION: OA / EU stall",
+   "value": 4,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_OBSERVATION, which our dispatch rejects",
+   "comments": [],
+   "consumers": [],
+   "doc": "",
+   "need": "not_needed",
+   "need_why": "no consumer found in: Mesa ANV / intel common (as run on macOS) @ a3ad934832bb (193 files); Metal plugin / VideoToolbox (this repository) @ 030bfaed7ca8 (44 files); iris (Mesa) @ a3ad934832bb (57 files); Mesa intel/perf @ a3ad934832bb (18 files); Intel compute-runtime (NEO) @ 248eb54f8441 (137 files)"
+  },
+  {
+   "token": "DRM_XE_OA_FMT_TYPE_PEC",
+   "area": "OBSERVATION: OA / EU stall",
+   "value": 5,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_OBSERVATION, which our dispatch rejects",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa intel/perf",
+     "kind": "future",
+     "feature": "GPU profiler (OA metrics, VK_KHR_performance_query)",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/perf/xe/intel_perf.c:94"
+     ]
+    }
+   ],
+   "doc": "",
+   "need": "needed_future",
+   "need_why": "only for: GPU profiler (OA metrics, VK_KHR_performance_query)"
+  },
+  {
+   "token": "DRM_XE_OA_PROPERTY_OA_UNIT_ID",
+   "area": "OBSERVATION: OA / EU stall",
+   "value": 1,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_OBSERVATION, which our dispatch rejects",
+   "comments": [],
+   "consumers": [],
+   "doc": "",
+   "need": "not_needed",
+   "need_why": "no consumer found in: Mesa ANV / intel common (as run on macOS) @ a3ad934832bb (193 files); Metal plugin / VideoToolbox (this repository) @ 030bfaed7ca8 (44 files); iris (Mesa) @ a3ad934832bb (57 files); Mesa intel/perf @ a3ad934832bb (18 files); Intel compute-runtime (NEO) @ 248eb54f8441 (137 files)"
+  },
+  {
+   "token": "DRM_XE_OA_PROPERTY_SAMPLE_OA",
+   "area": "OBSERVATION: OA / EU stall",
+   "value": 2,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_OBSERVATION, which our dispatch rejects",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa intel/perf",
+     "kind": "future",
+     "feature": "GPU profiler (OA metrics, VK_KHR_performance_query)",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/perf/xe/intel_perf.c:281"
+     ]
+    }
+   ],
+   "doc": "",
+   "need": "needed_future",
+   "need_why": "only for: GPU profiler (OA metrics, VK_KHR_performance_query)"
+  },
+  {
+   "token": "DRM_XE_OA_PROPERTY_OA_METRIC_SET",
+   "area": "OBSERVATION: OA / EU stall",
+   "value": 3,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_OBSERVATION, which our dispatch rejects",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa intel/perf",
+     "kind": "future",
+     "feature": "GPU profiler (OA metrics, VK_KHR_performance_query)",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/perf/xe/intel_perf.c:282"
+     ]
+    }
+   ],
+   "doc": "",
+   "need": "needed_future",
+   "need_why": "only for: GPU profiler (OA metrics, VK_KHR_performance_query)"
+  },
+  {
+   "token": "DRM_XE_OA_PROPERTY_OA_FORMAT",
+   "area": "OBSERVATION: OA / EU stall",
+   "value": 4,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_OBSERVATION, which our dispatch rejects",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa intel/perf",
+     "kind": "future",
+     "feature": "GPU profiler (OA metrics, VK_KHR_performance_query)",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/perf/xe/intel_perf.c:283"
+     ]
+    }
+   ],
+   "doc": "",
+   "need": "needed_future",
+   "need_why": "only for: GPU profiler (OA metrics, VK_KHR_performance_query)"
+  },
+  {
+   "token": "DRM_XE_OA_PROPERTY_OA_PERIOD_EXPONENT",
+   "area": "OBSERVATION: OA / EU stall",
+   "value": 5,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_OBSERVATION, which our dispatch rejects",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa intel/perf",
+     "kind": "future",
+     "feature": "GPU profiler (OA metrics, VK_KHR_performance_query)",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/perf/xe/intel_perf.c:284"
+     ]
+    }
+   ],
+   "doc": "",
+   "need": "needed_future",
+   "need_why": "only for: GPU profiler (OA metrics, VK_KHR_performance_query)"
+  },
+  {
+   "token": "DRM_XE_OA_PROPERTY_OA_DISABLED",
+   "area": "OBSERVATION: OA / EU stall",
+   "value": 6,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_OBSERVATION, which our dispatch rejects",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa intel/perf",
+     "kind": "future",
+     "feature": "GPU profiler (OA metrics, VK_KHR_performance_query)",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/perf/xe/intel_perf.c:280"
+     ]
+    }
+   ],
+   "doc": "",
+   "need": "needed_future",
+   "need_why": "only for: GPU profiler (OA metrics, VK_KHR_performance_query)"
+  },
+  {
+   "token": "DRM_XE_OA_PROPERTY_EXEC_QUEUE_ID",
+   "area": "OBSERVATION: OA / EU stall",
+   "value": 7,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_OBSERVATION, which our dispatch rejects",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa intel/perf",
+     "kind": "future",
+     "feature": "GPU profiler (OA metrics, VK_KHR_performance_query)",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/perf/xe/intel_perf.c:274"
+     ]
+    }
+   ],
+   "doc": "",
+   "need": "needed_future",
+   "need_why": "only for: GPU profiler (OA metrics, VK_KHR_performance_query)"
+  },
+  {
+   "token": "DRM_XE_OA_PROPERTY_OA_ENGINE_INSTANCE",
+   "area": "OBSERVATION: OA / EU stall",
+   "value": 8,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_OBSERVATION, which our dispatch rejects",
+   "comments": [],
+   "consumers": [],
+   "doc": "",
+   "need": "not_needed",
+   "need_why": "no consumer found in: Mesa ANV / intel common (as run on macOS) @ a3ad934832bb (193 files); Metal plugin / VideoToolbox (this repository) @ 030bfaed7ca8 (44 files); iris (Mesa) @ a3ad934832bb (57 files); Mesa intel/perf @ a3ad934832bb (18 files); Intel compute-runtime (NEO) @ 248eb54f8441 (137 files)"
+  },
+  {
+   "token": "DRM_XE_OA_PROPERTY_NO_PREEMPT",
+   "area": "OBSERVATION: OA / EU stall",
+   "value": 9,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_OBSERVATION, which our dispatch rejects",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa intel/perf",
+     "kind": "future",
+     "feature": "GPU profiler (OA metrics, VK_KHR_performance_query)",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/perf/xe/intel_perf.c:257"
+     ]
+    }
+   ],
+   "doc": "",
+   "need": "needed_future",
+   "need_why": "only for: GPU profiler (OA metrics, VK_KHR_performance_query)"
+  },
+  {
+   "token": "DRM_XE_OA_PROPERTY_NUM_SYNCS",
+   "area": "OBSERVATION: OA / EU stall",
+   "value": 10,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_OBSERVATION, which our dispatch rejects",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa intel/perf",
+     "kind": "future",
+     "feature": "GPU profiler (OA metrics, VK_KHR_performance_query)",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/perf/xe/intel_perf.c:289"
+     ]
+    }
+   ],
+   "doc": "",
+   "need": "needed_future",
+   "need_why": "only for: GPU profiler (OA metrics, VK_KHR_performance_query)"
+  },
+  {
+   "token": "DRM_XE_OA_PROPERTY_SYNCS",
+   "area": "OBSERVATION: OA / EU stall",
+   "value": 11,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_OBSERVATION, which our dispatch rejects",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa intel/perf",
+     "kind": "future",
+     "feature": "GPU profiler (OA metrics, VK_KHR_performance_query)",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/perf/xe/intel_perf.c:290"
+     ]
+    }
+   ],
+   "doc": "",
+   "need": "needed_future",
+   "need_why": "only for: GPU profiler (OA metrics, VK_KHR_performance_query)"
+  },
+  {
+   "token": "DRM_XE_OA_PROPERTY_OA_BUFFER_SIZE",
+   "area": "OBSERVATION: OA / EU stall",
+   "value": 12,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_OBSERVATION, which our dispatch rejects",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa intel/perf",
+     "kind": "future",
+     "feature": "GPU profiler (OA metrics, VK_KHR_performance_query)",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/perf/xe/intel_perf.c:277"
+     ]
+    }
+   ],
+   "doc": "",
+   "need": "needed_future",
+   "need_why": "only for: GPU profiler (OA metrics, VK_KHR_performance_query)"
+  },
+  {
+   "token": "DRM_XE_OA_PROPERTY_WAIT_NUM_REPORTS",
+   "area": "OBSERVATION: OA / EU stall",
+   "value": 13,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_OBSERVATION, which our dispatch rejects",
+   "comments": [],
+   "consumers": [],
+   "doc": "",
+   "need": "not_needed",
+   "need_why": "no consumer found in: Mesa ANV / intel common (as run on macOS) @ a3ad934832bb (193 files); Metal plugin / VideoToolbox (this repository) @ 030bfaed7ca8 (44 files); iris (Mesa) @ a3ad934832bb (57 files); Mesa intel/perf @ a3ad934832bb (18 files); Intel compute-runtime (NEO) @ 248eb54f8441 (137 files)"
+  },
+  {
+   "token": "DRM_XE_PXP_TYPE_NONE",
+   "area": "PXP",
+   "value": 0,
+   "status": "implemented",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:5641",
+     "kind": "use",
+     "code": "if (sp.value == DRM_XE_PXP_TYPE_NONE) break;"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [],
+   "doc": "",
+   "need": null,
+   "need_why": ""
+  },
+  {
+   "token": "DRM_XE_PXP_TYPE_HWDRM",
+   "area": "PXP",
+   "value": 1,
+   "status": "rejected",
+   "by": "name",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:5642",
+     "kind": "reject",
+     "code": "return sp.value == DRM_XE_PXP_TYPE_HWDRM ? ENODEV : EINVAL;"
+    }
+   ],
+   "why": "",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa ANV / intel common (as run on macOS)",
+     "kind": "now",
+     "feature": null,
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/vulkan/xe/anv_kmd_backend.c:74",
+      "src/intel/vulkan/xe/anv_queue.c:127"
+     ]
+    },
+    {
+     "consumer": "iris (Mesa)",
+     "kind": "future",
+     "feature": "native OpenGL via iris",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/gallium/drivers/iris/xe/iris_batch.c:101",
+      "src/gallium/drivers/iris/xe/iris_kmd_backend.c:49"
+     ]
+    }
+   ],
+   "doc": "",
+   "need": "not_needed",
+   "need_why": "Linux-only concept: PXP protected content (Linux/Windows DRM content protection; no macOS path)"
+  },
+  {
+   "token": "DRM_XE_EU_STALL_PROP_GT_ID",
+   "area": "OBSERVATION: OA / EU stall",
+   "value": 1,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_OBSERVATION, which our dispatch rejects",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa intel/perf",
+     "kind": "future",
+     "feature": "GPU profiler (OA metrics, VK_KHR_performance_query)",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/perf/xe/intel_perf.c:514"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe_perf.cpp:88"
+     ]
+    }
+   ],
+   "doc": "",
+   "need": "needed_future",
+   "need_why": "only for: GPU profiler (OA metrics, VK_KHR_performance_query); OpenCL / oneAPI (Intel compute-runtime)"
+  },
+  {
+   "token": "DRM_XE_EU_STALL_PROP_SAMPLE_RATE",
+   "area": "OBSERVATION: OA / EU stall",
+   "value": 2,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_OBSERVATION, which our dispatch rejects",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa intel/perf",
+     "kind": "future",
+     "feature": "GPU profiler (OA metrics, VK_KHR_performance_query)",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/perf/xe/intel_perf.c:512"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe_perf.cpp:84"
+     ]
+    }
+   ],
+   "doc": "",
+   "need": "needed_future",
+   "need_why": "only for: GPU profiler (OA metrics, VK_KHR_performance_query); OpenCL / oneAPI (Intel compute-runtime)"
+  },
+  {
+   "token": "DRM_XE_EU_STALL_PROP_WAIT_NUM_REPORTS",
+   "area": "OBSERVATION: OA / EU stall",
+   "value": 3,
+   "status": "rejected",
+   "by": "parent ioctl",
+   "uses": [
+    {
+     "at": "kernel/IntelXe/xe_core.cpp:6100",
+     "kind": "reject",
+     "code": "default: return ENOTTY;"
+    }
+   ],
+   "why": "only reachable through DRM_IOCTL_XE_OBSERVATION, which our dispatch rejects",
+   "comments": [],
+   "consumers": [
+    {
+     "consumer": "Mesa intel/perf",
+     "kind": "future",
+     "feature": "GPU profiler (OA metrics, VK_KHR_performance_query)",
+     "commit": "a3ad934832bb",
+     "at": [
+      "src/intel/perf/xe/intel_perf.c:501"
+     ]
+    },
+    {
+     "consumer": "Intel compute-runtime (NEO)",
+     "kind": "future",
+     "feature": "OpenCL / oneAPI (Intel compute-runtime)",
+     "commit": "248eb54f8441",
+     "at": [
+      "shared/source/os_interface/linux/xe/ioctl_helper_xe_perf.cpp:86"
+     ]
+    }
+   ],
+   "doc": "",
+   "need": "needed_future",
+   "need_why": "only for: GPU profiler (OA metrics, VK_KHR_performance_query); OpenCL / oneAPI (Intel compute-runtime)"
+  },
+  {
+   "token": "DRM_XE_RAS_ERR_SEV_CORRECTABLE",
+   "area": "RAS",
+   "value": 0,
+   "status": "unverified",
+   "by": null,
+   "uses": [],
+   "why": "no use by name or by value 0; no dispatch switch, field match or proof decides it",
+   "comments": [],
+   "consumers": [],
+   "doc": "",
+   "need": "not_needed",
+   "need_why": "Linux-only concept: RAS error reporting over Linux netlink (drm_ras), not an ioctl a macOS client calls"
+  },
+  {
+   "token": "DRM_XE_RAS_ERR_SEV_UNCORRECTABLE",
+   "area": "RAS",
+   "value": 1,
+   "status": "unverified",
+   "by": null,
+   "uses": [],
+   "why": "no use by name or by value 1; no dispatch switch, field match or proof decides it",
+   "comments": [],
+   "consumers": [],
+   "doc": "",
+   "need": "not_needed",
+   "need_why": "Linux-only concept: RAS error reporting over Linux netlink (drm_ras), not an ioctl a macOS client calls"
+  },
+  {
+   "token": "DRM_XE_RAS_ERR_SEV_MAX",
+   "area": "RAS",
+   "value": 2,
+   "status": "unverified",
+   "by": null,
+   "uses": [],
+   "why": "no use by name or by value 2; no dispatch switch, field match or proof decides it",
+   "comments": [],
+   "consumers": [],
+   "doc": "",
+   "need": "not_needed",
+   "need_why": "Linux-only concept: RAS error reporting over Linux netlink (drm_ras), not an ioctl a macOS client calls"
+  },
+  {
+   "token": "DRM_XE_RAS_ERR_COMP_CORE_COMPUTE",
+   "area": "RAS",
+   "value": 1,
+   "status": "unverified",
+   "by": null,
+   "uses": [],
+   "why": "no use by name or by value 1; no dispatch switch, field match or proof decides it",
+   "comments": [],
+   "consumers": [],
+   "doc": "",
+   "need": "not_needed",
+   "need_why": "Linux-only concept: RAS error reporting over Linux netlink (drm_ras), not an ioctl a macOS client calls"
+  },
+  {
+   "token": "DRM_XE_RAS_ERR_COMP_SOC_INTERNAL",
+   "area": "RAS",
+   "value": 2,
+   "status": "unverified",
+   "by": null,
+   "uses": [],
+   "why": "no use by name or by value 2; no dispatch switch, field match or proof decides it",
+   "comments": [],
+   "consumers": [],
+   "doc": "",
+   "need": "not_needed",
+   "need_why": "Linux-only concept: RAS error reporting over Linux netlink (drm_ras), not an ioctl a macOS client calls"
+  },
+  {
+   "token": "DRM_XE_RAS_ERR_COMP_DEVICE_MEMORY",
+   "area": "RAS",
+   "value": 3,
+   "status": "unverified",
+   "by": null,
+   "uses": [],
+   "why": "no use by name or by value 3; no dispatch switch, field match or proof decides it",
+   "comments": [],
+   "consumers": [],
+   "doc": "",
+   "need": "not_needed",
+   "need_why": "Linux-only concept: RAS error reporting over Linux netlink (drm_ras), not an ioctl a macOS client calls"
+  },
+  {
+   "token": "DRM_XE_RAS_ERR_COMP_PCIE",
+   "area": "RAS",
+   "value": 4,
+   "status": "unverified",
+   "by": null,
+   "uses": [],
+   "why": "no use by name or by value 4; no dispatch switch, field match or proof decides it",
+   "comments": [],
+   "consumers": [],
+   "doc": "",
+   "need": "not_needed",
+   "need_why": "Linux-only concept: RAS error reporting over Linux netlink (drm_ras), not an ioctl a macOS client calls"
+  },
+  {
+   "token": "DRM_XE_RAS_ERR_COMP_FABRIC",
+   "area": "RAS",
+   "value": 5,
+   "status": "unverified",
+   "by": null,
+   "uses": [],
+   "why": "no use by name or by value 5; no dispatch switch, field match or proof decides it",
+   "comments": [],
+   "consumers": [],
+   "doc": "",
+   "need": "not_needed",
+   "need_why": "Linux-only concept: RAS error reporting over Linux netlink (drm_ras), not an ioctl a macOS client calls"
+  },
+  {
+   "token": "DRM_XE_RAS_ERR_COMP_MAX",
+   "area": "RAS",
+   "value": 6,
+   "status": "unverified",
+   "by": null,
+   "uses": [],
+   "why": "no use by name or by value 6; no dispatch switch, field match or proof decides it",
+   "comments": [],
+   "consumers": [],
+   "doc": "",
+   "need": "not_needed",
+   "need_why": "Linux-only concept: RAS error reporting over Linux netlink (drm_ras), not an ioctl a macOS client calls"
+  }
+ ],
+ "need": {
+  "searched": [
+   "Mesa ANV / intel common (as run on macOS) @ a3ad934832bb (193 files)",
+   "Metal plugin / VideoToolbox (this repository) @ 030bfaed7ca8 (44 files)",
+   "iris (Mesa) @ a3ad934832bb (57 files)",
+   "Mesa intel/perf @ a3ad934832bb (18 files)",
+   "Intel compute-runtime (NEO) @ 248eb54f8441 (137 files)"
+  ],
+  "counts": {
+   "implemented": 77,
+   "needed_future": 63,
+   "needed_now": 2,
+   "not_needed": 40
+  },
+  "method": "token names searched in the consumer trees (xe_drm.h copies excluded); tools/parity/consumers.py"
+ }
+}

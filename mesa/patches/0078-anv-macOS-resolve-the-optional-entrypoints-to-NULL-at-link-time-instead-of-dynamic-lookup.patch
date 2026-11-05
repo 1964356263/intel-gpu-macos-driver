@@ -1,0 +1,187 @@
+anv (macOS): resolve the optional entrypoints to NULL at link time instead of by dynamic lookup
+
+vk_entrypoints_gen.py --weak declares every entrypoint a driver may implement as weak, so the entrypoint tables hold
+NULL for the ones it does not: ELF resolves weak undefined symbols to 0, MSVC points them at vk_entrypoint_stub with
+/alternatename (and vk_dispatch_table_gen.py skips the stub). ld64 has no weak undefined symbols outside of dylib
+imports and accepts them only with -undefined dynamic_lookup (as kosmickrisp and lavapipe link on darwin). Each of
+them then becomes a flat-namespace lookup that dyld resolves by searching every loaded image when the driver is
+loaded: 10986 for anv (anv/gfx*/vk_common/wsi/... tables), ~390 ms per dlopen of libvulkan_intel.dylib, paid by every
+process that creates a Metal device or a VideoToolbox session on the B580.
+
+Link the driver twice on darwin: once as before (libvulkan_intel_unresolved, not installed), then
+vk_entrypoints_null_macho.py lists the symbols that link left to dynamic lookup and writes an assembly file defining
+each weak one as an absolute 0 with private extern visibility, and the real driver is linked with that file and
+without -undefined dynamic_lookup. Every table entry for an entrypoint the driver lacks is NULL at link time, as on
+ELF; nothing is looked up at load time any more. A non-weak symbol left to dynamic lookup is a real missing
+dependency and fails the build: there was one, NSNumber from wsi_common_metal_layer.m, so the macOS WSI dependency
+now lists Foundation (it was only found because some other image had loaded Foundation).
+
+B580 hackintosh (x86_64 macOS): dlopen of libvulkan_intel.dylib 390 ms -> 3.4 ms (cold after purge
+673 -> 217 ms; with AppKit/Metal/VideoToolbox/AVFoundation already loaded 406 -> 1.1 ms); MTLCreateSystemDefaultDevice
+411 -> 22 ms; a vtdecq process 0.72 -> 0.33 s. vkGetInstanceProcAddr/vkGetDeviceProcAddr resolve the same 865
+commands identically (all 15 instance and 210 device extensions enabled); Metal compute/render, VideoToolbox decode
+(per-frame md5) and H.264/HEVC/AV1 encode (byte-identical streams) unchanged.
+
+diff --git a/src/intel/vulkan/meson.build b/src/intel/vulkan/meson.build
+index 9bc733c10ca..e03fb2ab66c 100644
+--- a/src/intel/vulkan/meson.build
++++ b/src/intel/vulkan/meson.build
+@@ -307,24 +307,16 @@ libanv_common = static_library(
+   dependencies : anv_deps
+ )
+ 
+-anv_link_args = []
+-if host_machine.system() == 'darwin'
+-  # Entrypoints anv does not implement are weak references to nothing, which
+-  # ld64 only accepts with dynamic lookup (same as kosmickrisp).
+-  anv_link_args += '-Wl,-undefined,dynamic_lookup'
+-endif
+ 
+-libvulkan_intel = shared_library(
+-  'vulkan_intel',
+-  [files('anv_gem.c'), anv_entrypoints[0], bvh_spv],
+-  include_directories : [
++libvulkan_intel_kwargs = {
++  'include_directories' : [
+     inc_include, inc_src, inc_intel,
+   ],
+-  link_whole : [libanv_common, libanv_per_hw_ver_libs],
+-  link_with : [
++  'link_whole' : [libanv_common, libanv_per_hw_ver_libs],
++  'link_with' : [
+     libisl, libintel_perf,
+   ],
+-  dependencies : [
++  'dependencies' : [
+     dep_thread, dep_dl, dep_m, anv_deps, idep_libintel_common,
+     idep_nir, idep_genxml, idep_vulkan_util, idep_vulkan_wsi,
+     idep_vulkan_runtime, idep_mesautil, idep_xmlconfig,
+@@ -332,11 +324,40 @@ libvulkan_intel = shared_library(
+     idep_intel_compiler_brw, idep_intel_decoder_gen,
+     idep_intel_compiler_jay,
+   ],
+-  c_args : anv_flags,
+-  gnu_symbol_visibility : 'hidden',
+-  link_args : [vulkan_icd_link_args, ld_args_build_id, ld_args_bsymbolic, ld_args_gc_sections,
+-               anv_link_args],
+-  link_depends : vulkan_icd_link_depends,
++  'c_args' : anv_flags,
++  'gnu_symbol_visibility' : 'hidden',
++  'link_depends' : vulkan_icd_link_depends,
++}
++libvulkan_intel_link_args = [vulkan_icd_link_args, ld_args_build_id, ld_args_bsymbolic, ld_args_gc_sections]
++libvulkan_intel_sources = [files('anv_gem.c'), anv_entrypoints[0], bvh_spv]
++
++if host_machine.system() == 'darwin'
++  # The entrypoints anv does not implement are weak references to nothing, which ld64 only accepts with
++  # -undefined dynamic_lookup; each would then be a flat-namespace lookup at load time (~11000, ~0.3 s per
++  # dlopen). Link once that way, define the weak symbols left unresolved as absolute 0 (NULL, as ELF resolves
++  # them), and link the driver with those definitions and no dynamic lookup.
++  libvulkan_intel_unresolved = shared_library(
++    'vulkan_intel_unresolved',
++    libvulkan_intel_sources,
++    kwargs : libvulkan_intel_kwargs,
++    link_args : [libvulkan_intel_link_args, '-Wl,-undefined,dynamic_lookup'],
++    install : false,
++  )
++  libvulkan_intel_sources += custom_target(
++    'anv_null_entrypoints',
++    input : [vk_entrypoints_null_macho, libvulkan_intel_unresolved],
++    output : 'anv_null_entrypoints.s',
++    command : [
++      prog_python, '@INPUT0@', '--nm', prog_nm, '--lib', '@INPUT1@', '--out', '@OUTPUT@',
++    ],
++  )
++endif
++
++libvulkan_intel = shared_library(
++  'vulkan_intel',
++  libvulkan_intel_sources,
++  kwargs : libvulkan_intel_kwargs,
++  link_args : libvulkan_intel_link_args,
+   install : true,
+ )
+ 
+diff --git a/src/vulkan/meson.build b/src/vulkan/meson.build
+index 887a5a248e8..4e5f58d2278 100644
+--- a/src/vulkan/meson.build
++++ b/src/vulkan/meson.build
+@@ -73,7 +73,7 @@ if with_platform_macos
+   vulkan_wsi_list += '-DVK_USE_PLATFORM_METAL_EXT'
+   vulkan_wsi_deps += dependency(
+     'appleframeworks',
+-    modules : ['QuartzCore', 'Metal', 'IOSurface', 'CoreVideo', 'CoreGraphics']
++    modules : ['Foundation', 'QuartzCore', 'Metal', 'IOSurface', 'CoreVideo', 'CoreGraphics']
+   )
+ endif
+ 
+diff --git a/src/vulkan/util/meson.build b/src/vulkan/util/meson.build
+index 086eb6ec5b3..44567d73c8d 100644
+--- a/src/vulkan/util/meson.build
++++ b/src/vulkan/util/meson.build
+@@ -57,6 +57,7 @@ vk_struct_type_cast_depend_files = [
+ ]
+ 
+ vk_entrypoints_gen = files('vk_entrypoints_gen.py')
++vk_entrypoints_null_macho = files('vk_entrypoints_null_macho.py')
+ vk_extensions_gen = files('vk_extensions_gen.py')
+ vk_icd_gen = files('vk_icd_gen.py')
+ vk_cmd_queue_gen = files('vk_cmd_queue_gen.py')
+diff --git a/src/vulkan/util/vk_entrypoints_null_macho.py b/src/vulkan/util/vk_entrypoints_null_macho.py
+new file mode 100644
+index 00000000000..d75073decc1
+--- /dev/null
++++ b/src/vulkan/util/vk_entrypoints_null_macho.py
+@@ -0,0 +1,52 @@
++#!/usr/bin/env python3
++# SPDX-License-Identifier: MIT
++"""Resolve the optional (weak) entrypoints of a Mach-O Vulkan driver to NULL at link time.
++
++vk_entrypoints_gen.py --weak declares every entrypoint a driver may implement as a weak symbol, so that the
++entrypoint tables hold NULL for the ones it does not (ELF weak undefined symbols resolve to 0; MSVC points them at
++vk_entrypoint_stub through /alternatename instead). ld64 has no weak undefined symbols outside of dylib imports: it only accepts them with
++-undefined dynamic_lookup, which turns each one into a flat-namespace lookup that dyld searches every loaded image
++for when the driver is loaded (about 11000 for anv, ~0.3 s per dlopen).
++
++This script takes a link of the driver made with -undefined dynamic_lookup, lists the symbols left to dynamic lookup,
++and writes an assembly file that defines each weak one as an absolute 0 with hidden (private extern) visibility.
++Linking the driver again with that file resolves every reference at link time to NULL, exactly what ELF does, with
++no lookups left and no -undefined dynamic_lookup. A non-weak symbol left to dynamic lookup is a real missing
++dependency and fails the build.
++"""
++
++import argparse
++import subprocess
++import sys
++
++
++def main():
++    parser = argparse.ArgumentParser()
++    parser.add_argument('--nm', required=True, help='nm program')
++    parser.add_argument('--lib', required=True, help='driver linked with -undefined dynamic_lookup')
++    parser.add_argument('--out', required=True, help='assembly file to write')
++    args = parser.parse_args()
++
++    out = subprocess.run([args.nm, '-m', '-u', args.lib], check=True,
++                         capture_output=True, text=True).stdout
++
++    weak, missing = [], []
++    for line in out.splitlines():
++        if '(dynamically looked up)' not in line:
++            continue
++        fields = line.split()
++        sym = fields[fields.index('(dynamically') - 1]
++        (weak if 'weak' in fields else missing).append(sym)
++
++    if missing:
++        sys.exit('undefined symbols that are not optional entrypoints:\n  ' + '\n  '.join(missing))
++
++    with open(args.out, 'w') as f:
++        f.write('/* Generated by vk_entrypoints_null_macho.py from %s, do not edit. */\n' % args.lib.split('/')[-1])
++        f.write('/* Optional entrypoints this driver does not implement: NULL, resolved at link time. */\n')
++        for sym in sorted(set(weak)):
++            f.write('\t.globl %s\n\t.private_extern %s\n%s = 0\n' % (sym, sym, sym))
++
++
++if __name__ == '__main__':
++    main()

@@ -1,0 +1,1754 @@
+wsi/metal, anv: VK_EXT_metal_surface swapchains on IOSurfaces for drivers that do not render through Metal (ANV on macOS over B580.kext)
+
+Upstream's Metal WSI (wsi_common_metal.c) has two image paths: KosmicKrisp, whose VkImages are MTLTextures that get a
+CAMetalDrawable bound at acquire and a blit into it, and software drivers, whose CPU image is blitted into a drawable by
+a Metal command queue. Neither fits a hardware driver with its own GPU memory: the first needs the driver to be Metal,
+the second copies every frame through the CPU.
+
+This adds a third path, chosen when the driver fills wsi_device::iosurface:
+- every swapchain image is an IOSurface ('BGRA', sRGB-tagged) and the VkImage is a linear (DRM_FORMAT_MOD_LINEAR,
+  explicit row pitch) image in that IOSurface's GPU memory: wsi_memory_allocate_info::iosurface_id asks the driver for
+  it. ANV gets it from B580.kext (DRM_B580_SURFACE_VRAM CREATE): the one VRAM backing the window server's Metal plugin
+  imports too, so the application renders into the memory the compositor reads; no copy anywhere.
+- present is at submission: the present's per-image fence is attached to the IOSurface as its write fence
+  (DRM_B580_SURFACE_FENCE_ATTACH, the dma-resv model), the VRAM copy is marked newer than the pages (SURFACE_DIRTY, for
+  CPU readers) and the plugin's VRAM tag ("NVMTLVramAt:p0" = the new seed) is bumped, then the IOSurface becomes the
+  contents of a sublayer filling the CAMetalLayer (one CATransaction, no animation, flushed). The window server's GPU
+  waits for the frame; nobody's CPU does.
+- acquire hands back the least recently shown image that no other process uses (IOSurfaceIsInUse: the window server
+  dropped it) after its GPU readers finished (DRM_B580_SURFACE_FENCE_WAIT, writer).
+- IMMEDIATE shows at present; MAILBOX (new) and FIFO latch at the display's refresh (CVDisplayLink): MAILBOX the newest
+  frame whose rendering is done (older finished frames go back to the application at once; MAILBOX swapchains get at
+  least 4 images), FIFO the oldest, one per refresh. Present ID / present wait signal when a frame is shown.
+- MESA_VK_WSI_DEBUG=buffer forces the page-copy path; MESA_VK_WSI_FPS_LOG=<file> appends a line every 2 s (presents,
+  shown and dropped frames per second, acquire time).
+- the refresh latch runs on its own thread, woken by the CVDisplayLink; without one (no active display: the screen
+  asleep, a remote session) or when its callbacks stop, it ticks every 1/60 s (2/60 s with a silent link) instead of
+  failing the present with VK_ERROR_SURFACE_LOST_KHR.
+- when the kernel has no shared VRAM for the IOSurface (debug.b580.surfvram 0, budget spent) the swapchain is made
+  again with private images copied into the IOSurfaces' pages by the GPU at present (the common buffer blit, pages
+  imported as host memory), still present at submission.
+ANV: ANV_USE_WSI_PLATFORM with VK_USE_PLATFORM_METAL_EXT, VK_EXT_metal_surface, the three wsi_device::iosurface hooks
+(anv_nvmtl_surface.c) and the iosurface_id import in vkAllocateMemory (uncompressed, not scan-out, never mapped).
+Build with -Dplatforms=macos (links QuartzCore, Metal, IOSurface, CoreVideo, CoreGraphics).
+
+diff --git a/src/intel/vulkan/anv_api_version.h b/src/intel/vulkan/anv_api_version.h
+index 3a5313e04db..dcf70e476e5 100644
+--- a/src/intel/vulkan/anv_api_version.h
++++ b/src/intel/vulkan/anv_api_version.h
+@@ -7,7 +7,8 @@
+ #if defined(VK_USE_PLATFORM_WAYLAND_KHR) ||     \
+     defined(VK_USE_PLATFORM_XCB_KHR) || \
+     defined(VK_USE_PLATFORM_XLIB_KHR) || \
+-    defined(VK_USE_PLATFORM_DISPLAY_KHR)
++    defined(VK_USE_PLATFORM_DISPLAY_KHR) || \
++    defined(VK_USE_PLATFORM_METAL_EXT)
+ #define ANV_USE_WSI_PLATFORM
+ #endif
+ 
+diff --git a/src/intel/vulkan/anv_device.c b/src/intel/vulkan/anv_device.c
+index b1ca953e3ae..43bd03cc2e7 100644
+--- a/src/intel/vulkan/anv_device.c
++++ b/src/intel/vulkan/anv_device.c
+@@ -1927,6 +1927,24 @@ VkResult anv_AllocateMemory(
+       goto success;
+    }
+ 
++#if defined(VK_USE_PLATFORM_METAL_EXT) && defined(HAVE_XEMAC)
++   if (wsi_info && wsi_info->iosurface_id) {
++      /* An IOSurface swapchain image: the IOSurface's VRAM backing, which
++       * the window server composites from (linear, uncompressed, never
++       * CPU-mapped).
++       */
++      alloc_flags &= ~(ANV_BO_ALLOC_SCANOUT | ANV_BO_ALLOC_COMPRESSED |
++                       ANV_BO_ALLOC_AUX_CCS | ANV_BO_ALLOC_LOCAL_MEM_CPU_VISIBLE);
++      result = anv_wsi_iosurface_import(device, wsi_info->iosurface_id,
++                                        aligned_alloc_size,
++                                        alloc_flags | ANV_BO_ALLOC_EXTERNAL,
++                                        client_address, &mem->bo);
++      if (result != VK_SUCCESS)
++         goto fail;
++      goto success;
++   }
++#endif
++
+    /* The Vulkan spec permits handleType to be 0, in which case the struct is
+     * ignored.
+     */
+diff --git a/src/intel/vulkan/anv_instance.c b/src/intel/vulkan/anv_instance.c
+index beb9ebb31fa..94bbdf0edff 100644
+--- a/src/intel/vulkan/anv_instance.c
++++ b/src/intel/vulkan/anv_instance.c
+@@ -74,6 +74,9 @@ static const struct vk_instance_extension_table instance_extensions = {
+ #ifdef VK_USE_PLATFORM_XLIB_XRANDR_EXT
+    .EXT_acquire_xlib_display                 = true,
+ #endif
++#ifdef VK_USE_PLATFORM_METAL_EXT
++   .EXT_metal_surface                        = true,
++#endif
+ #ifdef VK_USE_PLATFORM_DISPLAY_KHR
+    .KHR_display                              = true,
+    .KHR_get_display_properties2              = true,
+diff --git a/src/intel/vulkan/anv_nvmtl_surface.c b/src/intel/vulkan/anv_nvmtl_surface.c
+index 2376674d643..5acaa43e54d 100644
+--- a/src/intel/vulkan/anv_nvmtl_surface.c
++++ b/src/intel/vulkan/anv_nvmtl_surface.c
+@@ -239,3 +239,133 @@ nvmtl_anv_surface_dirty_v1(VkDevice _device, uint32_t surface_id, uint32_t plane
+       return errno == EBUSY ? VK_NOT_READY : nvmtl_errno_result(errno);
+    return VK_SUCCESS;
+ }
++
++#if defined(VK_USE_PLATFORM_METAL_EXT) && defined(HAVE_XEMAC)
++/*
++ * VK_EXT_metal_surface swapchains (wsi_device::iosurface, wsi_common_metal.c): the images are IOSurfaces whose VRAM
++ * backing (DRM_B580_SURFACE_VRAM, the one the window server's Metal plugin imports) is the VkImage's memory, and the
++ * present's fence is attached to the IOSurface (DRM_B580_SURFACE_FENCE_ATTACH) so the window server's GPU waits for
++ * the frame: present at submission, implicit sync, no copy.
++ */
++#include <IOSurface/IOSurface.h>
++#include <mach/mach_time.h>
++#include "util/os_time.h"
++
++/* debug.b580.surfvram >= 1 (apps may have VRAM-shared IOSurfaces) and the surface fences exist */
++bool
++anv_wsi_iosurface_supports_gpu_memory(VkDevice _device)
++{
++   uint32_t fences = 0, level = 0;
++   nvmtl_anv_surface_cap_v1(_device, &fences);
++   nvmtl_anv_surface_vram_cap_v1(_device, &level);
++   return fences && level >= 1;
++}
++
++VkResult
++anv_wsi_iosurface_import(struct anv_device *device, uint32_t iosurface_id, uint64_t size,
++                         enum anv_bo_alloc_flags alloc_flags, uint64_t client_address, struct anv_bo **bo)
++{
++   struct drm_b580_surface_vram v = {
++      .surface_id = iosurface_id, .plane = 0, .size = size, .flags = B580_SURFACE_VRAM_CREATE,
++   };
++   if (nvmtl_ioctl(device->fd, DRM_IOCTL_B580_SURFACE_VRAM, &v))
++      return vk_errorf(device, VK_ERROR_OUT_OF_DEVICE_MEMORY, "IOSurface %u: no VRAM backing (errno %d)",
++                       iosurface_id, errno);
++   if (v.size_out < size) {
++      struct anv_bo tmp = { .gem_handle = v.handle };
++      device->kmd_backend->gem_close(device, &tmp);
++      return vk_errorf(device, VK_ERROR_OUT_OF_DEVICE_MEMORY, "IOSurface %u: VRAM backing of %llu bytes < %llu",
++                       iosurface_id, (unsigned long long)v.size_out, (unsigned long long)size);
++   }
++   return anv_device_import_bo_handle(device, v.handle, v.size_out, alloc_flags, client_address, bo);
++}
++
++/* The Metal plugin's VRAM tag (NVMTLDevice.m nvmtl_vram_tag): the IOSurface value "NVMTLVramAt:p<plane>" says which
++ * IOSurface seed the shared VRAM backing is current at. A reader (the window server) whose seed matches uses the VRAM as
++ * it is; otherwise it pages the surface off and uploads it again. gen counts the writes. */
++struct anv_nvmtl_vram_tag { uint32_t magic, seed, gen; };
++#define ANV_NVMTL_VRAM_MAGIC 0x564d5634u
++
++static void
++anv_nvmtl_vram_tag_bump(IOSurfaceRef surface)
++{
++   struct anv_nvmtl_vram_tag t = { 0, 0, 0 };
++   CFTypeRef v = IOSurfaceCopyValue(surface, CFSTR("NVMTLVramAt:p0"));
++   if (v && CFGetTypeID(v) == CFDataGetTypeID() && CFDataGetLength((CFDataRef)v) == (CFIndex)sizeof(t))
++      memcpy(&t, CFDataGetBytePtr((CFDataRef)v), sizeof(t));
++   if (v)
++      CFRelease(v);
++   t.gen = t.magic == ANV_NVMTL_VRAM_MAGIC ? t.gen + 1 : 1;
++   t.magic = ANV_NVMTL_VRAM_MAGIC;
++   t.seed = IOSurfaceGetSeed(surface);
++   CFDataRef d = CFDataCreate(NULL, (const UInt8 *)&t, sizeof(t));
++   IOSurfaceSetValue(surface, CFSTR("NVMTLVramAt:p0"), d);
++   CFRelease(d);
++}
++
++VkResult
++anv_wsi_iosurface_signal_write(VkDevice _device, VkFence _fence, void *iosurface, bool gpu_memory)
++{
++   ANV_FROM_HANDLE(anv_device, device, _device);
++   VK_FROM_HANDLE(vk_fence, fence, _fence);
++   IOSurfaceRef surface = iosurface;
++   const uint32_t sid = IOSurfaceGetID(surface);
++
++   struct vk_sync *sync = vk_fence_get_active_sync(fence);
++   struct vk_drm_syncobj *syncobj = sync ? vk_sync_as_drm_syncobj(sync) : NULL;
++   if (!syncobj)
++      return VK_ERROR_FEATURE_NOT_PRESENT;
++
++   /* 1. The frame's fence becomes the IOSurface's write fence: readers on the GPU (the window server's composite) wait
++    *    for it in the kernel's job queue. */
++   struct drm_b580_surface_fence_attach a = {
++      .surface_id = sid, .syncobj = syncobj->syncobj, .point = 0, .flags = B580_SURFACE_FENCE_WRITE,
++   };
++   int err = nvmtl_ioctl(device->fd, DRM_IOCTL_B580_SURFACE_FENCE_ATTACH, &a) ? errno : 0;
++   if (err == EAGAIN) {
++      /* not in the kernel yet (a deferred submission): wait until it is */
++      VkResult result = vk_sync_wait(&device->vk, sync, 0, VK_SYNC_WAIT_PENDING, UINT64_MAX);
++      if (result != VK_SUCCESS)
++         return result;
++      err = nvmtl_ioctl(device->fd, DRM_IOCTL_B580_SURFACE_FENCE_ATTACH, &a) ? errno : 0;
++   }
++   if (err)
++      return vk_errorf(device, VK_ERROR_UNKNOWN, "IOSurface %u: write fence not attached (errno %d)", sid, err);
++
++   if (gpu_memory) {
++      /* 2. The VRAM copy is newer than the pages: a CPU lock (a screenshot) pages it off after the fence. This moves
++       *    the IOSurface's seed. */
++      struct drm_b580_surface_dirty d = { .surface_id = sid, .plane = 0, .flags = 0 };
++      if (nvmtl_ioctl(device->fd, DRM_IOCTL_B580_SURFACE_DIRTY, &d))
++         mesa_logw_once("anv: IOSurface %u: SURFACE_DIRTY failed (errno %d): CPU readers may see an older frame",
++                        sid, errno);
++      /* 3. Readers use the VRAM as it is at this seed (no page-off and upload). */
++      anv_nvmtl_vram_tag_bump(surface);
++   } else {
++      /* The GPU writes the pages: move the seed so that readers upload them again (they wait for the write fence). */
++      IOSurfaceLock(surface, 0, NULL);
++      IOSurfaceUnlock(surface, 0, NULL);
++   }
++   return VK_SUCCESS;
++}
++
++VkResult
++anv_wsi_iosurface_wait_idle(VkDevice _device, void *iosurface, uint64_t abs_timeout)
++{
++   ANV_FROM_HANDLE(anv_device, device, _device);
++   int64_t timeout_ns = 0;   /* CLOCK_UPTIME_RAW, absolute; 0 polls */
++   if (abs_timeout == UINT64_MAX) {
++      timeout_ns = INT64_MAX;
++   } else if (abs_timeout) {
++      const int64_t left = (int64_t)abs_timeout - (int64_t)os_time_get_nano();
++      timeout_ns = (int64_t)clock_gettime_nsec_np(CLOCK_UPTIME_RAW) + MAX2(left, 0);
++   }
++   struct drm_b580_surface_fence_wait w = {
++      .surface_id = IOSurfaceGetID((IOSurfaceRef)iosurface), .flags = B580_SURFACE_FENCE_WRITER,
++      .timeout_ns = timeout_ns ? timeout_ns : 0,
++   };
++   if (nvmtl_ioctl(device->fd, DRM_IOCTL_B580_SURFACE_FENCE_WAIT, &w))
++      return (errno == ETIME || errno == ETIMEDOUT) ? VK_TIMEOUT : VK_SUCCESS;
++   return VK_SUCCESS;
++}
++#endif
+diff --git a/src/intel/vulkan/anv_private.h b/src/intel/vulkan/anv_private.h
+index ac093887dda..9a767c08099 100644
+--- a/src/intel/vulkan/anv_private.h
++++ b/src/intel/vulkan/anv_private.h
+@@ -3188,6 +3188,15 @@ VkResult anv_device_import_bo_from_host_ptr(struct anv_device *device,
+ VkResult anv_device_import_bo_handle(struct anv_device *device, uint32_t gem_handle, uint64_t size,
+                                      enum anv_bo_alloc_flags alloc_flags, uint64_t client_address,
+                                      struct anv_bo **bo);
++#if defined(VK_USE_PLATFORM_METAL_EXT) && defined(HAVE_XEMAC)
++/* VK_EXT_metal_surface swapchains (wsi_device::iosurface, anv_nvmtl_surface.c) */
++bool anv_wsi_iosurface_supports_gpu_memory(VkDevice device);
++VkResult anv_wsi_iosurface_signal_write(VkDevice device, VkFence fence, void *iosurface, bool gpu_memory);
++VkResult anv_wsi_iosurface_wait_idle(VkDevice device, void *iosurface, uint64_t abs_timeout);
++VkResult anv_wsi_iosurface_import(struct anv_device *device, uint32_t iosurface_id, uint64_t size,
++                                  enum anv_bo_alloc_flags alloc_flags, uint64_t client_address,
++                                  struct anv_bo **bo);
++#endif
+ /* nvmtl: vkAllocateMemory's fd import after nvmtl_anv_surface_vram_stage_v1 (anv_nvmtl_surface.c): true when it was
+  * one (then *result says how it went and *bo is the import) */
+ bool anv_nvmtl_surface_vram_staged(struct anv_device *device, uint64_t need, enum anv_bo_alloc_flags alloc_flags,
+diff --git a/src/intel/vulkan/anv_wsi.c b/src/intel/vulkan/anv_wsi.c
+index 6caba7c2a98..1bac7cd03f6 100644
+--- a/src/intel/vulkan/anv_wsi.c
++++ b/src/intel/vulkan/anv_wsi.c
+@@ -69,6 +69,15 @@ anv_init_wsi(struct anv_physical_device *physical_device)
+ 
+    wsi_device_setup_syncobj_fd(wsi_device, physical_device->local_fd);
+ 
++#if defined(VK_USE_PLATFORM_METAL_EXT) && defined(HAVE_XEMAC)
++   /* VK_EXT_metal_surface: IOSurface swapchains, implicitly synchronized
++    * with the window server through B580.kext (anv_nvmtl_surface.c).
++    */
++   wsi_device->iosurface.supports_gpu_memory = anv_wsi_iosurface_supports_gpu_memory;
++   wsi_device->iosurface.signal_write = anv_wsi_iosurface_signal_write;
++   wsi_device->iosurface.wait_idle = anv_wsi_iosurface_wait_idle;
++#endif
++
+    return VK_SUCCESS;
+ }
+ 
+diff --git a/src/vulkan/meson.build b/src/vulkan/meson.build
+index a24d9d3aad7..887a5a248e8 100644
+--- a/src/vulkan/meson.build
++++ b/src/vulkan/meson.build
+@@ -73,7 +73,7 @@ if with_platform_macos
+   vulkan_wsi_list += '-DVK_USE_PLATFORM_METAL_EXT'
+   vulkan_wsi_deps += dependency(
+     'appleframeworks',
+-    modules : ['QuartzCore', 'Metal']
++    modules : ['QuartzCore', 'Metal', 'IOSurface', 'CoreVideo', 'CoreGraphics']
+   )
+ endif
+ 
+diff --git a/src/vulkan/util/vk_internal_exts.h b/src/vulkan/util/vk_internal_exts.h
+index fb16443237b..22ccd007058 100644
+--- a/src/vulkan/util/vk_internal_exts.h
++++ b/src/vulkan/util/vk_internal_exts.h
+@@ -61,6 +61,13 @@ struct wsi_memory_allocate_info {
+      * GL driver in the X server).
+      */
+     bool dma_buf_sync_file;
++
++    /**
++     * macOS: if non-zero, the memory is the GPU memory of the IOSurface with
++     * this ID (the driver creates or imports it), shared with every process
++     * that uses the IOSurface on the GPU (the window server).
++     */
++    uint32_t iosurface_id;
+ };
+ 
+ /* To be chained into VkSurfaceCapabilities2KHR */
+diff --git a/src/vulkan/wsi/wsi_common.c b/src/vulkan/wsi/wsi_common.c
+index 9791d298761..b1d96580683 100644
+--- a/src/vulkan/wsi/wsi_common.c
++++ b/src/vulkan/wsi/wsi_common.c
+@@ -432,6 +432,15 @@ get_blit_type(const struct wsi_device *wsi,
+ #endif
+ #if defined(VK_USE_PLATFORM_METAL_EXT)
+    case WSI_IMAGE_TYPE_METAL: {
++      const struct wsi_metal_image_params *metal_params =
++         container_of(params, const struct wsi_metal_image_params, base);
++      /* IOSurface swapchains own their images for the swapchain's life:
++       * the application renders into the IOSurface's GPU memory directly,
++       * or into a private image copied into the IOSurface's pages.
++       */
++      if (metal_params->iosurface)
++         return metal_params->iosurface_pages ? WSI_SWAPCHAIN_BUFFER_BLIT :
++                                                WSI_SWAPCHAIN_NO_BLIT;
+       /* Due to mismatches between WSI and Metal, we require rendering into an
+        * intermediate texture and later blit that texture to the display
+        * texture. There is not much we can do about this since users can get
+diff --git a/src/vulkan/wsi/wsi_common.h b/src/vulkan/wsi/wsi_common.h
+index fef8aeef8bf..da7f954e0ac 100644
+--- a/src/vulkan/wsi/wsi_common.h
++++ b/src/vulkan/wsi/wsi_common.h
+@@ -166,6 +166,41 @@ struct wsi_device {
+                              bool opaque_alpha);
+    } metal;
+ 
++   /* VK_EXT_metal_surface for drivers that render with their own GPU memory
++    * rather than through Metal (ANV on macOS): swapchain images are
++    * IOSurfaces, presented by handing the IOSurface to Core Animation (the
++    * contents of a sublayer of the CAMetalLayer), and synchronized with the
++    * window server the way dma-bufs are on Linux: implicit fences that the
++    * kernel driver keeps per IOSurface.  A driver that sets these gets the
++    * IOSurface swapchain of wsi_common_metal.c instead of the drawable one.
++    */
++   struct {
++      /* True when the driver can back an image with the GPU memory of an
++       * IOSurface (wsi_memory_allocate_info::iosurface_id): the window
++       * server's GPU then reads the very memory the application rendered
++       * into.  False: the images are copied into the IOSurface's pages on
++       * the GPU at present time (buffer blit).
++       */
++      bool (*supports_gpu_memory)(VkDevice device);
++
++      /* Called once the present's submission (signaling `fence`) was made:
++       * attach its fence to IOSurface `iosurface` as a writer, so that the
++       * window server's GPU reads wait for it, and tell the IOSurface's
++       * consumers the contents changed.  gpu_memory: the image is backed
++       * by the IOSurface's GPU memory (else its pages were written).
++       */
++      VkResult (*signal_write)(VkDevice device, VkFence fence,
++                               void *iosurface, bool gpu_memory);
++
++      /* Wait until every GPU user of IOSurface `iosurface` (the window
++       * server's composites reading it) is done, before the application
++       * may write it again.  abs_timeout: CLOCK_MONOTONIC ns, 0 polls.
++       * VK_TIMEOUT when it ran out.
++       */
++      VkResult (*wait_idle)(VkDevice device, void *iosurface,
++                            uint64_t abs_timeout);
++   } iosurface;
++
+ 
+    bool sw;
+ 
+diff --git a/src/vulkan/wsi/wsi_common_metal.c b/src/vulkan/wsi/wsi_common_metal.c
+index 54542c60c38..e60433f16ae 100644
+--- a/src/vulkan/wsi/wsi_common_metal.c
++++ b/src/vulkan/wsi/wsi_common_metal.c
+@@ -7,8 +7,11 @@
+ #include "vk_instance.h"
+ #include "vk_physical_device.h"
+ #include "vk_util.h"
++#include "vk_format.h"
+ 
+ #include "util/cnd_monotonic.h"
++#include "util/os_misc.h"
++#include "util/os_time.h"
+ #include "util/timespec.h"
+ #include "util/u_vector.h"
+ 
+@@ -19,6 +22,8 @@
+ #include "vulkan/vulkan_core.h"
+ 
+ #include <assert.h>
++#include <stdio.h>
++#include <unistd.h>
+ 
+ struct wsi_metal {
+    struct wsi_interface base;
+@@ -44,6 +49,19 @@ static const VkPresentModeKHR present_modes[] = {
+    VK_PRESENT_MODE_FIFO_KHR,
+ };
+ 
++/* IOSurface swapchains (wsi_device::iosurface) */
++static const VkPresentModeKHR iosurface_present_modes[] = {
++   VK_PRESENT_MODE_IMMEDIATE_KHR,
++   VK_PRESENT_MODE_MAILBOX_KHR,
++   VK_PRESENT_MODE_FIFO_KHR,
++};
++
++static inline bool
++wsi_metal_uses_iosurface(const struct wsi_device *wsi_device)
++{
++   return wsi_device->iosurface.supports_gpu_memory != NULL;
++}
++
+ static VkResult
+ wsi_metal_surface_get_capabilities(VkIcdSurfaceBase *surface,
+                                  struct wsi_device *wsi_device,
+@@ -64,6 +82,13 @@ wsi_metal_surface_get_capabilities(VkIcdSurfaceBase *surface,
+     */
+    caps->surfaceCapabilities.minImageCount = 3;
+    caps->surfaceCapabilities.maxImageCount = 3;
++   if (wsi_metal_uses_iosurface(wsi_device)) {
++      /* Frames the window server still holds are not handed back, so up to
++       * WSI_IOSURFACE_MAX_IMAGES let a MAILBOX/IMMEDIATE swapchain render
++       * ahead of the compositor.
++       */
++      caps->surfaceCapabilities.maxImageCount = 8;
++   }
+ 
+    caps->surfaceCapabilities.minImageExtent = (VkExtent2D) { 1, 1 };
+    caps->surfaceCapabilities.maxImageExtent = (VkExtent2D) {
+@@ -80,6 +105,9 @@ wsi_metal_surface_get_capabilities(VkIcdSurfaceBase *surface,
+       VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR;
+ 
+    VkImageUsageFlags image_usage = wsi_caps_get_image_usage();
++   /* IOSurface images are linear B8G8R8A8: no storage image. */
++   if (wsi_metal_uses_iosurface(wsi_device))
++      image_usage &= ~VK_IMAGE_USAGE_STORAGE_BIT;
+ 
+    VK_FROM_HANDLE(vk_physical_device, pdevice, wsi_device->pdevice);
+    if (pdevice->supported_extensions.EXT_attachment_feedback_loop_layout)
+@@ -258,6 +286,10 @@ wsi_metal_surface_get_formats(VkIcdSurfaceBase *icd_surface,
+ 
+    for (unsigned i = 0; i < ARRAY_SIZE(sorted_formats); i++) {
+       for (unsigned j = 0; j < color_space_count; j++) {
++         if (wsi_metal_uses_iosurface(wsi_device) &&
++             !wsi_metal_iosurface_format_supported(sorted_formats[i],
++                                                   available_surface_color_spaces[j]))
++            continue;
+          vk_outarray_append_typed(VkSurfaceFormatKHR, &out, f) {
+             f->format = sorted_formats[i];
+             f->colorSpace = available_surface_color_spaces[j];
+@@ -287,6 +319,10 @@ wsi_metal_surface_get_formats2(VkIcdSurfaceBase *icd_surface,
+ 
+    for (unsigned i = 0; i < ARRAY_SIZE(sorted_formats); i++) {
+       for (unsigned j = 0; j < color_space_count; j++) {
++         if (wsi_metal_uses_iosurface(wsi_device) &&
++             !wsi_metal_iosurface_format_supported(sorted_formats[i],
++                                                   available_surface_color_spaces[j]))
++            continue;
+          vk_outarray_append_typed(VkSurfaceFormat2KHR, &out, f) {
+             assert(f->sType == VK_STRUCTURE_TYPE_SURFACE_FORMAT_2_KHR);
+             f->surfaceFormat.format = sorted_formats[i];
+@@ -304,15 +340,23 @@ wsi_metal_surface_get_present_modes(VkIcdSurfaceBase *surface,
+                                        uint32_t* pPresentModeCount,
+                                        VkPresentModeKHR* pPresentModes)
+ {
++   const VkPresentModeKHR *modes = present_modes;
++   uint32_t count = ARRAY_SIZE(present_modes);
++   if (wsi_metal_uses_iosurface(wsi_device)) {
++      modes = iosurface_present_modes;
++      count = ARRAY_SIZE(iosurface_present_modes);
++   }
++
+    if (pPresentModes == NULL) {
+-      *pPresentModeCount = ARRAY_SIZE(present_modes);
++      *pPresentModeCount = count;
+       return VK_SUCCESS;
+    }
+ 
+-   *pPresentModeCount = MIN2(*pPresentModeCount, ARRAY_SIZE(present_modes));
+-   typed_memcpy(pPresentModes, present_modes, *pPresentModeCount);
++   const uint32_t total = count;
++   *pPresentModeCount = MIN2(*pPresentModeCount, total);
++   typed_memcpy(pPresentModes, modes, *pPresentModeCount);
+ 
+-   return *pPresentModeCount < ARRAY_SIZE(present_modes) ? VK_INCOMPLETE : VK_SUCCESS;
++   return *pPresentModeCount < total ? VK_INCOMPLETE : VK_SUCCESS;
+ }
+ 
+ static VkResult
+@@ -874,6 +918,14 @@ wsi_metal_swapchain_destroy(struct wsi_swapchain *wsi_chain,
+    return VK_SUCCESS;
+ }
+ 
++static VkResult
++wsi_iosurface_surface_create_swapchain(VkIcdSurfaceMetal *metal_surface,
++                                       VkDevice device,
++                                       struct wsi_device *wsi_device,
++                                       const VkSwapchainCreateInfoKHR *pCreateInfo,
++                                       const VkAllocationCallbacks *pAllocator,
++                                       struct wsi_swapchain **swapchain_out);
++
+ static VkResult
+ wsi_metal_surface_create_swapchain(VkIcdSurfaceBase *icd_surface,
+                                       VkDevice device,
+@@ -885,6 +937,11 @@ wsi_metal_surface_create_swapchain(VkIcdSurfaceBase *icd_surface,
+    VkIcdSurfaceMetal *metal_surface = (VkIcdSurfaceMetal *)icd_surface;
+    assert(metal_surface->pLayer);
+ 
++   if (wsi_metal_uses_iosurface(wsi_device))
++      return wsi_iosurface_surface_create_swapchain(metal_surface, device,
++                                                    wsi_device, pCreateInfo,
++                                                    pAllocator, swapchain_out);
++
+    assert(pCreateInfo->sType == VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR);
+ 
+    const int num_images = pCreateInfo->minImageCount;
+@@ -996,6 +1053,825 @@ fail_chain_alloc:
+    return result;
+ }
+ 
++/*
++ * IOSurface swapchains: VK_EXT_metal_surface for drivers that render with
++ * their own GPU memory instead of through Metal (wsi_device::iosurface).
++ *
++ * Each swapchain image is an IOSurface.  With gpu_memory (the default when
++ * the driver supports it), the VkImage is a linear image in the IOSurface's
++ * GPU memory, shared with the window server, so the application renders
++ * into the very memory the window server composites from: no copy at all.
++ * Otherwise the application renders into a private image that is copied
++ * into the IOSurface's pages on the GPU at present (buffer blit).
++ *
++ * Presentation hands the IOSurface to Core Animation as the contents of a
++ * sublayer filling the CAMetalLayer, at submission: the driver attaches the
++ * present's fence to the IOSurface (implicit sync, like a dma-buf's
++ * reservation object on Linux), so the window server's GPU work waits for
++ * the frame, not the application's CPU.  An image is handed back to the
++ * application once nobody else uses its IOSurface (IOSurfaceIsInUse: the
++ * window server dropped it) and every GPU read of it is done.
++ *
++ * IMMEDIATE shows each frame at present.  MAILBOX and FIFO latch at the
++ * display's refresh (a CVDisplayLink): MAILBOX the newest frame whose
++ * rendering is done, FIFO the oldest queued frame once its rendering is
++ * done, one per refresh.
++ */
++
++#define WSI_IOSURFACE_MIN_IMAGES 3
++#define WSI_IOSURFACE_MAX_IMAGES 8
++
++enum wsi_iosurface_image_state {
++   /* The application may acquire it once nobody else uses the IOSurface. */
++   WSI_IOSURFACE_IMAGE_FREE,
++   WSI_IOSURFACE_IMAGE_ACQUIRED,
++   /* Presented, waiting for a refresh (MAILBOX, FIFO). */
++   WSI_IOSURFACE_IMAGE_QUEUED,
++   /* The contents layer shows it. */
++   WSI_IOSURFACE_IMAGE_SHOWN,
++};
++
++struct wsi_iosurface_swapchain;
++
++struct wsi_iosurface_image {
++   struct wsi_image base;
++   /* Set before wsi_create_image(), which only clears base. */
++   struct wsi_iosurface_swapchain *chain;
++   void *iosurface;
++   uint32_t iosurface_id;
++   enum wsi_iosurface_image_state state;
++   uint64_t present_id;
++   /* When it stopped being shown: the oldest free image is acquired first,
++    * the one the window server most likely let go of.
++    */
++   uint64_t retired;
++};
++
++struct wsi_iosurface_swapchain {
++   struct wsi_swapchain base;
++
++   VkIcdSurfaceMetal *surface;
++   VkExtent2D extent;
++   VkFormat format;
++   VkColorSpaceKHR color_space;
++   bool gpu_memory;
++   uint32_t bytes_per_row;
++
++   /* Linear images at the IOSurface's row pitch (gpu_memory) */
++   VkSubresourceLayout plane_layout;
++   VkImageDrmFormatModifierExplicitCreateInfoEXT drm_explicit;
++
++   struct wsi_metal_contents_layer *contents;
++   struct wsi_metal_vblank *vblank;
++   struct wsi_metal_present_info *present_info;
++
++   mtx_t lock;
++   struct u_cnd_monotonic cond;
++   VkResult status;
++   uint64_t serial;
++   int32_t shown;
++   /* Presented, not shown yet (FIFO, MAILBOX), oldest first */
++   uint32_t queue[WSI_IOSURFACE_MAX_IMAGES];
++   uint32_t queue_head, queue_count;
++
++   /* MESA_VK_WSI_FPS_LOG=<file>: a line every 2 s with the presents, shown
++    * and dropped frames per second and the time spent in acquire.
++    */
++   FILE *fps_log;
++   uint64_t fps_t0, fps_acquire_ns;
++   uint32_t fps_presents, fps_shown, fps_dropped;
++
++   struct wsi_iosurface_image images[0];
++};
++
++static struct wsi_image *
++wsi_iosurface_swapchain_get_wsi_image(struct wsi_swapchain *wsi_chain,
++                                      uint32_t image_index)
++{
++   struct wsi_iosurface_swapchain *chain =
++      (struct wsi_iosurface_swapchain *)wsi_chain;
++   return &chain->images[image_index].base;
++}
++
++static uint32_t
++wsi_iosurface_select_memory_type(const struct wsi_device *wsi,
++                                 uint32_t type_bits,
++                                 VkMemoryPropertyFlags want,
++                                 VkMemoryPropertyFlags avoid)
++{
++   u_foreach_bit(t, type_bits) {
++      const VkMemoryPropertyFlags flags = wsi->memory_props.memoryTypes[t].propertyFlags;
++      if ((flags & want) == want && !(flags & avoid))
++         return t;
++   }
++   u_foreach_bit(t, type_bits) {
++      const VkMemoryPropertyFlags flags = wsi->memory_props.memoryTypes[t].propertyFlags;
++      if ((flags & want) == want)
++         return t;
++   }
++   return ffs(type_bits) - 1;
++}
++
++/* gpu_memory: a new IOSurface, and the image's memory is its GPU memory. */
++static VkResult
++wsi_iosurface_create_gpu_mem(const struct wsi_swapchain *wsi_chain,
++                             const struct wsi_image_info *info,
++                             struct wsi_image *image)
++{
++   const struct wsi_device *wsi = wsi_chain->wsi;
++   struct wsi_iosurface_image *ios_image =
++      container_of(image, struct wsi_iosurface_image, base);
++   struct wsi_iosurface_swapchain *chain = ios_image->chain;
++
++   VkMemoryRequirements reqs;
++   wsi->GetImageMemoryRequirements(wsi_chain->device, image->image, &reqs);
++
++   const uint64_t alloc_size =
++      align64(MAX2(reqs.size, (uint64_t)chain->bytes_per_row *
++                              chain->extent.height), 4096);
++   ios_image->iosurface =
++      wsi_metal_iosurface_create(chain->extent.width, chain->extent.height,
++                                 chain->format, chain->color_space,
++                                 chain->bytes_per_row, alloc_size,
++                                 &ios_image->iosurface_id);
++   if (!ios_image->iosurface)
++      return VK_ERROR_OUT_OF_DEVICE_MEMORY;
++
++   const struct wsi_memory_allocate_info memory_wsi_info = {
++      .sType = VK_STRUCTURE_TYPE_WSI_MEMORY_ALLOCATE_INFO_MESA,
++      .iosurface_id = ios_image->iosurface_id,
++   };
++   const VkMemoryDedicatedAllocateInfo dedicated = {
++      .sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO,
++      .pNext = &memory_wsi_info,
++      .image = image->image,
++   };
++   const VkMemoryAllocateInfo alloc_info = {
++      .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
++      .pNext = &dedicated,
++      .allocationSize = reqs.size,
++      .memoryTypeIndex =
++         wsi_iosurface_select_memory_type(wsi, reqs.memoryTypeBits,
++                                          VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
++                                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
++   };
++   VkResult result = wsi->AllocateMemory(wsi_chain->device, &alloc_info,
++                                         &wsi_chain->alloc, &image->memory);
++   if (result != VK_SUCCESS)
++      return result;
++
++   image->num_planes = 1;
++   image->sizes[0] = reqs.size;
++   image->row_pitches[0] = chain->bytes_per_row;
++   image->offsets[0] = 0;
++   image->drm_modifier = 0; /* DRM_FORMAT_MOD_LINEAR */
++   return VK_SUCCESS;
++}
++
++/* Buffer blit: the IOSurface's pages are the blit destination. */
++static uint8_t *
++wsi_iosurface_alloc_pages(struct wsi_image *image, unsigned size)
++{
++   struct wsi_iosurface_image *ios_image =
++      container_of(image, struct wsi_iosurface_image, base);
++   struct wsi_iosurface_swapchain *chain = ios_image->chain;
++
++   ios_image->iosurface =
++      wsi_metal_iosurface_create(chain->extent.width, chain->extent.height,
++                                 chain->format, chain->color_space,
++                                 chain->bytes_per_row, align(size, 4096),
++                                 &ios_image->iosurface_id);
++   if (!ios_image->iosurface)
++      return NULL;
++   return wsi_metal_iosurface_base_address(ios_image->iosurface);
++}
++
++static VkResult
++wsi_iosurface_create_pages_mem(const struct wsi_swapchain *chain,
++                               const struct wsi_image_info *info,
++                               struct wsi_image *image)
++{
++   VkResult result = wsi_create_buffer_blit_context(chain, info, image, 0);
++   if (result == VK_SUCCESS &&
++       !container_of(image, struct wsi_iosurface_image, base)->iosurface)
++      result = VK_ERROR_OUT_OF_HOST_MEMORY;
++   return result;
++}
++
++static uint32_t
++wsi_iosurface_select_pages_memory_type(const struct wsi_device *wsi,
++                                       uint32_t type_bits)
++{
++   return wsi_iosurface_select_memory_type(wsi, type_bits,
++                                           VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
++                                           VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
++                                           VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
++}
++
++static VkResult
++wsi_iosurface_configure_image(const struct wsi_swapchain *wsi_chain,
++                              const VkSwapchainCreateInfoKHR *pCreateInfo,
++                              const struct wsi_metal_image_params *params,
++                              struct wsi_image_info *info)
++{
++   struct wsi_iosurface_swapchain *chain =
++      container_of((struct wsi_swapchain *)wsi_chain,
++                   struct wsi_iosurface_swapchain, base);
++
++   VkResult result = wsi_configure_image(wsi_chain, pCreateInfo, 0, info);
++   if (result != VK_SUCCESS)
++      return result;
++
++   if (params->iosurface_pages) {
++      wsi_configure_buffer_image(wsi_chain, pCreateInfo,
++                                 256 /* stride_align */, 4096 /* size_align */,
++                                 info);
++      chain->bytes_per_row = info->linear_stride;
++      info->select_image_memory_type = wsi_select_device_memory_type;
++      info->select_blit_dst_memory_type = wsi_iosurface_select_pages_memory_type;
++      info->alloc_shm = wsi_iosurface_alloc_pages;
++      info->create_mem = wsi_iosurface_create_pages_mem;
++      return VK_SUCCESS;
++   }
++
++   /* A linear image at the IOSurface's row pitch, in the IOSurface's GPU
++    * memory: what the window server's GPU reads, scan-out and CPU layout.
++    */
++   const uint32_t cpp = vk_format_get_blocksize(pCreateInfo->imageFormat);
++   chain->bytes_per_row = align(pCreateInfo->imageExtent.width * cpp, 256);
++   chain->plane_layout = (VkSubresourceLayout) {
++      .offset = 0,
++      .rowPitch = chain->bytes_per_row,
++   };
++   chain->drm_explicit = (VkImageDrmFormatModifierExplicitCreateInfoEXT) {
++      .sType = VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_EXPLICIT_CREATE_INFO_EXT,
++      .drmFormatModifier = 0, /* DRM_FORMAT_MOD_LINEAR */
++      .drmFormatModifierPlaneCount = 1,
++      .pPlaneLayouts = &chain->plane_layout,
++   };
++   info->create.tiling = VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT;
++   __vk_append_struct(&info->create, &chain->drm_explicit);
++   info->create_mem = wsi_iosurface_create_gpu_mem;
++   return VK_SUCCESS;
++}
++
++static bool
++wsi_iosurface_image_fence_done(struct wsi_iosurface_swapchain *chain,
++                               uint32_t index)
++{
++   VkFence fence = chain->base.fences[index];
++   return fence == VK_NULL_HANDLE ||
++          chain->base.wsi->GetFenceStatus(chain->base.device, fence) != VK_NOT_READY;
++}
++
++/* Make image `index` the contents of the layer. Called with chain->lock. */
++static void
++wsi_iosurface_show_locked(struct wsi_iosurface_swapchain *chain,
++                          uint32_t index)
++{
++   struct wsi_iosurface_image *image = &chain->images[index];
++
++   if (chain->shown >= 0 && chain->shown != (int32_t)index) {
++      struct wsi_iosurface_image *old = &chain->images[chain->shown];
++      old->state = WSI_IOSURFACE_IMAGE_FREE;
++      old->retired = ++chain->serial;
++   }
++   image->state = WSI_IOSURFACE_IMAGE_SHOWN;
++   chain->shown = index;
++   chain->fps_shown++;
++
++   wsi_metal_contents_layer_set(chain->contents, image->iosurface);
++
++   if (image->present_id) {
++      struct wsi_metal_present_info *info = chain->present_info;
++      mtx_lock(&info->mutex);
++      if (image->present_id > info->present_id) {
++         info->present_id = image->present_id;
++         u_cnd_monotonic_broadcast(&info->present_id_cond);
++      }
++      mtx_unlock(&info->mutex);
++      image->present_id = 0;
++   }
++
++   u_cnd_monotonic_broadcast(&chain->cond);
++}
++
++static uint32_t
++wsi_iosurface_queue_pop_locked(struct wsi_iosurface_swapchain *chain)
++{
++   assert(chain->queue_count);
++   const uint32_t index = chain->queue[chain->queue_head];
++   chain->queue_head = (chain->queue_head + 1) % WSI_IOSURFACE_MAX_IMAGES;
++   chain->queue_count--;
++   return index;
++}
++
++/* A presented frame that will never be shown: back to the application. Its
++ * present ID is covered by the newer frame's.
++ */
++static void
++wsi_iosurface_drop_locked(struct wsi_iosurface_swapchain *chain,
++                          uint32_t index)
++{
++   struct wsi_iosurface_image *image = &chain->images[index];
++   image->state = WSI_IOSURFACE_IMAGE_FREE;
++   image->present_id = 0;
++   image->retired = ++chain->serial;
++   chain->fps_dropped++;
++   u_cnd_monotonic_broadcast(&chain->cond);
++}
++
++/* MAILBOX: queued frames older than the newest finished one will never be
++ * shown, so they go back to the application as soon as that one finished
++ * (not at the next refresh): the application keeps rendering ahead.
++ */
++static void
++wsi_iosurface_prune_locked(struct wsi_iosurface_swapchain *chain)
++{
++   if (chain->base.present_mode != VK_PRESENT_MODE_MAILBOX_KHR)
++      return;
++
++   int32_t newest_done = -1;
++   for (uint32_t k = 0; k < chain->queue_count; k++) {
++      const uint32_t index =
++         chain->queue[(chain->queue_head + k) % WSI_IOSURFACE_MAX_IMAGES];
++      if (wsi_iosurface_image_fence_done(chain, index))
++         newest_done = k;
++   }
++   for (int32_t k = 0; k < newest_done; k++)
++      wsi_iosurface_drop_locked(chain, wsi_iosurface_queue_pop_locked(chain));
++}
++
++/* The display link's refresh: latch a frame whose rendering is done. FIFO:
++ * the oldest queued one. MAILBOX: the newest finished one.
++ */
++static void
++wsi_iosurface_vblank(void *data)
++{
++   struct wsi_iosurface_swapchain *chain = data;
++
++   mtx_lock(&chain->lock);
++   if (chain->status == VK_SUCCESS && chain->queue_count) {
++      wsi_iosurface_prune_locked(chain);
++      if (wsi_iosurface_image_fence_done(chain, chain->queue[chain->queue_head]))
++         wsi_iosurface_show_locked(chain, wsi_iosurface_queue_pop_locked(chain));
++   }
++   mtx_unlock(&chain->lock);
++}
++
++static VkResult
++wsi_iosurface_start_vblank_locked(struct wsi_iosurface_swapchain *chain)
++{
++   if (chain->vblank)
++      return VK_SUCCESS;
++   chain->vblank = wsi_metal_vblank_start(wsi_iosurface_vblank, chain);
++   return chain->vblank ? VK_SUCCESS : VK_ERROR_SURFACE_LOST_KHR;
++}
++
++static void
++wsi_iosurface_swapchain_set_present_mode(struct wsi_swapchain *wsi_chain,
++                                         VkPresentModeKHR mode)
++{
++   struct wsi_iosurface_swapchain *chain =
++      (struct wsi_iosurface_swapchain *)wsi_chain;
++
++   mtx_lock(&chain->lock);
++   chain->base.present_mode = mode;
++   mtx_unlock(&chain->lock);
++}
++
++static VkResult
++wsi_iosurface_swapchain_queue_present(struct wsi_swapchain *wsi_chain,
++                                      uint32_t image_index,
++                                      uint64_t present_id,
++                                      const VkPresentRegionKHR *damage)
++{
++   struct wsi_iosurface_swapchain *chain =
++      (struct wsi_iosurface_swapchain *)wsi_chain;
++   const struct wsi_device *wsi = chain->base.wsi;
++   struct wsi_iosurface_image *image = &chain->images[image_index];
++   VkFence fence = chain->base.fences[image_index];
++
++   /* The frame's fence becomes the IOSurface's write fence: the window
++    * server's GPU waits for it, nobody's CPU does.  If the driver could not
++    * attach it, wait here so the window server never reads a frame that is
++    * still being rendered.
++    */
++   VkResult result = wsi->iosurface.signal_write(chain->base.device, fence,
++                                                 image->iosurface,
++                                                 chain->gpu_memory);
++   if (result != VK_SUCCESS) {
++      result = wsi->WaitForFences(chain->base.device, 1, &fence, true, UINT64_MAX);
++      if (result != VK_SUCCESS)
++         return result;
++   }
++
++   mtx_lock(&chain->lock);
++   if (chain->status != VK_SUCCESS) {
++      result = chain->status;
++      image->state = WSI_IOSURFACE_IMAGE_FREE;
++      mtx_unlock(&chain->lock);
++      return result;
++   }
++
++   image->present_id = chain->base.present_wait_enabled ? present_id : 0;
++
++   if (chain->base.present_mode == VK_PRESENT_MODE_IMMEDIATE_KHR) {
++      /* Frames still queued from before a switch to IMMEDIATE
++       * (VK_KHR_swapchain_maintenance1) are behind this one.
++       */
++      while (chain->queue_count)
++         wsi_iosurface_drop_locked(chain, wsi_iosurface_queue_pop_locked(chain));
++      wsi_iosurface_show_locked(chain, image_index);
++   } else {
++      assert(chain->queue_count < WSI_IOSURFACE_MAX_IMAGES);
++      chain->queue[(chain->queue_head + chain->queue_count) %
++                   WSI_IOSURFACE_MAX_IMAGES] = image_index;
++      chain->queue_count++;
++      image->state = WSI_IOSURFACE_IMAGE_QUEUED;
++      wsi_iosurface_prune_locked(chain);
++      result = wsi_iosurface_start_vblank_locked(chain);
++   }
++
++   if (chain->fps_log) {
++      chain->fps_presents++;
++      const uint64_t now = os_time_get_nano();
++      if (!chain->fps_t0) {
++         chain->fps_t0 = now;
++      } else if (now - chain->fps_t0 >= 2000000000ull) {
++         const double s = (now - chain->fps_t0) / 1e9;
++         static const char *const mode_names[] = {
++            "IMMEDIATE", "MAILBOX", "FIFO", "FIFO_RELAXED",
++         };
++         fprintf(chain->fps_log,
++                 "%.3f pid %d %ux%u %s %u images (%s): %.1f presents/s, "
++                 "%.1f shown/s, %.1f dropped/s, acquire %.3f ms/frame\n",
++                 now / 1e9, (int)getpid(), chain->extent.width,
++                 chain->extent.height,
++                 chain->base.present_mode < 4 ?
++                    mode_names[chain->base.present_mode] : "?",
++                 chain->base.image_count,
++                 chain->gpu_memory ? "shared VRAM" : "page copies",
++                 chain->fps_presents / s, chain->fps_shown / s,
++                 chain->fps_dropped / s,
++                 chain->fps_presents ?
++                    chain->fps_acquire_ns / 1e6 / chain->fps_presents : 0.0);
++         fflush(chain->fps_log);
++         chain->fps_t0 = now;
++         chain->fps_presents = chain->fps_shown = chain->fps_dropped = 0;
++         chain->fps_acquire_ns = 0;
++      }
++   }
++   mtx_unlock(&chain->lock);
++
++   if (result != VK_SUCCESS)
++      return result;
++
++   uint32_t width = 0, height = 0;
++   wsi_metal_layer_size(chain->surface->pLayer, &width, &height);
++   return (width == chain->extent.width && height == chain->extent.height) ?
++          VK_SUCCESS : VK_SUBOPTIMAL_KHR;
++}
++
++static VkResult
++wsi_iosurface_swapchain_acquire_next_image(struct wsi_swapchain *wsi_chain,
++                                           const VkAcquireNextImageInfoKHR *info,
++                                           uint32_t *image_index)
++{
++   struct wsi_iosurface_swapchain *chain =
++      (struct wsi_iosurface_swapchain *)wsi_chain;
++   const struct wsi_device *wsi = chain->base.wsi;
++   const uint64_t abs_timeout = info->timeout == UINT64_MAX ? UINT64_MAX :
++                                os_time_get_absolute_timeout(info->timeout);
++   const uint64_t acquire_t0 = chain->fps_log ? os_time_get_nano() : 0;
++   int32_t best;
++
++   mtx_lock(&chain->lock);
++   for (;;) {
++      if (chain->status != VK_SUCCESS) {
++         mtx_unlock(&chain->lock);
++         return chain->status;
++      }
++
++      /* MAILBOX frames overtaken by a finished one come back now. */
++      wsi_iosurface_prune_locked(chain);
++
++      bool in_use = chain->base.present_mode == VK_PRESENT_MODE_MAILBOX_KHR &&
++                    chain->queue_count > 1;
++      best = -1;
++      for (uint32_t i = 0; i < chain->base.image_count; i++) {
++         struct wsi_iosurface_image *image = &chain->images[i];
++         if (image->state != WSI_IOSURFACE_IMAGE_FREE)
++            continue;
++         if (wsi_metal_iosurface_in_use(image->iosurface)) {
++            in_use = true;
++            continue;
++         }
++         if (best < 0 || image->retired < chain->images[best].retired)
++            best = i;
++      }
++      if (best >= 0)
++         break;
++
++      if (info->timeout == 0) {
++         mtx_unlock(&chain->lock);
++         return VK_NOT_READY;
++      }
++      const uint64_t now = os_time_get_nano();
++      if (now >= abs_timeout) {
++         mtx_unlock(&chain->lock);
++         return VK_TIMEOUT;
++      }
++
++      /* Images the window server still holds, and MAILBOX frames waiting
++       * to be overtaken, come back without a wake-up: poll for them;
++       * anything else (a frame shown) wakes us.
++       */
++      uint64_t until = in_use ? MIN2(abs_timeout, now + 200 * 1000) : abs_timeout;
++      if (until == UINT64_MAX) {
++         u_cnd_monotonic_wait(&chain->cond, &chain->lock);
++      } else {
++         struct timespec ts;
++         timespec_from_nsec(&ts, until);
++         u_cnd_monotonic_timedwait(&chain->cond, &chain->lock, &ts);
++      }
++   }
++   struct wsi_iosurface_image *image = &chain->images[best];
++   image->state = WSI_IOSURFACE_IMAGE_ACQUIRED;
++   mtx_unlock(&chain->lock);
++
++   /* The window server's last GPU reads of the IOSurface. */
++   VkResult result = wsi->iosurface.wait_idle(chain->base.device,
++                                              image->iosurface,
++                                              info->timeout == 0 ? 0 : abs_timeout);
++   if (result != VK_SUCCESS) {
++      mtx_lock(&chain->lock);
++      image->state = WSI_IOSURFACE_IMAGE_FREE;
++      mtx_unlock(&chain->lock);
++      if (result == VK_TIMEOUT && info->timeout == 0)
++         result = VK_NOT_READY;
++      return result;
++   }
++
++   *image_index = best;
++   if (chain->fps_log) {
++      mtx_lock(&chain->lock);
++      chain->fps_acquire_ns += os_time_get_nano() - acquire_t0;
++      mtx_unlock(&chain->lock);
++   }
++
++   uint32_t width = 0, height = 0;
++   wsi_metal_layer_size(chain->surface->pLayer, &width, &height);
++   return (width == chain->extent.width && height == chain->extent.height) ?
++          VK_SUCCESS : VK_SUBOPTIMAL_KHR;
++}
++
++static VkResult
++wsi_iosurface_swapchain_release_images(struct wsi_swapchain *wsi_chain,
++                                       uint32_t count, const uint32_t *indices)
++{
++   struct wsi_iosurface_swapchain *chain =
++      (struct wsi_iosurface_swapchain *)wsi_chain;
++
++   mtx_lock(&chain->lock);
++   for (uint32_t i = 0; i < count; i++) {
++      struct wsi_iosurface_image *image = &chain->images[indices[i]];
++      assert(image->state == WSI_IOSURFACE_IMAGE_ACQUIRED);
++      image->state = WSI_IOSURFACE_IMAGE_FREE;
++   }
++   u_cnd_monotonic_broadcast(&chain->cond);
++   mtx_unlock(&chain->lock);
++
++   return VK_SUCCESS;
++}
++
++static VkResult
++wsi_iosurface_swapchain_wait_for_present(struct wsi_swapchain *wsi_chain,
++                                         uint64_t waitValue,
++                                         uint64_t timeout)
++{
++   struct wsi_iosurface_swapchain *chain =
++      (struct wsi_iosurface_swapchain *)wsi_chain;
++   struct wsi_metal_present_info *present_info = chain->present_info;
++
++   /* The present's submission first (its semaphore). */
++   VkResult result = wsi_swapchain_wait_for_present_semaphore(
++      &chain->base, waitValue, timeout);
++   if (result != VK_SUCCESS)
++      return result;
++
++   struct timespec abs_timespec;
++   timespec_from_nsec(&abs_timespec, timeout == 0 ? 0 :
++                      os_time_get_absolute_timeout(timeout));
++
++   mtx_lock(&present_info->mutex);
++   while (present_info->present_id < waitValue) {
++      int ret = u_cnd_monotonic_timedwait(&present_info->present_id_cond,
++                                          &present_info->mutex,
++                                          &abs_timespec);
++      if (ret == thrd_timedout) {
++         result = VK_TIMEOUT;
++         break;
++      }
++      if (ret != thrd_success) {
++         result = VK_ERROR_DEVICE_LOST;
++         break;
++      }
++   }
++   mtx_unlock(&present_info->mutex);
++   return result;
++}
++
++static void
++wsi_iosurface_destroy_images(struct wsi_iosurface_swapchain *chain,
++                             uint32_t count)
++{
++   for (uint32_t i = 0; i < count; i++) {
++      struct wsi_iosurface_image *image = &chain->images[i];
++      wsi_destroy_image(&chain->base, &image->base);
++      /* Core Animation keeps the IOSurface it shows (and the GPU memory
++       * behind it) until the next swapchain's first frame replaces it.
++       */
++      wsi_metal_iosurface_release(image->iosurface);
++      image->iosurface = NULL;
++   }
++}
++
++static VkResult
++wsi_iosurface_swapchain_destroy(struct wsi_swapchain *wsi_chain,
++                                const VkAllocationCallbacks *pAllocator)
++{
++   struct wsi_iosurface_swapchain *chain =
++      (struct wsi_iosurface_swapchain *)wsi_chain;
++
++   mtx_lock(&chain->lock);
++   chain->status = VK_ERROR_OUT_OF_DATE_KHR;
++   u_cnd_monotonic_broadcast(&chain->cond);
++   mtx_unlock(&chain->lock);
++
++   /* After this no refresh tick runs. */
++   wsi_metal_vblank_stop(chain->vblank);
++
++   wsi_iosurface_destroy_images(chain, chain->base.image_count);
++   wsi_metal_contents_layer_put(chain->contents);
++   if (chain->fps_log)
++      fclose(chain->fps_log);
++   wsi_metal_release_present_info(chain->present_info);
++   u_cnd_monotonic_destroy(&chain->cond);
++   mtx_destroy(&chain->lock);
++   wsi_swapchain_finish(&chain->base);
++   vk_free(pAllocator, chain);
++   return VK_SUCCESS;
++}
++
++static VkResult
++wsi_iosurface_create_swapchain(VkIcdSurfaceMetal *metal_surface,
++                               VkDevice device,
++                               struct wsi_device *wsi_device,
++                               const VkSwapchainCreateInfoKHR *pCreateInfo,
++                               const VkAllocationCallbacks *pAllocator,
++                               bool gpu_memory,
++                               struct wsi_swapchain **swapchain_out)
++{
++   /* MAILBOX holds a finished frame for the next refresh next to the shown
++    * one: a fourth image lets the application keep rendering meanwhile
++    * (with three it waits for each frame's GPU work, ~4x slower measured).
++    * Creating more images than minImageCount is allowed.
++    */
++   const uint32_t min_images =
++      wsi_swapchain_get_present_mode(wsi_device, pCreateInfo) ==
++         VK_PRESENT_MODE_MAILBOX_KHR ? 4 : WSI_IOSURFACE_MIN_IMAGES;
++   const uint32_t num_images = CLAMP(pCreateInfo->minImageCount, min_images,
++                                     WSI_IOSURFACE_MAX_IMAGES);
++   VkResult result;
++
++   if (!wsi_metal_iosurface_format_supported(pCreateInfo->imageFormat,
++                                             pCreateInfo->imageColorSpace))
++      return VK_ERROR_FORMAT_NOT_SUPPORTED;
++
++   struct wsi_iosurface_swapchain *chain;
++   const size_t size = sizeof(*chain) + num_images * sizeof(chain->images[0]);
++   chain = vk_zalloc(pAllocator, size, 8, VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
++   if (chain == NULL)
++      return VK_ERROR_OUT_OF_HOST_MEMORY;
++
++   /* Read by wsi_iosurface_configure_image() from wsi_swapchain_init(). */
++   chain->surface = metal_surface;
++   chain->extent = pCreateInfo->imageExtent;
++   chain->format = pCreateInfo->imageFormat;
++   chain->color_space = pCreateInfo->imageColorSpace;
++   chain->gpu_memory = gpu_memory;
++
++   const struct wsi_metal_image_params params = {
++      .base.image_type = WSI_IMAGE_TYPE_METAL,
++      .iosurface = true,
++      .iosurface_pages = !gpu_memory,
++   };
++   result = wsi_swapchain_init(wsi_device, &chain->base, device,
++                               pCreateInfo, &params.base, pAllocator);
++   if (result != VK_SUCCESS)
++      goto fail_chain_alloc;
++
++   chain->base.destroy = wsi_iosurface_swapchain_destroy;
++   chain->base.get_wsi_image = wsi_iosurface_swapchain_get_wsi_image;
++   chain->base.acquire_next_image = wsi_iosurface_swapchain_acquire_next_image;
++   chain->base.release_images = wsi_iosurface_swapchain_release_images;
++   chain->base.set_present_mode = wsi_iosurface_swapchain_set_present_mode;
++   chain->base.queue_present = wsi_iosurface_swapchain_queue_present;
++   chain->base.wait_for_present = wsi_iosurface_swapchain_wait_for_present;
++   chain->base.wait_for_present2 = wsi_iosurface_swapchain_wait_for_present;
++   chain->base.present_mode = wsi_swapchain_get_present_mode(wsi_device, pCreateInfo);
++   chain->base.image_count = num_images;
++   chain->shown = -1;
++
++   if (mtx_init(&chain->lock, mtx_plain) != thrd_success) {
++      result = VK_ERROR_OUT_OF_HOST_MEMORY;
++      goto fail_init;
++   }
++   if (u_cnd_monotonic_init(&chain->cond) != thrd_success) {
++      result = VK_ERROR_OUT_OF_HOST_MEMORY;
++      goto fail_lock;
++   }
++
++   chain->present_info = wsi_metal_create_present_info();
++   if (chain->present_info == NULL) {
++      result = VK_ERROR_OUT_OF_HOST_MEMORY;
++      goto fail_cond;
++   }
++
++   uint32_t created = 0;
++   for (; created < num_images; created++) {
++      struct wsi_iosurface_image *image = &chain->images[created];
++      image->chain = chain;
++      result = wsi_create_image(&chain->base, &chain->base.image_info,
++                                &image->base);
++      if (result != VK_SUCCESS) {
++         wsi_metal_iosurface_release(image->iosurface);
++         image->iosurface = NULL;
++         goto fail_images;
++      }
++   }
++
++   const char *fps_log = os_get_option("MESA_VK_WSI_FPS_LOG");
++   if (fps_log && fps_log[0])
++      chain->fps_log = fopen(fps_log, "a");
++
++   chain->contents =
++      wsi_metal_contents_layer_get(metal_surface->pLayer,
++                                   pCreateInfo->compositeAlpha &
++                                   VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR);
++   if (!chain->contents) {
++      result = VK_ERROR_OUT_OF_HOST_MEMORY;
++      goto fail_images;
++   }
++
++   *swapchain_out = &chain->base;
++   return VK_SUCCESS;
++
++fail_images:
++   if (chain->fps_log)
++      fclose(chain->fps_log);
++   wsi_iosurface_destroy_images(chain, created);
++   wsi_metal_release_present_info(chain->present_info);
++fail_cond:
++   u_cnd_monotonic_destroy(&chain->cond);
++fail_lock:
++   mtx_destroy(&chain->lock);
++fail_init:
++   wsi_swapchain_finish(&chain->base);
++fail_chain_alloc:
++   vk_free(pAllocator, chain);
++   return result;
++}
++
++static VkResult
++wsi_iosurface_surface_create_swapchain(VkIcdSurfaceMetal *metal_surface,
++                                       VkDevice device,
++                                       struct wsi_device *wsi_device,
++                                       const VkSwapchainCreateInfoKHR *pCreateInfo,
++                                       const VkAllocationCallbacks *pAllocator,
++                                       struct wsi_swapchain **swapchain_out)
++{
++   VkResult result = VK_ERROR_FEATURE_NOT_PRESENT;
++
++   /* MESA_VK_WSI_DEBUG=buffer: always copy into the pages. */
++   if (!(WSI_DEBUG & WSI_DEBUG_BUFFER) &&
++       wsi_device->iosurface.supports_gpu_memory(device)) {
++      result = wsi_iosurface_create_swapchain(metal_surface, device, wsi_device,
++                                              pCreateInfo, pAllocator,
++                                              true, swapchain_out);
++      if (result == VK_SUCCESS || result == VK_ERROR_FORMAT_NOT_SUPPORTED)
++         return result;
++   }
++
++   /* No shared GPU memory (the kernel switch is off, or its budget is
++    * spent): copy into the IOSurfaces' pages.
++    */
++   return wsi_iosurface_create_swapchain(metal_surface, device, wsi_device,
++                                         pCreateInfo, pAllocator,
++                                         false, swapchain_out);
++}
++
+ VkResult
+ wsi_metal_init_wsi(struct wsi_device *wsi_device,
+                     const VkAllocationCallbacks *alloc,
+@@ -1128,6 +2004,9 @@ wsi_metal_configure_image(const struct wsi_swapchain *chain,
+                           const struct wsi_metal_image_params *params,
+                           struct wsi_image_info *info)
+ {
++   if (params->iosurface)
++      return wsi_iosurface_configure_image(chain, pCreateInfo, params, info);
++
+    VkResult result =
+       wsi_configure_image(chain, pCreateInfo, 0, info);
+    if (result != VK_SUCCESS)
+diff --git a/src/vulkan/wsi/wsi_common_metal_layer.h b/src/vulkan/wsi/wsi_common_metal_layer.h
+index f98fd1a1c74..2f355a92cba 100644
+--- a/src/vulkan/wsi/wsi_common_metal_layer.h
++++ b/src/vulkan/wsi/wsi_common_metal_layer.h
+@@ -67,4 +67,62 @@ void
+ wsi_metal_layer_remove_queue_resident(const CAMetalLayer *metal_layer,
+    void *mtl4_command_queue);
+ 
++/* IOSurface swapchains (wsi_device::iosurface) */
++
++bool
++wsi_metal_iosurface_format_supported(VkFormat format,
++                                     VkColorSpaceKHR color_space);
++
++/* A width x height IOSurface of `format` with the given row pitch and
++ * allocation size, tagged with the color space.  NULL on failure.
++ * *id_out: its IOSurface ID.
++ */
++void *
++wsi_metal_iosurface_create(uint32_t width, uint32_t height,
++                           VkFormat format, VkColorSpaceKHR color_space,
++                           uint32_t bytes_per_row, uint64_t alloc_size,
++                           uint32_t *id_out);
++
++void
++wsi_metal_iosurface_release(void *iosurface);
++
++/* The IOSurface's pages (to import them as host memory). */
++void *
++wsi_metal_iosurface_base_address(void *iosurface);
++
++/* True while some process (the window server showing it) uses it. */
++bool
++wsi_metal_iosurface_in_use(void *iosurface);
++
++/* The layer that shows a swapchain's IOSurfaces: a sublayer filling the
++ * CAMetalLayer, one per CAMetalLayer, kept across swapchains so that a
++ * recreated swapchain does not blank the window.
++ */
++struct wsi_metal_contents_layer;
++
++struct wsi_metal_contents_layer *
++wsi_metal_contents_layer_get(const CAMetalLayer *metal_layer, bool opaque);
++
++/* Show `iosurface`: a Core Animation transaction committed now, without
++ * animation; the window server shows it from its next composite on.
++ */
++void
++wsi_metal_contents_layer_set(struct wsi_metal_contents_layer *layer,
++                             void *iosurface);
++
++void
++wsi_metal_contents_layer_put(struct wsi_metal_contents_layer *layer);
++
++/* A display link that calls tick(data) on its own thread at every refresh
++ * of the main display: FIFO and MAILBOX swapchains latch frames there.
++ */
++struct wsi_metal_vblank;
++
++struct wsi_metal_vblank *
++wsi_metal_vblank_start(void (*tick)(void *data), void *data);
++
++/* No tick runs after this returns. */
++void
++wsi_metal_vblank_stop(struct wsi_metal_vblank *vblank);
++
+ #endif // WSI_COMMON_METAL_LAYER_H
+diff --git a/src/vulkan/wsi/wsi_common_metal_layer.m b/src/vulkan/wsi/wsi_common_metal_layer.m
+index 6308d70da11..318753edc3c 100644
+--- a/src/vulkan/wsi/wsi_common_metal_layer.m
++++ b/src/vulkan/wsi/wsi_common_metal_layer.m
+@@ -395,3 +395,315 @@
+    }
+ #endif
+ }
++
++/* IOSurface swapchains (wsi_device::iosurface) */
++
++#import <IOSurface/IOSurface.h>
++#import <CoreVideo/CoreVideo.h>
++#import <QuartzCore/CATransaction.h>
++
++static bool
++iosurface_format(VkFormat format, uint32_t *pixel_format, uint32_t *cpp)
++{
++   switch (format) {
++   case VK_FORMAT_B8G8R8A8_UNORM:
++   case VK_FORMAT_B8G8R8A8_SRGB:
++      *pixel_format = 'BGRA'; /* kCVPixelFormatType_32BGRA */
++      *cpp = 4;
++      return true;
++   default:
++      return false;
++   }
++}
++
++bool
++wsi_metal_iosurface_format_supported(VkFormat format,
++                                     VkColorSpaceKHR color_space)
++{
++   uint32_t pixel_format, cpp;
++   return iosurface_format(format, &pixel_format, &cpp) &&
++          color_space == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
++}
++
++static void
++dict_set_u32(CFMutableDictionaryRef dict, CFStringRef key, uint32_t value)
++{
++   CFNumberRef n = CFNumberCreate(NULL, kCFNumberSInt32Type, &value);
++   CFDictionarySetValue(dict, key, n);
++   CFRelease(n);
++}
++
++void *
++wsi_metal_iosurface_create(uint32_t width, uint32_t height,
++                           VkFormat format, VkColorSpaceKHR color_space,
++                           uint32_t bytes_per_row, uint64_t alloc_size,
++                           uint32_t *id_out)
++{
++   uint32_t pixel_format, cpp;
++   if (!iosurface_format(format, &pixel_format, &cpp) ||
++       alloc_size > UINT32_MAX)
++      return NULL;
++
++   CFMutableDictionaryRef props =
++      CFDictionaryCreateMutable(NULL, 0, &kCFTypeDictionaryKeyCallBacks,
++                                &kCFTypeDictionaryValueCallBacks);
++   dict_set_u32(props, kIOSurfaceWidth, width);
++   dict_set_u32(props, kIOSurfaceHeight, height);
++   dict_set_u32(props, kIOSurfaceBytesPerElement, cpp);
++   dict_set_u32(props, kIOSurfaceBytesPerRow, bytes_per_row);
++   dict_set_u32(props, kIOSurfaceAllocSize, (uint32_t)alloc_size);
++   dict_set_u32(props, kIOSurfacePixelFormat, pixel_format);
++   IOSurfaceRef surface = IOSurfaceCreate(props);
++   CFRelease(props);
++   if (!surface)
++      return NULL;
++
++   if (IOSurfaceGetBytesPerRow(surface) != bytes_per_row ||
++       IOSurfaceGetAllocSize(surface) < alloc_size) {
++      CFRelease(surface);
++      return NULL;
++   }
++
++   /* The pixels are sRGB-encoded: tag the surface so that the window server
++    * color-matches it like a CAMetalLayer drawable of the same format.
++    */
++   CGColorSpaceRef cs = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
++   if (cs) {
++      CFDataRef icc = CGColorSpaceCopyICCData(cs);
++      if (icc) {
++         IOSurfaceSetValue(surface, CFSTR("IOSurfaceColorSpace"), icc);
++         CFRelease(icc);
++      }
++      CGColorSpaceRelease(cs);
++   }
++
++   *id_out = IOSurfaceGetID(surface);
++   return surface;
++}
++
++void
++wsi_metal_iosurface_release(void *iosurface)
++{
++   if (iosurface)
++      CFRelease((IOSurfaceRef)iosurface);
++}
++
++void *
++wsi_metal_iosurface_base_address(void *iosurface)
++{
++   return IOSurfaceGetBaseAddress((IOSurfaceRef)iosurface);
++}
++
++bool
++wsi_metal_iosurface_in_use(void *iosurface)
++{
++   return IOSurfaceIsInUse((IOSurfaceRef)iosurface);
++}
++
++struct wsi_metal_contents_layer {
++   CALayer *layer;
++};
++
++static NSString *const wsi_contents_layer_name = @"org.freedesktop.mesa.wsi.iosurface";
++
++struct wsi_metal_contents_layer *
++wsi_metal_contents_layer_get(const CAMetalLayer *metal_layer, bool opaque)
++{
++   struct wsi_metal_contents_layer *l = calloc(1, sizeof(*l));
++   if (!l)
++      return NULL;
++
++   @autoreleasepool {
++      CALayer *layer = nil;
++      for (CALayer *sub in metal_layer.sublayers) {
++         if ([sub.name isEqualToString:wsi_contents_layer_name]) {
++            layer = sub;
++            break;
++         }
++      }
++
++      [CATransaction begin];
++      [CATransaction setDisableActions:YES];
++      if (!layer) {
++         layer = [CALayer layer];
++         layer.name = wsi_contents_layer_name;
++         layer.anchorPoint = CGPointZero;
++         layer.frame = metal_layer.bounds;
++         layer.contentsScale = metal_layer.contentsScale;
++         layer.contentsGravity = kCAGravityResize;
++         layer.autoresizingMask = kCALayerWidthSizable | kCALayerHeightSizable;
++         [(CAMetalLayer *)metal_layer addSublayer:layer];
++      }
++      layer.opaque = opaque;
++      [CATransaction commit];
++      [CATransaction flush];
++
++      l->layer = [layer retain];
++   }
++
++   return l;
++}
++
++void
++wsi_metal_contents_layer_set(struct wsi_metal_contents_layer *l,
++                             void *iosurface)
++{
++   @autoreleasepool {
++      CALayer *layer = l->layer;
++      CALayer *super_layer = layer.superlayer;
++
++      [CATransaction begin];
++      [CATransaction setDisableActions:YES];
++      if (super_layer) {
++         /* Follow the window's size and backing scale (the swapchain is
++          * SUBOPTIMAL until the application recreates it).
++          */
++         const CGRect bounds = super_layer.bounds;
++         if (!CGRectEqualToRect(layer.frame, bounds))
++            layer.frame = bounds;
++         if (layer.contentsScale != super_layer.contentsScale)
++            layer.contentsScale = super_layer.contentsScale;
++      }
++      layer.contents = (id)iosurface;
++      [CATransaction commit];
++      /* Also commit an implicit transaction this thread may have open, so
++       * the frame goes to the window server now, not at the end of the
++       * thread's next run loop turn.
++       */
++      [CATransaction flush];
++   }
++}
++
++void
++wsi_metal_contents_layer_put(struct wsi_metal_contents_layer *l)
++{
++   if (!l)
++      return;
++   [l->layer release];
++   free(l);
++}
++
++#pragma clang diagnostic push
++#pragma clang diagnostic ignored "-Wdeprecated-declarations"
++
++#include <errno.h>
++#include <pthread.h>
++#include <time.h>
++
++/* The latch thread runs tick() at every refresh the display link reports.
++ * Without a display link (no active display: the screen asleep, a headless
++ * session) or when its callbacks stop (display sleep), it ticks on its own
++ * every 1/60 s, so FIFO and MAILBOX swapchains keep moving.
++ */
++struct wsi_metal_vblank {
++   CVDisplayLinkRef link;
++   void (*tick)(void *data);
++   void *data;
++   pthread_t thread;
++   pthread_mutex_t mutex;
++   pthread_cond_t cond;
++   uint64_t refreshes;
++   bool stop;
++};
++
++#define WSI_METAL_VBLANK_FALLBACK_NS (1000000000ull / 60)
++
++static CVReturn
++wsi_metal_vblank_cb(CVDisplayLinkRef link, const CVTimeStamp *now,
++                    const CVTimeStamp *output_time, CVOptionFlags flags_in,
++                    CVOptionFlags *flags_out, void *ctx)
++{
++   struct wsi_metal_vblank *v = ctx;
++   pthread_mutex_lock(&v->mutex);
++   v->refreshes++;
++   pthread_cond_signal(&v->cond);
++   pthread_mutex_unlock(&v->mutex);
++   return kCVReturnSuccess;
++}
++
++static void *
++wsi_metal_vblank_thread(void *arg)
++{
++   struct wsi_metal_vblank *v = arg;
++   pthread_setname_np("mesa-wsi-vblank");
++   pthread_mutex_lock(&v->mutex);
++   while (!v->stop) {
++      const uint64_t seen = v->refreshes;
++      struct timespec ts;
++      clock_gettime(CLOCK_REALTIME, &ts);
++      uint64_t ns = (uint64_t)ts.tv_nsec + WSI_METAL_VBLANK_FALLBACK_NS +
++                    (v->link ? WSI_METAL_VBLANK_FALLBACK_NS : 0);
++      ts.tv_sec += ns / 1000000000ull;
++      ts.tv_nsec = ns % 1000000000ull;
++      while (!v->stop && v->refreshes == seen) {
++         if (pthread_cond_timedwait(&v->cond, &v->mutex, &ts) == ETIMEDOUT)
++            break;
++      }
++      if (v->stop)
++         break;
++      pthread_mutex_unlock(&v->mutex);
++      v->tick(v->data);
++      pthread_mutex_lock(&v->mutex);
++   }
++   pthread_mutex_unlock(&v->mutex);
++   return NULL;
++}
++
++struct wsi_metal_vblank *
++wsi_metal_vblank_start(void (*tick)(void *data), void *data)
++{
++   struct wsi_metal_vblank *v = calloc(1, sizeof(*v));
++   if (!v)
++      return NULL;
++   v->tick = tick;
++   v->data = data;
++   pthread_mutex_init(&v->mutex, NULL);
++   pthread_cond_init(&v->cond, NULL);
++
++   if (CVDisplayLinkCreateWithActiveCGDisplays(&v->link) == kCVReturnSuccess) {
++      CVDisplayLinkSetCurrentCGDisplay(v->link, CGMainDisplayID());
++      CVDisplayLinkSetOutputCallback(v->link, wsi_metal_vblank_cb, v);
++      if (CVDisplayLinkStart(v->link) != kCVReturnSuccess) {
++         CVDisplayLinkRelease(v->link);
++         v->link = NULL;
++      }
++   } else {
++      v->link = NULL;
++   }
++
++   if (pthread_create(&v->thread, NULL, wsi_metal_vblank_thread, v)) {
++      if (v->link) {
++         CVDisplayLinkStop(v->link);
++         CVDisplayLinkRelease(v->link);
++      }
++      pthread_cond_destroy(&v->cond);
++      pthread_mutex_destroy(&v->mutex);
++      free(v);
++      return NULL;
++   }
++   return v;
++}
++
++void
++wsi_metal_vblank_stop(struct wsi_metal_vblank *v)
++{
++   if (!v)
++      return;
++   /* CVDisplayLinkStop waits for the display link thread to finish its
++    * callback; then the latch thread finishes its tick and exits.
++    */
++   if (v->link) {
++      CVDisplayLinkStop(v->link);
++      CVDisplayLinkRelease(v->link);
++   }
++   pthread_mutex_lock(&v->mutex);
++   v->stop = true;
++   pthread_cond_signal(&v->cond);
++   pthread_mutex_unlock(&v->mutex);
++   pthread_join(v->thread, NULL);
++   pthread_cond_destroy(&v->cond);
++   pthread_mutex_destroy(&v->mutex);
++   free(v);
++}
++
++#pragma clang diagnostic pop
+diff --git a/src/vulkan/wsi/wsi_common_private.h b/src/vulkan/wsi/wsi_common_private.h
+index 58b592a481c..878ca63f51f 100644
+--- a/src/vulkan/wsi/wsi_common_private.h
++++ b/src/vulkan/wsi/wsi_common_private.h
+@@ -610,6 +610,14 @@ struct wsi_metal_image_params {
+     * directly and therefore require a blit
+     */
+    bool can_render_to_texture;
++
++   /* IOSurface swapchain (wsi_device::iosurface): images are IOSurfaces.
++    * iosurface_pages: rendered into a private image that is copied into the
++    * IOSurface's pages (buffer blit) instead of rendering into its GPU
++    * memory directly.
++    */
++   bool iosurface;
++   bool iosurface_pages;
+ };
+ 
+ VkResult

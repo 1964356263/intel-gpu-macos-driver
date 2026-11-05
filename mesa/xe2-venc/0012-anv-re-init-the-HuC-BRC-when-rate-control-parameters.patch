@@ -1,0 +1,69 @@
+From 25e396887b34b7925cb8f15ffdf3933016923934 Mon Sep 17 00:00:00 2001
+From: "Emil J. Tywoniak" <emil@tywoniak.eu>
+Date: Sat, 17 Oct 2026 01:41:26 +0200
+Subject: [PATCH 12/18] anv: re-init the HuC BRC when rate control parameters
+ change
+
+The HuC BRC only reads the rate control parameters in its init pass,
+which runs when the session's frame_counter is 0. frame_counter was only
+reset when VK_VIDEO_CODING_CONTROL_RESET_BIT_KHR and
+ENCODE_RATE_CONTROL_BIT_KHR came together, but apps change the bitrate
+mid-stream with an ENCODE_RATE_CONTROL update on its own. The new
+values were stored in the session but never reached the HuC, so the
+encoder kept the bitrate it was first initialised with.
+
+SteamVR's vrlink starts low and raises the bitrate as the link allows.
+Without stream resets the output stayed pinned at ~10 Mbit/s; with this
+change it follows the requested bitrate (~110 Mbit/s observed).
+
+Restart the BRC whenever any rate control parameter actually changes.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_014zf3d6ZuUHNvTB81JRfHds
+---
+ src/intel/vulkan/genX_cmd_video.c | 22 ++++++++++++++++++++++
+ 1 file changed, 22 insertions(+)
+
+diff --git a/src/intel/vulkan/genX_cmd_video.c b/src/intel/vulkan/genX_cmd_video.c
+index 14aa484dbc4..ba871765039 100644
+--- a/src/intel/vulkan/genX_cmd_video.c
++++ b/src/intel/vulkan/genX_cmd_video.c
+@@ -81,6 +81,9 @@ genX(CmdControlVideoCodingKHR)(VkCommandBuffer commandBuffer,
+       struct anv_video_session *vid = cmd_buffer->video.vid;
+       struct anv_video_rc_state *rc = &vid->rc;
+ 
++      const struct anv_video_rc_state old_rc = *rc;
++      const VkVideoEncodeRateControlModeFlagBitsKHR old_rc_mode = vid->rc_mode;
++
+       vid->rc_mode = rate_control_info->rateControlMode;
+ 
+       if (rate_control_info->layerCount > 0) {
+@@ -130,6 +133,25 @@ genX(CmdControlVideoCodingKHR)(VkCommandBuffer commandBuffer,
+          rc->consecutive_b_frames = h264_rc->consecutiveBFrameCount;
+          rc->rc_flags = h264_rc->flags;
+       }
++
++      /* The HuC BRC only picks up the rate control parameters in its init
++       * pass, which runs when frame_counter is 0. Apps change the bitrate
++       * mid-stream with a RATE_CONTROL update without RESET, so re-init the
++       * BRC whenever the parameters actually changed.
++       */
++      if (vid->rc_mode != old_rc_mode ||
++          rc->average_bitrate != old_rc.average_bitrate ||
++          rc->max_bitrate != old_rc.max_bitrate ||
++          rc->frame_rate_num != old_rc.frame_rate_num ||
++          rc->frame_rate_den != old_rc.frame_rate_den ||
++          rc->vbv_size_bits != old_rc.vbv_size_bits ||
++          rc->vbv_initial_fullness_bits != old_rc.vbv_initial_fullness_bits ||
++          rc->min_qp != old_rc.min_qp ||
++          rc->max_qp != old_rc.max_qp ||
++          rc->gop_frame_count != old_rc.gop_frame_count ||
++          rc->idr_period != old_rc.idr_period ||
++          rc->consecutive_b_frames != old_rc.consecutive_b_frames)
++         rc->frame_counter = 0;
+    }
+ }
+ 
+-- 
+2.54.0 (Apple Git-157)
+

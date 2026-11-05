@@ -1,0 +1,60 @@
+util/u_queue: destroy the finish barrier after every thread left it (macOS mutex/condvar barrier race, hang at vkDestroyInstance)
+
+diff --git a/src/util/u_queue.c b/src/util/u_queue.c
+index 13659c7720d..c5e558f4e7a 100644
+--- a/src/util/u_queue.c
++++ b/src/util/u_queue.c
+@@ -521,8 +521,13 @@ static void
+ util_queue_finish_execute(void *data, void *gdata, int num_thread)
+ {
+    util_barrier *barrier = data;
+-   if (util_barrier_wait(barrier))
+-      util_barrier_destroy(barrier);
++   /* util_queue_finish destroys the barrier once every thread has left it:
++    * with the mutex/condvar barrier (macOS, Haiku) the thread that completes
++    * the barrier must not destroy it while the others still have to retake
++    * its mutex on their way out of cnd_wait (they then block forever on the
++    * destroyed mutex: a hang in disk_cache_destroy at vkDestroyInstance).
++    */
++   util_barrier_wait(barrier);
+ }
+ 
+ void
+@@ -729,6 +734,8 @@ util_queue_finish(struct util_queue *queue)
+       util_queue_fence_wait(&fences[i]);
+       util_queue_fence_destroy(&fences[i]);
+    }
++   /* every barrier job has returned: no thread uses the barrier any more */
++   util_barrier_destroy(&barrier);
+    simple_mtx_unlock(&queue->finish_lock);
+ 
+    free(fences);
+diff --git a/src/util/u_thread.c b/src/util/u_thread.c
+index d6b3a074e1d..1cf524e7b22 100644
+--- a/src/util/u_thread.c
++++ b/src/util/u_thread.c
+@@ -270,6 +270,10 @@ bool util_barrier_wait(util_barrier *barrier)
+    assert(barrier->waiters < barrier->count);
+    barrier->waiters++;
+ 
++   /* like pthread_barrier_wait: true for exactly one thread (the one that
++    * completes the barrier), as PTHREAD_BARRIER_SERIAL_THREAD
++    */
++   bool serial = false;
+    if (barrier->waiters < barrier->count) {
+       uint64_t sequence = barrier->sequence;
+ 
+@@ -280,11 +284,12 @@ bool util_barrier_wait(util_barrier *barrier)
+       barrier->waiters = 0;
+       barrier->sequence++;
+       cnd_broadcast(&barrier->condvar);
++      serial = true;
+    }
+ 
+    mtx_unlock(&barrier->mutex);
+ 
+-   return true;
++   return serial;
+ }
+ 
+ #endif

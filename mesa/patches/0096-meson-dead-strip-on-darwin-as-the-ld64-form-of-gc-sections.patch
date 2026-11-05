@@ -1,0 +1,34 @@
+meson: -dead_strip on darwin as the ld64 form of --gc-sections
+
+ld_args_gc_sections is how every driver drops the shared code it does not use ("particularly relevant for Vulkan
+drivers"); it only probes for --gc-sections, which ld64 does not have, so darwin builds keep everything. ld64's
+equivalent is -dead_strip; Mach-O objects are already split per symbol (MH_SUBSECTIONS_VIA_SYMBOLS), so no
+-ffunction-sections/-fdata-sections is needed.
+
+libvulkan_intel.dylib (x86_64, prod8 objects; the meson build is byte-identical to relinking build-prod8's objects
+with -Wl,-dead_strip): 31.7 -> 26.9 MB, __TEXT 27.8 -> 23.6 MiB, __DATA_CONST 624 -> 512 KiB, rebases 11526 -> 8950
+(pages with fixups 152 -> 125), binds 349 -> 330, the optional entrypoints resolved to NULL 10954 -> 9195. Same
+175 exports, same 9 initializers, same ObjC sections; the 22 entrypoint tables anv uses are identical slot by slot
+(9702 NULL); the 7 dropped are the Android and vk_cmd_enqueue tables nothing references. All 865 commands resolve
+the same through vk_icdGetInstanceProcAddr. dlopen time is unchanged within noise (3.20 -> 3.18 ms median under
+Rosetta); the gain is size and ~27 fewer dirty pages per process.
+
+Generated-by: LLM
+
+diff --git a/meson.build b/meson.build
+index 5fb705109..3e20988cf 100644
+--- a/meson.build
++++ b/meson.build
+@@ -1464,6 +1464,12 @@ else
+     ld_args_gc_sections += '-Wl,--gc-sections'
+     _trial_c += ['-ffunction-sections', '-fdata-sections']
+     _trial_cpp += ['-ffunction-sections', '-fdata-sections']
++  elif host_machine.system() == 'darwin' and \
++       cc.links('static char unused() { return 5; } int main() { return 0; }',
++                args : '-Wl,-dead_strip', name : 'dead_strip')
++    # ld64's equivalent of --gc-sections. Mach-O objects are already split per symbol
++    # (MH_SUBSECTIONS_VIA_SYMBOLS), so no -ffunction-sections/-fdata-sections needed.
++    ld_args_gc_sections += '-Wl,-dead_strip'
+   endif
+ 
+   # Variables that are only used for assertions are considered unused when assertions

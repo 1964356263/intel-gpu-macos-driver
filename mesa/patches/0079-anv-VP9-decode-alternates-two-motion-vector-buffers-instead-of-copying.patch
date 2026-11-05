@@ -1,0 +1,193 @@
+anv: VP9 decode alternates two motion vector buffers instead of copying one into the other
+
+The MVs a VP9 inter frame may read (use_prev_frame_mvs) are those of the frame decoded last, or none after a key or
+intra-only frame. anv wrote each frame's MVs to ANV_VID_MEM_VP9_MV_CUR and then copied them, with a HuC stream copy,
+into ANV_VID_MEM_VP9_MV_PREV (ANV_VID_MEM_VP9_MV_ZERO after key/intra-only frames): 1.2 MB per 4K frame, 5 MB per 8K
+frame, which was most of a frame's decode time on the B580 (4K 8-bit 30 Mbit/s: 248 fps decode-only, 582 fps with the
+copy left out). media-driver alternates between two MV temporal buffers instead (media_softlet decode_vp9_basic_feature:
+m_curMvTempBufIdx / m_colMvTempBufIdx, "CurrentMVTemporalBuffer" / "CollocatedMVTemporalBuffer[0]" of
+HCP_PIPE_BUF_ADDR_STATE). anv does the same with MV_CUR and MV_PREV, keeping the addresses in the VP9 execution state
+so that the alternation follows execution order, like LastFrameType (ea055452687): an inter frame's
+HCP_PIPE_BUF_ADDR_STATE goes into a second-level batch whose MV addresses (DW31-32, DW66-67 on gfx12 to xe3p) are
+copied in from the execution state when it runs, and after the frame the state advances on the GPU (PREV = CUR,
+CUR <-> OTHER; PREV = ZERO after a key or intra-only frame) with a few MI_COPY_MEM_MEMs.
+B580: libvpx VP9 decodes bit-exact (per-frame md5 against libavcodec) as before, 8/10-bit 1080p/4K/8K, the libvpx
+conformance vectors for intra-only frames, tiles, loop filter deltas, odd sizes and inter-frame reference scaling
+(resize_inter 1:2 and 3:4); decode-only 4K 8-bit 248 -> ~550 fps (see the report for every clip).
+
+diff --git a/src/intel/vulkan/anv_private.h b/src/intel/vulkan/anv_private.h
+--- a/src/intel/vulkan/anv_private.h
++++ b/src/intel/vulkan/anv_private.h
+@@ -7086,6 +7086,14 @@
+ #define ANV_VP9_INTER_MODE_PROBS_SIZE 343
+ #define ANV_VP9_SEG_PROBS_OFFSET 2010
+ #define ANV_VP9_EXEC_STATE_LFT_OFFSET 0
++/* GPU addresses of the VP9 motion vector temporal buffers, kept in the execution state so that the ping-pong
++ * between ANV_VID_MEM_VP9_MV_CUR and ANV_VID_MEM_VP9_MV_PREV follows execution order: the buffer the next inter
++ * frame writes (CUR), the other one (OTHER), the collocated buffer it reads (PREV: the MVs of the frame decoded
++ * last, or ANV_VID_MEM_VP9_MV_ZERO after a key or intra-only frame) and the zero buffer itself (ZERO). */
++#define ANV_VP9_EXEC_STATE_MV_CUR_OFFSET 8
++#define ANV_VP9_EXEC_STATE_MV_OTHER_OFFSET 16
++#define ANV_VP9_EXEC_STATE_MV_PREV_OFFSET 24
++#define ANV_VP9_EXEC_STATE_MV_ZERO_OFFSET 32
+ 
+ #define ANV_AV1_ROWSTORE_CACHE_LINE 64
+ #define ANV_AV1_ROWSTORE_BTDL_OFFSET (0    * ANV_AV1_ROWSTORE_CACHE_LINE)
+diff --git a/src/intel/vulkan/anv_video.c b/src/intel/vulkan/anv_video.c
+--- a/src/intel/vulkan/anv_video.c
++++ b/src/intel/vulkan/anv_video.c
+@@ -1820,7 +1820,27 @@
+          anv_batch_set_error(&cmd->batch, result);
+          return;
+       }
++   }
++
++   /* The motion vector buffer ping-pong starts with MV_CUR to write and nothing (MV_ZERO) to read. */
++   struct anv_vid_mem *es = &vid->vid_mem[ANV_VID_MEM_VP9_EXEC_STATE];
++   void *map;
++   VkResult result = anv_device_map_bo(cmd->device, es->mem->bo, es->offset, es->size, NULL, &map);
++   if (result != VK_SUCCESS) {
++      anv_batch_set_error(&cmd->batch, result);
++      return;
++   }
++   const struct { uint32_t offset, mem; } mv[] = {
++      { ANV_VP9_EXEC_STATE_MV_CUR_OFFSET, ANV_VID_MEM_VP9_MV_CUR },
++      { ANV_VP9_EXEC_STATE_MV_OTHER_OFFSET, ANV_VID_MEM_VP9_MV_PREV },
++      { ANV_VP9_EXEC_STATE_MV_PREV_OFFSET, ANV_VID_MEM_VP9_MV_ZERO },
++      { ANV_VP9_EXEC_STATE_MV_ZERO_OFFSET, ANV_VID_MEM_VP9_MV_ZERO },
++   };
++   for (uint32_t i = 0; i < ARRAY_SIZE(mv); i++) {
++      const uint64_t addr = anv_address_physical(ANV_VID_MEM_ADDR(vid, mv[i].mem));
++      memcpy((char *)map + mv[i].offset, &addr, sizeof(addr));
+    }
++   anv_device_unmap_bo(cmd->device, es->mem->bo, map, es->size, false);
+ }
+ 
+ #define VP9_CTX_DEFAULT(field) {                                \
+diff --git a/src/intel/vulkan/genX_cmd_video.c b/src/intel/vulkan/genX_cmd_video.c
+--- a/src/intel/vulkan/genX_cmd_video.c
++++ b/src/intel/vulkan/genX_cmd_video.c
+@@ -2993,29 +2993,52 @@
+                      saved_addr,
+                      ANV_VP9_INTER_MODE_PROBS_SIZE);
+ }
++
++static struct anv_address anv_vp9_exec_state_address(struct anv_video_session *vid, uint32_t offset);
+ 
++/* Copy a 64-bit value between two places in memory at execution time. */
++static void
++anv_vp9_emit_copy_qword(struct anv_cmd_buffer *cmd_buffer,
++                        struct anv_address dst, struct anv_address src)
++{
++   for (uint32_t i = 0; i < 2; i++) {
++      anv_batch_emit(&cmd_buffer->batch, GENX(MI_COPY_MEM_MEM), cp) {
++         cp.DestinationMemoryAddress = anv_address_add(dst, 4 * i);
++         cp.SourceMemoryAddress = anv_address_add(src, 4 * i);
++      }
++   }
++   anv_batch_emit(&cmd_buffer->batch, GENX(MI_FLUSH_DW), flush);
++}
++
++/* The motion vectors the next frame may read (use_prev_frame_mvs) are those of the frame decoded last, or none
++ * after a key or intra-only frame. media-driver alternates between two MV temporal buffers (decode_vp9_basic_feature
++ * m_curMvTempBufIdx / m_colMvTempBufIdx) instead of copying one into the other; the copy was the bulk of a frame's
++ * decode time (a HuC stream copy of 1.2 MB per 4K frame: 248 -> 582 fps without it). The buffer addresses live in
++ * the execution state and advance on the GPU, after the frame, so they follow execution order as LastFrameType does.
++ */
+ static void
+ anv_vp9_emit_mv_prev_update(struct anv_cmd_buffer *cmd_buffer,
+                             struct anv_video_session *vid,
+                             bool key_frame_or_intra_only)
+ {
+-   const uint32_t src_id = key_frame_or_intra_only ?
+-      ANV_VID_MEM_VP9_MV_ZERO : ANV_VID_MEM_VP9_MV_CUR;
++   struct anv_address cur = anv_vp9_exec_state_address(vid, ANV_VP9_EXEC_STATE_MV_CUR_OFFSET);
++   struct anv_address other = anv_vp9_exec_state_address(vid, ANV_VP9_EXEC_STATE_MV_OTHER_OFFSET);
++   struct anv_address prev = anv_vp9_exec_state_address(vid, ANV_VP9_EXEC_STATE_MV_PREV_OFFSET);
++   struct anv_address zero = anv_vp9_exec_state_address(vid, ANV_VP9_EXEC_STATE_MV_ZERO_OFFSET);
+ 
+-   struct anv_address prev_addr =
+-      ANV_VID_MEM_ADDR(vid, ANV_VID_MEM_VP9_MV_PREV);
+-
+-   struct anv_address src_addr = {
+-      vid->vid_mem[src_id].mem->bo,
+-      vid->vid_mem[src_id].offset
+-   };
+-
+    anv_batch_emit(&cmd_buffer->batch, GENX(MI_FLUSH_DW), flush) {
+       flush.VideoPipelineCacheInvalidate = 1;
+    }
+ 
+-   anv_huc_emit_copy(cmd_buffer, prev_addr, src_addr,
+-                     vid->vid_mem[ANV_VID_MEM_VP9_MV_PREV].size);
++   if (key_frame_or_intra_only) {
++      /* PREV = ZERO */
++      anv_vp9_emit_copy_qword(cmd_buffer, prev, zero);
++   } else {
++      /* PREV = CUR (just written), CUR = OTHER, OTHER = PREV */
++      anv_vp9_emit_copy_qword(cmd_buffer, prev, cur);
++      anv_vp9_emit_copy_qword(cmd_buffer, cur, other);
++      anv_vp9_emit_copy_qword(cmd_buffer, other, prev);
++   }
+ }
+ 
+ #define ANV_VP9_PIC_STATE_DW2 2
+@@ -3129,6 +3152,32 @@
+             anv_vp9_emit_pic_dw2_patch(cmd_buffer, vid,
+                                        anv_address_add(pic_bb_addr,
+                                                        ANV_VP9_PIC_STATE_DW2 * 4));
++      }
++   }
++
++   /* Inter frames: HCP_PIPE_BUF_ADDR_STATE goes into a second-level batch whose current and collocated MV buffer
++    * addresses are filled in from the execution state when it runs (anv_vp9_emit_mv_prev_update). */
++   struct anv_batch buf_bb = { 0 };
++   struct anv_address buf_bb_addr = ANV_NULL_ADDRESS;
++   struct anv_batch *buf_batch = &cmd_buffer->batch;
++
++   if (!key_frame_or_intra_only) {
++      struct anv_state buf_bb_state =
++         anv_cmd_buffer_alloc_temporary_state(cmd_buffer, 1024, 64);
++
++      if (buf_bb_state.map != NULL) {
++         buf_bb_addr = anv_cmd_buffer_temporary_state_address(cmd_buffer, buf_bb_state);
++         buf_bb.status = VK_SUCCESS;
++         buf_bb.relocs = cmd_buffer->batch.relocs;
++         anv_batch_set_storage(&buf_bb, buf_bb_addr, buf_bb_state.map, 1024);
++         buf_batch = &buf_bb;
++
++         /* HCP_PIPE_BUF_ADDR_STATE: Current MV Temporal Buffer Address in DW31-32, Collocated MV Temporal Buffer
++          * Address [0] in DW66-67 (gfx12 to xe3p) */
++         anv_vp9_emit_copy_qword(cmd_buffer, anv_address_add(buf_bb_addr, 31 * 4),
++                                 anv_vp9_exec_state_address(vid, ANV_VP9_EXEC_STATE_MV_CUR_OFFSET));
++         anv_vp9_emit_copy_qword(cmd_buffer, anv_address_add(buf_bb_addr, 66 * 4),
++                                 anv_vp9_exec_state_address(vid, ANV_VP9_EXEC_STATE_MV_PREV_OFFSET));
+       }
+    }
+ 
+@@ -3224,7 +3273,7 @@
+       }
+    }
+ 
+-   anv_batch_emit(&cmd_buffer->batch, GENX(HCP_PIPE_BUF_ADDR_STATE), buf) {
++   anv_batch_emit(buf_batch, GENX(HCP_PIPE_BUF_ADDR_STATE), buf) {
+       buf.DecodedPictureAddress = anv_image_dpb_address(iv, array_layer);
+ 
+       buf.DecodedPictureAddressAttributes = (struct GENX(MEMORYADDRESSATTRIBUTES)) {
+@@ -3352,6 +3401,16 @@
+       buf.IntraPredictionLeftReconColumnStoreBufferAddressAttributes =
+          ANV_VID_ATTR(cmd_buffer->device, NULL);
+ #endif
++   }
++
++   if (buf_batch == &buf_bb) {
++      anv_batch_emit(&buf_bb, GENX(MI_BATCH_BUFFER_END), bbe);
++
++      anv_batch_emit(&cmd_buffer->batch, GENX(MI_BATCH_BUFFER_START), bbs) {
++         bbs.AddressSpaceIndicator = ASI_PPGTT;
++         bbs.SecondLevelBatchBuffer = Secondlevelbatch;
++         bbs.BatchBufferStartAddress = buf_bb_addr;
++      }
+    }
+ 
+    struct anv_address src_addr =

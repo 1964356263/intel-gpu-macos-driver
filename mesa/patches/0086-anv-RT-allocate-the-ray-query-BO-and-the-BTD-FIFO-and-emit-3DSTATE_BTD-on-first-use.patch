@@ -1,0 +1,620 @@
+From: Yusuf İhsan KILINÇ
+Subject: [PATCH 0086] anv: RT, allocate the ray query BO and the BTD FIFO and emit 3DSTATE_BTD on first use
+
+On top of 0085 (src/mesa-rt: a3ad934 + the 935ef655 diff + 0085). Replaces 0085's device-creation decision
+(anv_device_uses_btd: "the device enabled KHR_ray_query or KHR_ray_tracing_pipeline") with a first-use one.
+Only has an effect with -Dintel-rt=enabled (ANV_SUPPORT_RT=1); with intel-rt=disabled anv_device_has_rt_hw()
+is constant false and btd_fifo_bo stays NULL, so nothing changes. Built in src/mesa-rt/build-rtopt; NOT installed.
+Generated-by: LLM
+
+Why: a Vulkan app (here the Metal plugin, which runs in every Metal process including WindowServer) enables
+VK_KHR_ray_query whenever the device has it, because it cannot know at vkCreateDevice whether the process will
+ever trace a ray. With ANV that costs every such device, at creation:
+  - "ray queries" BO: max_scratch_ids[COMPUTE] * 32 * BRW_RT_SIZEOF_RAY_QUERY (256 B)
+    = 128 * DSS bound * 32 * 256 B, 20 MiB on 20 DSS (B580),
+  - "rt-btd-fifo" BO: 128 KiB per DSS, 2.5 MiB on 20 DSS,
+  - 3DSTATE_BTD in every queue's initial state.
+The rest already is first-use in upstream: the ray query shadow BOs and the RT scratch BOs (allocated while
+recording, published with p_atomic_cmpxchg), the "bvh build" BO pool (no BO until a build), the BVH meta
+pipelines (first build). This does the same for the three above, as Intel's compute runtime (NEO) does for
+its ray tracing buffers and 3DSTATE_BTD (allocated / programmed for the first kernel that uses ray tracing):
+  - anv_device_get_rt_bo(): the shadow-BO pattern for ray_query_bo[idx] and btd_fifo_bo.
+  - anv_cmd_buffer_use_rt_hw(): called where a command buffer binds a shader with ray queries
+    (anv_cmd_buffer_set_rt_query_buffer: compute, graphics and RT stages) and where it flushes a ray
+    tracing pipeline (cmd_buffer_flush_rt_state, which already emits its own 3DSTATE_BTD per command
+    buffer); allocates the FIFO and sets anv_cmd_state::uses_rt_hw (ORed into the primary by
+    vkCmdExecuteCommands).
+  - genX(queue_init_rt_state)(): at submission (device mutex held), the first time a queue gets a command
+    buffer with uses_rt_hw, an async batch on that queue's context with the same 3DSTATE_BTD the initial
+    state used to carry (CS stall first: non-pipelined state on a context that already ran work; no
+    PIPELINE_SELECT: 3DSTATE_BTD is render|compute and Xe2 has none). It runs before the submission's
+    command buffers (same exec queue, submitted first). Freed like init_submit.
+  - init_common_queue_state(): emits 3DSTATE_BTD only when the FIFO exists, i.e. a context created after
+    the device used RT (anv_nvmtl_recover.c replacing a banned exec queue) gets it with its initial
+    state; queue->rt_state_initialized follows. The recovery drops rt_init_submit with the init submits.
+A device that enables the RT extensions and never records RT work keeps exactly the BOs and context state
+of a device without them (and of the intel-rt=disabled build); a device that uses ray queries gets the
+same 3DSTATE_BTD and BOs as before, one submission later instead of at creation.
+device_has_compute_queue (only used for the Wa_14022863161 second ray query BO) goes away: ray_query_bo[1]
+is now allocated by the first compute-queue command buffer that needs it.
+
+--- a/src/intel/vulkan/anv_private.h
++++ b/src/intel/vulkan/anv_private.h
+@@ -1966,6 +1966,14 @@
+    struct anv_async_submit                  *init_submit;
+    struct anv_async_submit                  *init_companion_submit;
+ 
++   /** The ray tracing state (3DSTATE_BTD) of this queue's context: emitted
++    * by the first submission with a command buffer that uses the ray
++    * tracing hardware (anv_cmd_state::uses_rt_hw), see
++    * genX(queue_init_rt_state).
++    */
++   bool                                      rt_state_initialized;
++   struct anv_async_submit                  *rt_init_submit;
++
+    uint64_t metrics_library_configuration;
+ };
+ 
+@@ -2790,6 +2798,9 @@
+     struct anv_scratch_pool                     scratch_pool;
+     struct anv_scratch_pool                     protected_scratch_pool;
+     struct anv_bo                              *rt_scratch_bos[16];
++    /** BTD FIFO, allocated the first time a command buffer uses the ray
++     * tracing hardware (anv_cmd_buffer_use_rt_hw()).
++     */
+     struct anv_bo                              *btd_fifo_bo;
+     struct anv_address                          rt_uuid_addr;
+ 
+@@ -2811,6 +2822,9 @@
+      */
+     struct anv_bo                              *ray_query_shadow_bos[2][16];
+     /** Ray query buffer used to communicated with HW unit.
++     *
++     * Allocated the first time a command buffer binds a shader with ray
++     * queries, as the shadow BOs above are.
+      */
+     struct anv_bo                              *ray_query_bo[2];
+ 
+@@ -2980,18 +2994,23 @@
+    } fault;
+ };
+ 
+-/* The BTD FIFO (rt-btd-fifo) and 3DSTATE_BTD: set up for a device that
+- * enabled ray tracing pipelines or ray queries, as its ray query BOs, BVH
+- * build pool and RT shaders already are. A device without either never
+- * dispatches RT work and keeps the state of a build without ray tracing.
++/* Whether the device has ray tracing hardware ANV drives (BTD FIFO,
++ * 3DSTATE_BTD, ray query BOs). These are set up the first time a command
++ * buffer uses them (anv_cmd_buffer_use_rt_hw()), not at device creation, so
++ * a device that enables the ray tracing extensions without recording ray
++ * tracing work keeps the BOs and the context state of a device without
++ * them.
+  */
+ static inline bool
+-anv_device_uses_btd(const struct anv_device *device)
++anv_device_has_rt_hw(const struct anv_device *device)
+ {
+-   return ANV_SUPPORT_RT && device->info->has_ray_tracing &&
+-          (device->vk.enabled_extensions.KHR_ray_tracing_pipeline ||
+-           device->vk.enabled_extensions.KHR_ray_query);
++   return ANV_SUPPORT_RT && device->info->has_ray_tracing;
+ }
++
++VkResult anv_device_get_rt_bo(struct anv_device *device,
++                              struct anv_bo **bo_slot,
++                              const char *name, uint64_t size);
++bool anv_cmd_buffer_use_rt_hw(struct anv_cmd_buffer *cmd_buffer);
+ 
+ static inline uint32_t
+ anv_printf_buffer_size(void)
+@@ -4868,6 +4887,12 @@
+    struct anv_cmd_graphics_state                gfx;
+    struct anv_cmd_compute_state                 compute;
+    struct anv_cmd_ray_tracing_state             rt;
++
++   /** Whether this command buffer uses the ray tracing hardware (ray
++    * queries or ray tracing pipelines): its queue needs the BTD state before
++    * it runs.
++    */
++   bool                                         uses_rt_hw;
+ 
+    VkPipelineStageFlags2                        pending_src_stages;
+    VkPipelineStageFlags2                        pending_dst_stages;
+--- a/src/intel/vulkan/anv_device.c
++++ b/src/intel/vulkan/anv_device.c
+@@ -815,6 +815,34 @@
+    anv_shader_heap_finish(&device->shader_heap);
+ }
+ 
++/* A ray tracing BO of the device (the ray query BOs, the BTD FIFO):
++ * allocated the first time a command buffer needs it, as the ray query
++ * shadow BOs and the RT scratch BOs are. Command buffers may race here; the
++ * first one to publish its BO wins and the others drop theirs.
++ */
++VkResult
++anv_device_get_rt_bo(struct anv_device *device, struct anv_bo **bo_slot,
++                     const char *name, uint64_t size)
++{
++   if (p_atomic_read(bo_slot) != NULL)
++      return VK_SUCCESS;
++
++   struct anv_bo *new_bo;
++   VkResult result = anv_device_alloc_bo(device, name, size,
++                                         ANV_BO_ALLOC_INTERNAL,
++                                         0 /* explicit_address */,
++                                         &new_bo);
++   ANV_DMR_BO_ALLOC(&device->vk.base, new_bo, result);
++   if (result != VK_SUCCESS)
++      return result;
++
++   if (p_atomic_cmpxchg(bo_slot, NULL, new_bo) != NULL) {
++      ANV_DMR_BO_FREE(&device->vk.base, new_bo);
++      anv_device_release_bo(device, new_bo);
++   }
++   return VK_SUCCESS;
++}
++
+ VkResult anv_CreateDevice(
+     VkPhysicalDevice                            physicalDevice,
+     const VkDeviceCreateInfo*                   pCreateInfo,
+@@ -825,7 +853,6 @@
+    ANV_FROM_HANDLE(anv_physical_device, physical_device, physicalDevice);
+    VkResult result;
+    struct anv_device *device;
+-   bool device_has_compute_queue = false;
+ 
+    assert(pCreateInfo->sType == VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO);
+ 
+@@ -836,10 +863,6 @@
+       if (pCreateInfo->pQueueCreateInfos[i].flags & ~(VK_DEVICE_QUEUE_CREATE_PROTECTED_BIT |
+                                                       VK_DEVICE_QUEUE_CREATE_INTERNALLY_SYNCHRONIZED_BIT_KHR))
+          return vk_error(physical_device, VK_ERROR_INITIALIZATION_FAILED);
+-
+-      const struct anv_queue_family *family =
+-         &physical_device->queue.families[pCreateInfo->pQueueCreateInfos[i].queueFamilyIndex];
+-      device_has_compute_queue |= family->engine_class == INTEL_ENGINE_CLASS_COMPUTE;
+    }
+ 
+    device = vk_zalloc2(&physical_device->instance->vk.alloc, pAllocator,
+@@ -1110,36 +1133,13 @@
+                                        device->workaround_bo->size,
+                                        INTEL_DEBUG_BLOCK_TYPE_FRAME);
+ 
+-   if (device->vk.enabled_extensions.KHR_ray_query) {
+-      uint32_t ray_queries_size =
+-         align(brw_rt_ray_queries_hw_stacks_size(device->info), 4096);
+-
+-      result = anv_device_alloc_bo(device, "ray queries",
+-                                   ray_queries_size,
+-                                   ANV_BO_ALLOC_INTERNAL,
+-                                   0 /* explicit_address */,
+-                                   &device->ray_query_bo[0]);
+-      ANV_DMR_BO_ALLOC(&device->vk.base, device->ray_query_bo[0], result);
+-      if (result != VK_SUCCESS)
+-         goto fail_alloc_device_bo;
+-
+-      /* We need a separate ray query bo for CCS engine with Wa_14022863161. */
+-      if (intel_needs_workaround(device->isl_dev.info, 14022863161) &&
+-          device_has_compute_queue) {
+-         result = anv_device_alloc_bo(device, "ray queries",
+-                                      ray_queries_size,
+-                                      ANV_BO_ALLOC_INTERNAL,
+-                                      0 /* explicit_address */,
+-                                      &device->ray_query_bo[1]);
+-         ANV_DMR_BO_ALLOC(&device->vk.base, device->ray_query_bo[1], result);
+-         if (result != VK_SUCCESS)
+-            goto fail_ray_query_bo;
+-      }
+-   }
++   /* The ray query BOs and the BTD FIFO are allocated the first time a
++    * command buffer uses the ray tracing hardware (anv_cmd_buffer_use_rt_hw).
++    */
+ 
+    result = anv_device_init_trivial_batch(device);
+    if (result != VK_SUCCESS)
+-      goto fail_ray_query_bo;
++      goto fail_alloc_device_bo;
+ 
+    /* Emit the CPS states before running the initialization batch as those
+     * structures are referenced.
+@@ -1200,21 +1200,6 @@
+    /* TODO(RT): Do we want some sort of data structure for this? */
+    memset(device->rt_scratch_bos, 0, sizeof(device->rt_scratch_bos));
+ 
+-   if (anv_device_uses_btd(device)) {
+-      /* The docs say to always allocate 128KB per DSS */
+-      const uint32_t btd_fifo_bo_size =
+-         128 * 1024 * intel_device_info_dual_subslice_id_bound(device->info);
+-      result = anv_device_alloc_bo(device,
+-                                   "rt-btd-fifo",
+-                                   btd_fifo_bo_size,
+-                                   ANV_BO_ALLOC_INTERNAL,
+-                                   0 /* explicit_address */,
+-                                   &device->btd_fifo_bo);
+-      ANV_DMR_BO_ALLOC(&device->vk.base, device->btd_fifo_bo, result);
+-      if (result != VK_SUCCESS)
+-         goto fail_trivial_batch_bo_and_scratch_pool;
+-   }
+-
+    struct vk_pipeline_cache_create_info pcc_info = {
+       .weak_ref = true,
+       .skip_disk_cache = ANV_DEBUG(SKIP_DISK_CACHE),
+@@ -1223,7 +1208,7 @@
+       vk_pipeline_cache_create(&device->vk, &pcc_info, NULL);
+    if (!device->vk.mem_cache) {
+       result = vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
+-      goto fail_btd_fifo_bo;
++      goto fail_trivial_batch_bo_and_scratch_pool;
+    }
+ 
+    /* Internal shaders need their own pipeline cache because, unlike the rest
+@@ -1409,24 +1394,12 @@
+    vk_pipeline_cache_destroy(device->internal_cache, NULL);
+  fail_default_pipeline_cache:
+    vk_pipeline_cache_destroy(device->vk.mem_cache, NULL);
+- fail_btd_fifo_bo:
+-   if (anv_device_uses_btd(device)) {
+-      ANV_DMR_BO_FREE(&device->vk.base, device->btd_fifo_bo);
+-      anv_device_release_bo(device, device->btd_fifo_bo);
+-   }
+  fail_trivial_batch_bo_and_scratch_pool:
+    anv_scratch_pool_finish(device, &device->scratch_pool);
+    anv_scratch_pool_finish(device, &device->protected_scratch_pool);
+  fail_trivial_batch:
+    ANV_DMR_BO_FREE(&device->vk.base, device->trivial_batch_bo);
+    anv_device_release_bo(device, device->trivial_batch_bo);
+- fail_ray_query_bo:
+-   for (unsigned i = 0; i < ARRAY_SIZE(device->ray_query_bo); i++) {
+-      if (device->ray_query_bo[i]) {
+-         ANV_DMR_BO_FREE(&device->vk.base, device->ray_query_bo[i]);
+-         anv_device_release_bo(device, device->ray_query_bo[i]);
+-      }
+-   }
+  fail_alloc_device_bo:
+    if (device->mem_fence_bo) {
+       ANV_DMR_BO_FREE(&device->vk.base, device->mem_fence_bo);
+@@ -1527,7 +1500,7 @@
+ 
+    anv_device_perf_finish(device);
+ 
+-   if (anv_device_uses_btd(device)) {
++   if (device->btd_fifo_bo) {
+       ANV_DMR_BO_FREE(&device->vk.base, device->btd_fifo_bo);
+       anv_device_release_bo(device, device->btd_fifo_bo);
+    }
+--- a/src/intel/vulkan/anv_cmd_buffer.c
++++ b/src/intel/vulkan/anv_cmd_buffer.c
+@@ -453,6 +453,33 @@
+       cmd_buffer->state.push_constants_dirty |= mesa_to_vk_shader_stage(stage);
+ }
+ 
++/* The command buffer uses the ray tracing hardware (ray queries or a ray
++ * tracing pipeline): set up the device's BTD FIFO if this is the first use,
++ * and have the submission emit the queue's BTD state
++ * (genX(queue_init_rt_state)) before the command buffer runs. Returns false
++ * (with the batch in error) if the FIFO cannot be allocated.
++ */
++bool
++anv_cmd_buffer_use_rt_hw(struct anv_cmd_buffer *cmd_buffer)
++{
++   struct anv_device *device = cmd_buffer->device;
++
++   assert(anv_device_has_rt_hw(device));
++
++   /* The docs say to always allocate 128KB per DSS */
++   VkResult result =
++      anv_device_get_rt_bo(device, &device->btd_fifo_bo, "rt-btd-fifo",
++                           128 * 1024 *
++                           intel_device_info_dual_subslice_id_bound(device->info));
++   if (result != VK_SUCCESS) {
++      anv_batch_set_error(&cmd_buffer->batch, result);
++      return false;
++   }
++
++   cmd_buffer->state.uses_rt_hw = true;
++   return true;
++}
++
+ static void
+ anv_cmd_buffer_set_rt_query_buffer(struct anv_cmd_buffer *cmd_buffer,
+                                    struct anv_bind_point_state *pipeline_state,
+@@ -462,6 +489,18 @@
+    struct anv_device *device = cmd_buffer->device;
+    uint8_t idx = anv_get_ray_query_bo_index(cmd_buffer);
+ 
++   if (!anv_cmd_buffer_use_rt_hw(cmd_buffer))
++      return;
++
++   VkResult result =
++      anv_device_get_rt_bo(device, &device->ray_query_bo[idx], "ray queries",
++                           align(brw_rt_ray_queries_hw_stacks_size(device->info),
++                                 4096));
++   if (result != VK_SUCCESS) {
++      anv_batch_set_error(&cmd_buffer->batch, result);
++      return;
++   }
++
+    uint64_t ray_shadow_size =
+       align64(brw_rt_ray_queries_shadow_stacks_size(device->info, ray_queries),
+               4096);
+--- a/src/intel/vulkan/anv_genX.h
++++ b/src/intel/vulkan/anv_genX.h
+@@ -52,6 +52,8 @@
+ VkResult genX(init_device_state)(struct anv_device *device);
+ 
+ VkResult genX(init_queue_state)(struct anv_queue *queue);
++
++VkResult genX(queue_init_rt_state)(struct anv_queue *queue);
+ 
+ void genX(init_cps_device_state)(struct anv_device *device);
+ 
+--- a/src/intel/vulkan/genX_init_state.c
++++ b/src/intel/vulkan/genX_init_state.c
+@@ -175,6 +175,44 @@
+    }
+ #endif
+ }
++
++#if GFX_VERx10 >= 125
++static void
++emit_btd_state(struct anv_batch *batch, struct anv_device *device,
++               struct anv_bo *btd_fifo_bo)
++{
++   anv_batch_emit(batch, GENX(3DSTATE_BTD), btd) {
++      uint32_t dispatch_timeout_counter =
++         device->physical->drirc.perf.rt_dispatch_timeout;
++      uint32_t clamped_timeout_counter =
++         genX(anv_get_btd_dispatch_timeout_counter)(dispatch_timeout_counter);
++#if GFX_VERx10 >= 200
++      btd.DispatchTimeoutCounter = clamped_timeout_counter;
++#else
++      btd.DispatchTimeoutCounter = clamped_timeout_counter & 0x3;
++      btd.DispatchTimeoutCounterExtend = (clamped_timeout_counter >> 2) & 0x3;
++#endif
++
++      /* BSpec 43851: "This field must be programmed to 6h i.e. memory
++       *               backed buffer must be 128KB."
++       */
++      btd.PerDSSMemoryBackedBufferSize = 6;
++      btd.MemoryBackedBufferBasePointer = (struct anv_address) {
++         /* This batch doesn't have a reloc list so we can't use the BO
++          * here.  We just use the address directly.
++          */
++         .offset = btd_fifo_bo->offset,
++      };
++#if INTEL_NEEDS_WA_14017794102 || INTEL_NEEDS_WA_14023061436
++      btd.BTDMidthreadpreemption = false;
++#endif
++
++#if GFX_VER >= 30
++      btd.RTMemStructures64bModeEnable = true;
++#endif
++   }
++}
++#endif
+ 
+ static void
+ init_common_queue_state(struct anv_queue *queue, struct anv_batch *batch)
+@@ -346,37 +384,17 @@
+ #endif /* GFX_VER >= 12 */
+ 
+ #if GFX_VERx10 >= 125
+-   if (anv_device_uses_btd(device)) {
+-      anv_batch_emit(batch, GENX(3DSTATE_BTD), btd) {
+-         uint32_t dispatch_timeout_counter =
+-            device->physical->drirc.perf.rt_dispatch_timeout;
+-         uint32_t clamped_timeout_counter =
+-            genX(anv_get_btd_dispatch_timeout_counter)(dispatch_timeout_counter);
+-#if GFX_VERx10 >= 200
+-         btd.DispatchTimeoutCounter = clamped_timeout_counter;
+-#else
+-         btd.DispatchTimeoutCounter = clamped_timeout_counter & 0x3;
+-         btd.DispatchTimeoutCounterExtend = (clamped_timeout_counter >> 2) & 0x3;
+-#endif
+-
+-         /* BSpec 43851: "This field must be programmed to 6h i.e. memory
+-          *               backed buffer must be 128KB."
+-          */
+-         btd.PerDSSMemoryBackedBufferSize = 6;
+-         btd.MemoryBackedBufferBasePointer = (struct anv_address) {
+-            /* This batch doesn't have a reloc list so we can't use the BO
+-             * here.  We just use the address directly.
+-             */
+-            .offset = device->btd_fifo_bo->offset,
+-         };
+-#if INTEL_NEEDS_WA_14017794102 || INTEL_NEEDS_WA_14023061436
+-         btd.BTDMidthreadpreemption = false;
+-#endif
+-
+-#if GFX_VER >= 30
+-         btd.RTMemStructures64bModeEnable = true;
+-#endif
+-      }
++   /* A context created after the device started using the ray tracing
++    * hardware (a queue replaced by anv_nvmtl_recover.c) gets the BTD state
++    * with the rest of its initial state. Otherwise it stays out, as without
++    * ray tracing, until the first submission that needs it emits it
++    * (genX(queue_init_rt_state)).
++    */
++   struct anv_bo *btd_fifo_bo = p_atomic_read(&device->btd_fifo_bo);
++   if (btd_fifo_bo != NULL) {
++      emit_btd_state(batch, device, btd_fifo_bo);
++      if (batch->engine_class == queue->family->engine_class)
++         queue->rt_state_initialized = true;
+    }
+ #endif
+ 
+@@ -1060,6 +1078,8 @@
+    struct anv_device *device = queue->device;
+    VkResult res;
+ 
++   queue->rt_state_initialized = false;
++
+    switch (queue->family->engine_class) {
+    case INTEL_ENGINE_CLASS_RENDER:
+       res = init_render_queue_state(queue, false /* is_companion_rcs_batch */);
+@@ -1095,6 +1115,77 @@
+       break;
+    }
+    return res;
++}
++
++/* The ray tracing state of the queue's context, emitted by the first
++ * submission with a command buffer that uses the ray tracing hardware
++ * (anv_cmd_buffer_use_rt_hw()) rather than with the initial state at
++ * vkCreateDevice: a device that enables the ray tracing extensions without
++ * using them keeps the context state and the BOs of a device without them.
++ * The batch holds the same 3DSTATE_BTD the initial state would and runs on
++ * the queue's context before that submission's command buffers.
++ *
++ * Called with the device mutex held (anv_queue_submit).
++ */
++VkResult
++genX(queue_init_rt_state)(struct anv_queue *queue)
++{
++#if GFX_VERx10 >= 125
++   struct anv_device *device = queue->device;
++   struct anv_bo *btd_fifo_bo = p_atomic_read(&device->btd_fifo_bo);
++   assert(btd_fifo_bo != NULL);
++
++   const enum intel_engine_class engine_class = queue->family->engine_class;
++   if (engine_class != INTEL_ENGINE_CLASS_RENDER &&
++       engine_class != INTEL_ENGINE_CLASS_COMPUTE) {
++      queue->rt_state_initialized = true;
++      return VK_SUCCESS;
++   }
++
++   struct anv_async_submit *submit;
++   VkResult result = anv_async_submit_create(queue,
++                                             &device->batch_bo_pool,
++                                             false, true, &submit);
++   if (result != VK_SUCCESS)
++      return result;
++
++   struct anv_batch *batch = &submit->batch;
++
++   /* 3DSTATE_BTD is non-pipelined state and the context has run work
++    * already: stall first. No PIPELINE_SELECT, the command is valid in both
++    * pipelines (the initial state emits it in 3D mode, the ray tracing
++    * pipeline flush in GPGPU mode) and the command buffers that follow
++    * select their own.
++    */
++   genx_batch_emit_pipe_control(batch, device->info,
++                                engine_class == INTEL_ENGINE_CLASS_RENDER ?
++                                _3D : GPGPU,
++                                ANV_PIPE_CS_STALL_BIT);
++
++   emit_btd_state(batch, device, btd_fifo_bo);
++
++   anv_batch_emit(batch, GENX(MI_BATCH_BUFFER_END), bbe);
++
++   result = batch->status;
++   if (result != VK_SUCCESS) {
++      anv_async_submit_destroy(submit);
++      return result;
++   }
++
++   result = device->kmd_backend->queue_exec_async(submit, 0, NULL, 0, NULL);
++   if (result != VK_SUCCESS) {
++      anv_async_submit_destroy(submit);
++      return result;
++   }
++
++   /* A previous one (this queue was replaced after it) is done or dropped */
++   assert(queue->rt_init_submit == NULL);
++   queue->rt_init_submit = submit;
++   queue->rt_state_initialized = true;
++   return VK_SUCCESS;
++#else
++   UNREACHABLE("No ray tracing hardware");
++#endif
+ }
+ 
+ VkResult
+--- a/src/intel/vulkan/genX_cmd_compute.c
++++ b/src/intel/vulkan/genX_cmd_compute.c
+@@ -1379,6 +1379,10 @@
+       cmd_buffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR);
+ 
+    if (anv_batch_has_error(&cmd_buffer->batch))
++      return;
++
++   /* The BTD FIFO this 3DSTATE_BTD points at */
++   if (!anv_cmd_buffer_use_rt_hw(cmd_buffer))
+       return;
+ 
+    genX(cmd_buffer_config_l3)(cmd_buffer, device->l3_config);
+--- a/src/intel/vulkan/genX_cmd_buffer.c
++++ b/src/intel/vulkan/genX_cmd_buffer.c
+@@ -4514,6 +4514,12 @@
+ 
+    UNUSED enum anv_shader_binding_mode binding_mode =
+       container->state.current_binding_mode;
++
++   /* The queue's ray tracing state is set up per submission of the primary */
++   for (uint32_t i = 0; i < commandBufferCount; i++) {
++      ANV_FROM_HANDLE(anv_cmd_buffer, secondary, pCmdBuffers[i]);
++      container->state.uses_rt_hw |= secondary->state.uses_rt_hw;
++   }
+ 
+    /* Do a first pass to copy the surface state content of the render targets
+     * if needed.
+--- a/src/intel/vulkan/anv_batch_chain.c
++++ b/src/intel/vulkan/anv_batch_chain.c
+@@ -1530,6 +1530,21 @@
+       struct anv_cmd_buffer *cmd_buffer = (void *)submit->command_buffers[i];
+       if (!list_is_empty(&cmd_buffer->batch_bos)) {
+          cmd_buffers[cmd_buffer_count++] = cmd_buffer;
++      }
++   }
++
++   /* The first command buffer on this queue that uses the ray tracing
++    * hardware: the queue's ray tracing state goes ahead of it.
++    */
++   if (anv_device_has_rt_hw(queue->device) && !queue->rt_state_initialized) {
++      for (uint32_t i = 0; i < cmd_buffer_count; i++) {
++         if (cmd_buffers[i]->state.uses_rt_hw) {
++            result = anv_genX(queue->device->info,
++                              queue_init_rt_state)(queue);
++            if (result != VK_SUCCESS)
++               goto fail;
++            break;
++         }
+       }
+    }
+ 
+@@ -1604,6 +1619,11 @@
+       anv_async_submit_destroy(queue->init_companion_submit);
+       queue->init_companion_submit = NULL;
+    }
++   if (queue->rt_init_submit &&
++       anv_async_submit_done(queue->rt_init_submit)) {
++      anv_async_submit_destroy(queue->rt_init_submit);
++      queue->rt_init_submit = NULL;
++   }
+ }
+ 
+ VkResult
+--- a/src/intel/vulkan/anv_queue.c
++++ b/src/intel/vulkan/anv_queue.c
+@@ -131,6 +131,10 @@
+       anv_async_submit_wait(queue->init_companion_submit);
+       anv_async_submit_destroy(queue->init_companion_submit);
+    }
++   if (queue->rt_init_submit) {
++      anv_async_submit_wait(queue->rt_init_submit);
++      anv_async_submit_destroy(queue->rt_init_submit);
++   }
+ 
+    if (queue->sync)
+       vk_sync_destroy(&queue->device->vk, queue->sync);
+--- a/src/intel/vulkan/anv_nvmtl_recover.c
++++ b/src/intel/vulkan/anv_nvmtl_recover.c
+@@ -164,6 +164,7 @@
+                      old_bind = queue->bind_queue_id;
+       nvmtl_drop_init_submit(device, &queue->init_submit);
+       nvmtl_drop_init_submit(device, &queue->init_companion_submit);
++      nvmtl_drop_init_submit(device, &queue->rt_init_submit);
+       if (idle) {   /* FORCE on a live queue: the old one finishes its work before the new one takes over */
+          anv_xe_wait_exec_queue_idle(device, old_exec);
+          if (old_comp)

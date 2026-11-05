@@ -1,0 +1,127 @@
+From 5c2a90b3f3c0604f9c2f5c0849d8b2b1dda9123d Mon Sep 17 00:00:00 2001
+From: "Emil J. Tywoniak" <emil@tywoniak.eu>
+Date: Thu, 15 Oct 2026 00:42:04 +0200
+Subject: [PATCH 08/18] anv: skip the HEVC BRC re-encode pass unless HuC asks
+ for it on Xe2
+
+---
+ src/intel/vulkan/genX_cmd_video_enc.c | 82 ++++++++++++++++++++++++++-
+ 1 file changed, 81 insertions(+), 1 deletion(-)
+
+diff --git a/src/intel/vulkan/genX_cmd_video_enc.c b/src/intel/vulkan/genX_cmd_video_enc.c
+index 53ff7da8eb2..e311d4e9f42 100644
+--- a/src/intel/vulkan/genX_cmd_video_enc.c
++++ b/src/intel/vulkan/genX_cmd_video_enc.c
+@@ -251,6 +251,53 @@ anv_vdenc_emit_control_state(struct anv_cmd_buffer *cmd)
+    }
+ }
+ 
++/* Redirects cmd->batch into a second-level batch so that a
++ * MI_CONDITIONAL_BATCH_BUFFER_END in it only skips the commands recorded
++ * until anv_video_end_sub_batch().
++ */
++struct anv_video_sub_batch {
++   struct anv_batch parent;
++};
++
++static bool
++anv_video_begin_sub_batch(struct anv_cmd_buffer *cmd, uint32_t size,
++                          struct anv_video_sub_batch *sub)
++{
++   struct anv_state state = anv_cmd_buffer_alloc_temporary_state(cmd, size, 64);
++   if (state.map == NULL)
++      return false;
++
++   sub->parent = cmd->batch;
++   anv_batch_set_storage(&cmd->batch,
++                         anv_cmd_buffer_temporary_state_address(cmd, state),
++                         state.map, state.alloc_size);
++   cmd->batch.extend_cb = NULL;
++   cmd->batch.user_data = NULL;
++   return true;
++}
++
++static void
++anv_video_end_sub_batch(struct anv_cmd_buffer *cmd,
++                        struct anv_video_sub_batch *sub)
++{
++   anv_batch_emit(&cmd->batch, GENX(MI_BATCH_BUFFER_END), bbe);
++
++   struct anv_address sub_addr = cmd->batch.start_addr;
++   VkResult status = cmd->batch.status;
++
++   cmd->batch = sub->parent;
++   if (status != VK_SUCCESS) {
++      anv_batch_set_error(&cmd->batch, status);
++      return;
++   }
++
++   anv_batch_emit(&cmd->batch, GENX(MI_BATCH_BUFFER_START), bbs) {
++      bbs.SecondLevelBatchBuffer = Secondlevelbatch;
++      bbs.AddressSpaceIndicator = ASI_PPGTT;
++      bbs.BatchBufferStartAddress = sub_addr;
++   }
++}
++
+ static void
+ anv_video_emit_vd_control_state(struct anv_cmd_buffer *cmd)
+ {
+@@ -3843,7 +3890,12 @@ anv_h265_encode_video(struct anv_cmd_buffer *cmd, const VkVideoEncodeInfoKHR *en
+              * with MI_CONDITIONAL_BATCH_BUFFER_END, but that terminates the whole
+              * batch including the query writes emitted after the encode in the
+              * same command buffer; always run the PAK only pass instead until
+-             * this is reworked as a predicated batch buffer jump */
++             * this is reworked as a predicated batch buffer jump.
++             *
++             * Xe2 records the pass into a second-level batch below instead,
++             * because its HuC leaves a QP of 0 in the PAK only SLB when it
++             * decides not to re-encode.
++             */
+ #if GFX_VERx10 < 125
+             struct anv_address pak_stats_addr =
+                ANV_VID_MEM_ADDR(vid, ANV_VID_MEM_BRC_PAK_STATS);
+@@ -3863,6 +3915,29 @@ anv_h265_encode_video(struct anv_cmd_buffer *cmd, const VkVideoEncodeInfoKHR *en
+          }
+       }
+ 
++#if GFX_VER >= 20
++      struct anv_video_sub_batch reencode;
++      const bool conditional_pass = brc_enabled && pass > 0;
++
++      if (conditional_pass) {
++         if (!anv_video_begin_sub_batch(cmd, 16384 + frame_info->naluSliceSegmentEntryCount * 1024,
++                                        &reencode))
++            return;
++
++         /* Skip the rest of the pass unless the HuC BRC update asked for a
++          * re-encode, see anv_h265_brc_emit_huc_flush_and_status().
++          */
++         anv_batch_emit(&cmd->batch, GENX(MI_CONDITIONAL_BATCH_BUFFER_END), cbbe) {
++            cbbe.CompareOperation = MADGreaterThanIDD;
++            cbbe.EndCurrentBatchBufferLevel = true;
++            cbbe.CompareSemaphore = 1;
++            cbbe.CompareMaskMode = CompareMaskModeEnabled;
++            cbbe.CompareDataDword = 0;
++            cbbe.CompareAddress = anv_brc_mem_addr(vid, ANV_VID_MEM_BRC_PAK_MMIO_SEM);
++         }
++      }
++#endif
++
+       anv_vdenc_emit_control_state(cmd);
+       anv_video_emit_vd_control_state(cmd);
+       anv_video_emit_mfx_wait(cmd, NULL);
+@@ -3948,6 +4023,11 @@ anv_h265_encode_video(struct anv_cmd_buffer *cmd, const VkVideoEncodeInfoKHR *en
+          anv_h265_brc_store_pak_stats(cmd);
+          vid->rc.frame_counter++;
+       }
++
++#if GFX_VER >= 20
++      if (conditional_pass)
++         anv_video_end_sub_batch(cmd, &reencode);
++#endif
+    }
+ #endif // GFX_VER >= 12
+ }
+-- 
+2.54.0 (Apple Git-157)
+

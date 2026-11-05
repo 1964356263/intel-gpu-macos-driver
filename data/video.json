@@ -1,0 +1,1515 @@
+{
+ "meta": {
+  "source": "out_mac/results_mac.txt",
+  "mediakit": "mediakit",
+  "runs": [
+   "# mediakit run_mac.sh Fri Oct 30 21:08:29 +03 2026 parts=quality rows=vt HEALTH bans=0 guc_resets=0 gt_resets=0 leaked=0",
+   "# mediakit run_mac.sh Fri Oct 30 21:10:33 +03 2026 parts=quality rows=vt HEALTH bans=0 guc_resets=0 gt_resets=0 leaked=0",
+   "# mediakit run_mac.sh Fri Oct 30 21:10:55 +03 2026 parts=speed rows=vt HEALTH bans=0 guc_resets=0 gt_resets=0 leaked=0",
+   "# mediakit run_mac.sh Fri Oct 30 21:12:09 +03 2026 parts=decode rows=vt HEALTH bans=0 guc_resets=0 gt_resets=0 leaked=0",
+   "# mediakit run_mac.sh Sat Oct 31 03:12:20 +03 2026 parts=speed decode rows=vt HEALTH bans=0 guc_resets=0 gt_resets=0 leaked=0",
+   "# mediakit run_mac.sh Sat Oct 31 04:43:07 +03 2026 parts=decode rows=vt HEALTH bans=0 guc_resets=0 gt_resets=0 leaked=0",
+   "# mediakit run_mac.sh Sat Oct 31 12:50:35 +03 2026 parts=decode rows=vt HEALTH bans=0 guc_resets=0 gt_resets=0 leaked=0",
+   "# mediakit run_mac.sh Sat Oct 31 16:13:33 +03 2026 parts=quality speed rows=vt HEALTH bans=0 guc_resets=0 gt_resets=0 leaked=0 installed: 7bb41ff0 f16535f2 94e692a3 36480fb2",
+   "# mediakit run_mac.sh Sat Oct 31 16:17:13 +03 2026 parts=speed rows=vt HEALTH bans=0 guc_resets=0 gt_resets=0 leaked=0 installed: 7bb41ff0 f16535f2 94e692a3 36480fb2",
+   "# mediakit run_mac.sh Sat Oct 31 16:18:35 +03 2026 parts=decode rows=vt HEALTH bans=0 guc_resets=0 gt_resets=0 leaked=0 installed: 7bb41ff0 f16535f2 94e692a3 36480fb2",
+   "# mediakit run_mac.sh Sat Oct 31 16:21:34 +03 2026 parts=decode rows=vt HEALTH bans=0 guc_resets=0 gt_resets=0 leaked=0 installed: 7bb41ff0 f16535f2 94e692a3 36480fb2  env: DYLD_LIBRARY_PATH=~/b580/perf/vp9/fin DYLD_INSERT_LIBRARIES=~/b580/perf/vp9/fin/vp9reg.dylib:~/b580/vqa/metalpre.dylib VP9REG_SUPPLEMENTAL=1",
+   "# mediakit run_mac.sh Sat Oct 31 16:27:08 +03 2026 parts=decode rows=vt HEALTH bans=0 guc_resets=0 gt_resets=0 leaked=0 installed: 7bb41ff0 f16535f2 94e692a3 36480fb2  env: DYLD_LIBRARY_PATH=~/b580/perf/vp9/fin DYLD_INSERT_LIBRARIES=~/b580/perf/vp9/fin/vp9reg.dylib:~/b580/vqa/metalpre.dylib VP9REG_SUPPLEMENTAL=1 test: libavcodec=714e989a libavutil=1682f7ab libb580av1dec=5154d88e libvulkan_intel=fac3fc75 vp9reg=e9bba736",
+   "# mediakit run_mac.sh Mon Nov  2 02:27:40 +03 2026 parts=decode rows=vt HEALTH bans=0 guc_resets=0 gt_resets=0 leaked=0 installed: 935ef655 c7e58dba 714e989a c1178ccd",
+   "# mediakit run_mac.sh Mon Nov  2 02:27:44 +03 2026 parts=decode rows=vt HEALTH bans=0 guc_resets=0 gt_resets=0 leaked=0 installed: 935ef655 c7e58dba 714e989a c1178ccd",
+   "# mediakit run_mac.sh Mon Nov  2 02:28:58 +03 2026 parts=decode rows=vt HEALTH bans=0 guc_resets=0 gt_resets=0 leaked=0 installed: 935ef655 c7e58dba 714e989a c1178ccd  env: DYLD_LIBRARY_PATH=~/b580/vtest/olddec test: libb580av1dec=5154d88e",
+   "# mediakit run_mac.sh Mon Nov  2 02:30:32 +03 2026 parts=decode rows=vt HEALTH bans=0 guc_resets=0 gt_resets=0 leaked=0 installed: 935ef655 c7e58dba 714e989a c1178ccd",
+   "# mediakit run_mac.sh Mon Nov  2 02:37:29 +03 2026 parts=speed rows=vt HEALTH bans=0 guc_resets=0 gt_resets=0 leaked=0 installed: 935ef655 c7e58dba 714e989a c1178ccd",
+   "# mediakit run_mac.sh Mon Nov  2 02:44:12 +03 2026 parts=quality rows=vtq0 vtq2 HEALTH bans=0 guc_resets=0 gt_resets=0 leaked=0 installed: 935ef655 c7e58dba 714e989a c1178ccd  env: DYLD_LIBRARY_PATH=~/b580/vtest/tu1 test: libb580venc=a39c5a99 libvulkan_intel=8dc4146d",
+   "# mediakit run_mac.sh Mon Nov  2 02:50:31 +03 2026 parts=speed rows=vt HEALTH bans=0 guc_resets=0 gt_resets=0 leaked=0 installed: 935ef655 c7e58dba 714e989a c1178ccd",
+   "# mediakit run_mac.sh Mon Nov  2 02:53:07 +03 2026 parts=quality rows=vtq1 HEALTH bans=0 guc_resets=0 gt_resets=0 leaked=0 installed: 935ef655 c7e58dba 714e989a c1178ccd  env: DYLD_LIBRARY_PATH=~/b580/vtest/tu1 test: libb580venc=ecf35ee7 libvulkan_intel=8dc4146d",
+   "# mediakit run_mac.sh Mon Nov  2 02:56:00 +03 2026 parts=quality rows=vt HEALTH bans=0 guc_resets=0 gt_resets=0 leaked=0 installed: 935ef655 c7e58dba 714e989a c1178ccd",
+   "# mediakit run_mac.sh Mon Nov  2 02:56:14 +03 2026 parts=quality rows=vt HEALTH bans=0 guc_resets=0 gt_resets=0 leaked=0 installed: 935ef655 c7e58dba 714e989a c1178ccd",
+   "# mediakit run_mac.sh Mon Nov  2 02:57:50 +03 2026 parts=quality rows=vt HEALTH bans=0 guc_resets=0 gt_resets=0 leaked=0 installed: 935ef655 c7e58dba 714e989a c1178ccd",
+   "# mediakit run_mac.sh Mon Nov  2 02:58:00 +03 2026 parts=quality rows=vt HEALTH bans=0 guc_resets=0 gt_resets=0 leaked=0 installed: 935ef655 c7e58dba 714e989a c1178ccd",
+   "# mediakit run_mac.sh Mon Nov  2 03:00:37 +03 2026 parts=quality rows=vt HEALTH bans=0 guc_resets=0 gt_resets=0 leaked=0 installed: 935ef655 c7e58dba 714e989a c1178ccd",
+   "# mediakit run_mac.sh Tue Nov  3 18:34:04 +03 2026 parts=decode rows=vt HEALTH bans=0 guc_resets=0 gt_resets=0 leaked=0 installed: 935ef655 c7e58dba 714e989a c1178ccd  env: DYLD_LIBRARY_PATH=~/b580/codecs-dec4 test: libb580av1dec=80732b8d",
+   "# mediakit run_mac.sh Wed Nov  4 14:00:58 +03 2026 parts=speed rows=vt HEALTH bans=0 guc_resets=0 gt_resets=0 leaked=0 installed: a7021b7e ecf35ee7 714e989a 80732b8d",
+   "# mediakit run_mac.sh Wed Nov  4 14:08:56 +03 2026 parts=decode rows=vt HEALTH bans=0 guc_resets=0 gt_resets=0 leaked=0 installed: a7021b7e ecf35ee7 714e989a 80732b8d",
+   "# mediakit run_mac.sh Wed Nov  4 14:15:22 +03 2026 parts=quality rows=vt HEALTH bans=0 guc_resets=0 gt_resets=0 leaked=0 installed: a7021b7e ecf35ee7 714e989a 80732b8d"
+  ],
+  "windows": true,
+  "frames": {
+   "1080p60": 600,
+   "2160p60": 300,
+   "4320p60": 120
+  },
+  "windows_runs": [
+   "# mediakit run_win.ps1 2026-11-02T00:37:17.8693232+03:00 adapter=0 8086:e20b \"Intel(R) Arc(TM) B580 Graphics\"",
+   "# mediakit run_win.ps1 hevc_t1_4k 2026-11-03T14:00:37.4688893+03:00 adapter=0 8086:e20b \"Intel(R) Arc(TM) B580 Graphics\""
+  ],
+  "unsupported_from": "data/caps.json (bmg, media-driver f55f1c8ea764 2026-10-29)"
+ },
+ "summary": {
+  "decode_clips": 26,
+  "decode_exact": 26,
+  "grades": {
+   "pass": 30,
+   "unsupported": 14,
+   "fail": 4
+  }
+ },
+ "cells": [
+  {
+   "codec": "h264",
+   "dir": "decode",
+   "bits": 8,
+   "res": "1080p",
+   "items": [
+    {
+     "clip": "dec_h264_1080p30",
+     "fps": 945.0,
+     "cpu": "24",
+     "md5": "300/300",
+     "exact": true,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "clip": "dec_h264_1080p60",
+     "fps": 953.0,
+     "cpu": "18",
+     "md5": "600/600",
+     "exact": true,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    }
+   ],
+   "windows_gpu_pinned": true,
+   "grade": "pass",
+   "note": "bit-exact, dec_h264_1080p30 945.0 fps (md5 300/300) vs Windows 571.4 fps, dec_h264_1080p60 953.0 fps (md5 600/600) vs Windows 755.7 fps; >= Windows; measured with the installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+  },
+  {
+   "codec": "h264",
+   "dir": "decode",
+   "bits": 8,
+   "res": "2160p",
+   "items": [
+    {
+     "clip": "dec_h264_2160p60",
+     "fps": 264.7,
+     "cpu": "9",
+     "md5": "300/300",
+     "exact": true,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    }
+   ],
+   "windows_gpu_pinned": true,
+   "grade": "pass",
+   "note": "bit-exact, dec_h264_2160p60 264.7 fps (md5 300/300) vs Windows 239.6 fps; >= Windows; measured with the installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+  },
+  {
+   "codec": "h264",
+   "dir": "decode",
+   "bits": 8,
+   "res": "4320p",
+   "grade": "unsupported",
+   "note": "beyond Intel media-driver on Battlemage (Arc B580/B570): h264 decode up to 4096x4096 (VAConfigAttribMaxPictureWidth/Height, media_softlet/linux/xe2_hpm_r0/decode/avc/ddi/capstable_data_avc_decode_xe2_hpm_r0_specific.h:66, media_softlet/linux/xe2_hpm_r0/decode/avc/ddi/capstable_data_avc_decode_xe2_hpm_r0_specific.h:78, media_softlet/linux/xe2_hpm_r0/decode/avc/ddi/capstable_data_avc_decode_xe2_hpm_r0_specific.h:90)"
+  },
+  {
+   "codec": "h264",
+   "dir": "decode",
+   "bits": 10,
+   "res": "1080p",
+   "grade": "unsupported",
+   "note": "Intel media-driver offers h264 decode on Battlemage (Arc B580/B570) as 8-bit 420, 8-bit 422 only, not 10-bit 420 (media_softlet/linux/xe2_hpm_r0/decode/avc/ddi/capstable_data_avc_decode_xe2_hpm_r0_specific.h:66, media_softlet/linux/xe2_hpm_r0/decode/avc/ddi/capstable_data_avc_decode_xe2_hpm_r0_specific.h:78, media_softlet/linux/xe2_hpm_r0/decode/avc/ddi/capstable_data_avc_decode_xe2_hpm_r0_specific.h:90)"
+  },
+  {
+   "codec": "h264",
+   "dir": "decode",
+   "bits": 10,
+   "res": "2160p",
+   "grade": "unsupported",
+   "note": "Intel media-driver offers h264 decode on Battlemage (Arc B580/B570) as 8-bit 420, 8-bit 422 only, not 10-bit 420 (media_softlet/linux/xe2_hpm_r0/decode/avc/ddi/capstable_data_avc_decode_xe2_hpm_r0_specific.h:66, media_softlet/linux/xe2_hpm_r0/decode/avc/ddi/capstable_data_avc_decode_xe2_hpm_r0_specific.h:78, media_softlet/linux/xe2_hpm_r0/decode/avc/ddi/capstable_data_avc_decode_xe2_hpm_r0_specific.h:90)"
+  },
+  {
+   "codec": "h264",
+   "dir": "decode",
+   "bits": 10,
+   "res": "4320p",
+   "grade": "unsupported",
+   "note": "Intel media-driver offers h264 decode on Battlemage (Arc B580/B570) as 8-bit 420, 8-bit 422 only, not 10-bit 420 (media_softlet/linux/xe2_hpm_r0/decode/avc/ddi/capstable_data_avc_decode_xe2_hpm_r0_specific.h:66, media_softlet/linux/xe2_hpm_r0/decode/avc/ddi/capstable_data_avc_decode_xe2_hpm_r0_specific.h:78, media_softlet/linux/xe2_hpm_r0/decode/avc/ddi/capstable_data_avc_decode_xe2_hpm_r0_specific.h:90)"
+  },
+  {
+   "codec": "h264",
+   "dir": "encode",
+   "bits": 8,
+   "res": "1080p",
+   "items": [
+    {
+     "stream": "vt-aerial_h264_1080p60_8_vbr3.h264",
+     "content": "aerial",
+     "target_kbps": 3000,
+     "kbps": 3102,
+     "deviation_pct": 3.4,
+     "fps": 556.2,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "stream": "vt-aerial_h264_1080p60_8_vbr6.h264",
+     "content": "aerial",
+     "target_kbps": 6000,
+     "kbps": 6186,
+     "deviation_pct": 3.1,
+     "fps": 556.3,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "stream": "vt-aerial_h264_1080p60_8_vbr12.h264",
+     "content": "aerial",
+     "target_kbps": 12000,
+     "kbps": 12557,
+     "deviation_pct": 4.6,
+     "fps": 556.4,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "stream": "vt-drive_h264_1080p60_8_vbr3.h264",
+     "content": "drive",
+     "target_kbps": 3000,
+     "kbps": 3120,
+     "deviation_pct": 4.0,
+     "fps": 555.9,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "stream": "vt-drive_h264_1080p60_8_vbr6.h264",
+     "content": "drive",
+     "target_kbps": 6000,
+     "kbps": 6187,
+     "deviation_pct": 3.1,
+     "fps": 555.9,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "stream": "vt-drive_h264_1080p60_8_vbr12.h264",
+     "content": "drive",
+     "target_kbps": 12000,
+     "kbps": 12353,
+     "deviation_pct": 2.9,
+     "fps": 556.7,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    }
+   ],
+   "speed": {
+    "veryfast": 753.9,
+    "medium": 555.9,
+    "veryslow": 191.2
+   },
+   "max_overshoot_pct": 4.6,
+   "bd_rate_vs_qsv": [
+    {
+     "content": "aerial",
+     "psnr_pct": -0.6,
+     "vmaf_pct": 2.4
+    },
+    {
+     "content": "drive",
+     "psnr_pct": -2.3,
+     "vmaf_pct": -1.8
+    }
+   ],
+   "grade": "pass",
+   "note": "speed medium 555.9 fps / veryfast 753.9 fps / veryslow 191.2 fps; VBR bitrate deviation +2.9% .. +4.6% over 6 streams; BD-rate vs QSV same settings (PSNR-Y/VMAF) aerial -0.6%/+2.4%, drive -2.3%/-1.8%; measured with the installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+  },
+  {
+   "codec": "h264",
+   "dir": "encode",
+   "bits": 8,
+   "res": "2160p",
+   "items": [
+    {
+     "stream": "vt-aerial_h264_2160p60_8_vbr12.h264",
+     "content": "aerial",
+     "target_kbps": 12000,
+     "kbps": 12180,
+     "deviation_pct": 1.5,
+     "fps": 140.1,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "stream": "vt-aerial_h264_2160p60_8_vbr25.h264",
+     "content": "aerial",
+     "target_kbps": 25000,
+     "kbps": 25902,
+     "deviation_pct": 3.6,
+     "fps": 140.3,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "stream": "vt-aerial_h264_2160p60_8_vbr50.h264",
+     "content": "aerial",
+     "target_kbps": 50000,
+     "kbps": 50802,
+     "deviation_pct": 1.6,
+     "fps": 140.4,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "stream": "vt-drive_h264_2160p60_8_vbr12.h264",
+     "content": "drive",
+     "target_kbps": 12000,
+     "kbps": 12176,
+     "deviation_pct": 1.5,
+     "fps": 140.1,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "stream": "vt-drive_h264_2160p60_8_vbr25.h264",
+     "content": "drive",
+     "target_kbps": 25000,
+     "kbps": 25315,
+     "deviation_pct": 1.3,
+     "fps": 140.2,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "stream": "vt-drive_h264_2160p60_8_vbr50.h264",
+     "content": "drive",
+     "target_kbps": 50000,
+     "kbps": 49860,
+     "deviation_pct": -0.3,
+     "fps": 139.5,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    }
+   ],
+   "speed": {
+    "veryfast": 190.5,
+    "medium": 140.6,
+    "veryslow": 48.4
+   },
+   "max_overshoot_pct": 3.6,
+   "bd_rate_vs_qsv": [
+    {
+     "content": "aerial",
+     "psnr_pct": -0.6,
+     "vmaf_pct": 0.0
+    },
+    {
+     "content": "drive",
+     "psnr_pct": 1.4,
+     "vmaf_pct": 1.2
+    }
+   ],
+   "grade": "fail",
+   "note": "speed medium 140.6 fps / veryfast 190.5 fps / veryslow 48.4 fps; VBR bitrate deviation -0.3% .. +3.6% over 6 streams; BD-rate vs QSV same settings (PSNR-Y/VMAF) aerial -0.6%/+0.0%, drive +1.4%/+1.2%; more bits than QSV for the same PSNR; measured with the installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+  },
+  {
+   "codec": "h264",
+   "dir": "encode",
+   "bits": 8,
+   "res": "4320p",
+   "grade": "unsupported",
+   "note": "beyond Intel media-driver on Battlemage (Arc B580/B570): h264 encode up to 4096x4096 (VAConfigAttribMaxPictureWidth/Height, media_softlet/linux/xe2_hpm_r0/encode/avc/ddi/capstable_data_avc_encode_xe2_hpm_r0_specific.h:91, media_softlet/linux/xe2_hpm_r0/encode/avc/ddi/capstable_data_avc_encode_xe2_hpm_r0_specific.h:119, media_softlet/linux/xe2_hpm_r0/encode/avc/ddi/capstable_data_avc_encode_xe2_hpm_r0_specific.h:147)"
+  },
+  {
+   "codec": "h264",
+   "dir": "encode",
+   "bits": 10,
+   "res": "1080p",
+   "grade": "unsupported",
+   "note": "Intel media-driver offers h264 encode on Battlemage (Arc B580/B570) as 8-bit 420, 8-bit 422, 8-bit 444 only, not 10-bit 420 (media_softlet/linux/xe2_hpm_r0/encode/avc/ddi/capstable_data_avc_encode_xe2_hpm_r0_specific.h:91, media_softlet/linux/xe2_hpm_r0/encode/avc/ddi/capstable_data_avc_encode_xe2_hpm_r0_specific.h:119, media_softlet/linux/xe2_hpm_r0/encode/avc/ddi/capstable_data_avc_encode_xe2_hpm_r0_specific.h:147)"
+  },
+  {
+   "codec": "h264",
+   "dir": "encode",
+   "bits": 10,
+   "res": "2160p",
+   "grade": "unsupported",
+   "note": "Intel media-driver offers h264 encode on Battlemage (Arc B580/B570) as 8-bit 420, 8-bit 422, 8-bit 444 only, not 10-bit 420 (media_softlet/linux/xe2_hpm_r0/encode/avc/ddi/capstable_data_avc_encode_xe2_hpm_r0_specific.h:91, media_softlet/linux/xe2_hpm_r0/encode/avc/ddi/capstable_data_avc_encode_xe2_hpm_r0_specific.h:119, media_softlet/linux/xe2_hpm_r0/encode/avc/ddi/capstable_data_avc_encode_xe2_hpm_r0_specific.h:147)"
+  },
+  {
+   "codec": "h264",
+   "dir": "encode",
+   "bits": 10,
+   "res": "4320p",
+   "grade": "unsupported",
+   "note": "Intel media-driver offers h264 encode on Battlemage (Arc B580/B570) as 8-bit 420, 8-bit 422, 8-bit 444 only, not 10-bit 420 (media_softlet/linux/xe2_hpm_r0/encode/avc/ddi/capstable_data_avc_encode_xe2_hpm_r0_specific.h:91, media_softlet/linux/xe2_hpm_r0/encode/avc/ddi/capstable_data_avc_encode_xe2_hpm_r0_specific.h:119, media_softlet/linux/xe2_hpm_r0/encode/avc/ddi/capstable_data_avc_encode_xe2_hpm_r0_specific.h:147)"
+  },
+  {
+   "codec": "hevc",
+   "dir": "decode",
+   "bits": 8,
+   "res": "1080p",
+   "items": [
+    {
+     "clip": "dec_hevc8_1080p30",
+     "fps": 1297.7,
+     "cpu": "36",
+     "md5": "300/300",
+     "exact": true,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "clip": "dec_hevc8_1080p60",
+     "fps": 1334.0,
+     "cpu": "26",
+     "md5": "600/600",
+     "exact": true,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    }
+   ],
+   "windows_gpu_pinned": true,
+   "grade": "pass",
+   "note": "bit-exact, dec_hevc8_1080p30 1297.7 fps (md5 300/300) vs Windows 611.0 fps, dec_hevc8_1080p60 1334.0 fps (md5 600/600) vs Windows 739.8 fps; >= Windows; measured with the installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+  },
+  {
+   "codec": "hevc",
+   "dir": "decode",
+   "bits": 8,
+   "res": "2160p",
+   "items": [
+    {
+     "clip": "dec_hevc8_2160p60",
+     "fps": 416.5,
+     "cpu": "16",
+     "md5": "300/300",
+     "exact": true,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    }
+   ],
+   "windows_gpu_pinned": true,
+   "grade": "pass",
+   "note": "bit-exact, dec_hevc8_2160p60 416.5 fps (md5 300/300) vs Windows 285.2 fps; >= Windows; measured with the installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+  },
+  {
+   "codec": "hevc",
+   "dir": "decode",
+   "bits": 8,
+   "res": "4320p",
+   "items": [
+    {
+     "clip": "dec_hevc8_4320p60",
+     "fps": 107.2,
+     "cpu": "17",
+     "md5": "120/120",
+     "exact": true,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    }
+   ],
+   "windows_gpu_pinned": true,
+   "grade": "pass",
+   "note": "bit-exact, dec_hevc8_4320p60 107.2 fps (md5 120/120) vs Windows 100.1 fps; >= Windows; measured with the installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+  },
+  {
+   "codec": "hevc",
+   "dir": "decode",
+   "bits": 10,
+   "res": "1080p",
+   "items": [
+    {
+     "clip": "dec_hevc10_1080p30",
+     "fps": 1082.2,
+     "cpu": "30",
+     "md5": "300/300",
+     "exact": true,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "clip": "dec_hevc10_1080p60",
+     "fps": 1136.5,
+     "cpu": "22",
+     "md5": "600/600",
+     "exact": true,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    }
+   ],
+   "windows_gpu_pinned": true,
+   "grade": "pass",
+   "note": "bit-exact, dec_hevc10_1080p30 1082.2 fps (md5 300/300) vs Windows 584.8 fps, dec_hevc10_1080p60 1136.5 fps (md5 600/600) vs Windows 722.9 fps; >= Windows; measured with the installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+  },
+  {
+   "codec": "hevc",
+   "dir": "decode",
+   "bits": 10,
+   "res": "2160p",
+   "items": [
+    {
+     "clip": "dec_hevc10_2160p60",
+     "fps": 355.9,
+     "cpu": "18",
+     "md5": "300/300",
+     "exact": true,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    }
+   ],
+   "windows_gpu_pinned": true,
+   "grade": "pass",
+   "note": "bit-exact, dec_hevc10_2160p60 355.9 fps (md5 300/300) vs Windows 289.6 fps; >= Windows; measured with the installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+  },
+  {
+   "codec": "hevc",
+   "dir": "decode",
+   "bits": 10,
+   "res": "4320p",
+   "items": [
+    {
+     "clip": "dec_hevc10_4320p60",
+     "fps": 91.2,
+     "cpu": "18",
+     "md5": "120/120",
+     "exact": true,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    }
+   ],
+   "windows_gpu_pinned": true,
+   "grade": "fail",
+   "note": "bit-exact, dec_hevc10_4320p60 91.2 fps (md5 120/120) vs Windows 100.4 fps; slower than Windows; measured with the installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+  },
+  {
+   "codec": "hevc",
+   "dir": "encode",
+   "bits": 8,
+   "res": "1080p",
+   "items": [
+    {
+     "stream": "vt-aerial_hevc_1080p60_8_vbr3.hevc",
+     "content": "aerial",
+     "target_kbps": 3000,
+     "kbps": 3077,
+     "deviation_pct": 2.6,
+     "fps": 601.4,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "stream": "vt-aerial_hevc_1080p60_8_vbr6.hevc",
+     "content": "aerial",
+     "target_kbps": 6000,
+     "kbps": 6261,
+     "deviation_pct": 4.3,
+     "fps": 609.9,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "stream": "vt-aerial_hevc_1080p60_8_vbr12.hevc",
+     "content": "aerial",
+     "target_kbps": 12000,
+     "kbps": 12538,
+     "deviation_pct": 4.5,
+     "fps": 619.0,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "stream": "vt-drive_hevc_1080p60_8_vbr3.hevc",
+     "content": "drive",
+     "target_kbps": 3000,
+     "kbps": 3090,
+     "deviation_pct": 3.0,
+     "fps": 615.0,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "stream": "vt-drive_hevc_1080p60_8_vbr6.hevc",
+     "content": "drive",
+     "target_kbps": 6000,
+     "kbps": 6172,
+     "deviation_pct": 2.9,
+     "fps": 615.2,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "stream": "vt-drive_hevc_1080p60_8_vbr12.hevc",
+     "content": "drive",
+     "target_kbps": 12000,
+     "kbps": 12274,
+     "deviation_pct": 2.3,
+     "fps": 615.0,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    }
+   ],
+   "speed": {
+    "veryfast": 976.9,
+    "medium": 605.8,
+    "veryslow": 378.6
+   },
+   "max_overshoot_pct": 4.5,
+   "bd_rate_vs_qsv": [
+    {
+     "content": "aerial",
+     "psnr_pct": -12.1,
+     "vmaf_pct": -4.6
+    },
+    {
+     "content": "drive",
+     "psnr_pct": -14.3,
+     "vmaf_pct": -7.2
+    }
+   ],
+   "grade": "pass",
+   "note": "speed medium 605.8 fps / veryfast 976.9 fps / veryslow 378.6 fps; VBR bitrate deviation +2.3% .. +4.5% over 6 streams; BD-rate vs QSV same settings (PSNR-Y/VMAF) aerial -12.1%/-4.6%, drive -14.3%/-7.2%; measured with the installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+  },
+  {
+   "codec": "hevc",
+   "dir": "encode",
+   "bits": 8,
+   "res": "2160p",
+   "items": [
+    {
+     "stream": "vt-aerial_hevc_2160p60_8_vbr12.hevc",
+     "content": "aerial",
+     "target_kbps": 12000,
+     "kbps": 11938,
+     "deviation_pct": -0.5,
+     "fps": 155.0,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "stream": "vt-aerial_hevc_2160p60_8_vbr25.hevc",
+     "content": "aerial",
+     "target_kbps": 25000,
+     "kbps": 24914,
+     "deviation_pct": -0.3,
+     "fps": 156.2,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "stream": "vt-aerial_hevc_2160p60_8_vbr50.hevc",
+     "content": "aerial",
+     "target_kbps": 50000,
+     "kbps": 50612,
+     "deviation_pct": 1.2,
+     "fps": 156.9,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "stream": "vt-drive_hevc_2160p60_8_vbr12.hevc",
+     "content": "drive",
+     "target_kbps": 12000,
+     "kbps": 12161,
+     "deviation_pct": 1.3,
+     "fps": 156.4,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "stream": "vt-drive_hevc_2160p60_8_vbr25.hevc",
+     "content": "drive",
+     "target_kbps": 25000,
+     "kbps": 25746,
+     "deviation_pct": 3.0,
+     "fps": 156.5,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "stream": "vt-drive_hevc_2160p60_8_vbr50.hevc",
+     "content": "drive",
+     "target_kbps": 50000,
+     "kbps": 50874,
+     "deviation_pct": 1.7,
+     "fps": 157.2,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    }
+   ],
+   "speed": {
+    "veryfast": 244.8,
+    "medium": 156.4,
+    "veryslow": 96.1
+   },
+   "max_overshoot_pct": 3.0,
+   "bd_rate_vs_qsv": [
+    {
+     "content": "aerial",
+     "psnr_pct": -5.1,
+     "vmaf_pct": 1.3
+    },
+    {
+     "content": "drive",
+     "psnr_pct": -7.2,
+     "vmaf_pct": 0.1
+    }
+   ],
+   "grade": "pass",
+   "note": "speed medium 156.4 fps / veryfast 244.8 fps / veryslow 96.1 fps; VBR bitrate deviation -0.5% .. +3.0% over 6 streams; BD-rate vs QSV same settings (PSNR-Y/VMAF) aerial -5.1%/+1.3%, drive -7.2%/+0.1%; measured with the installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+  },
+  {
+   "codec": "hevc",
+   "dir": "encode",
+   "bits": 8,
+   "res": "4320p",
+   "items": [
+    {
+     "stream": "vt-aerial_hevc_4320p60_8_vbr40.hevc",
+     "content": "aerial",
+     "target_kbps": 40000,
+     "kbps": 37723,
+     "deviation_pct": -5.7,
+     "fps": 36.8,
+     "stack": "installed stack 7bb41ff0 f16535f2 94e692a3 36480fb2"
+    },
+    {
+     "stream": "vt-aerial_hevc_4320p60_8_vbr80.hevc",
+     "content": "aerial",
+     "target_kbps": 80000,
+     "kbps": 73028,
+     "deviation_pct": -8.7,
+     "fps": 37.1,
+     "stack": "installed stack 7bb41ff0 f16535f2 94e692a3 36480fb2"
+    },
+    {
+     "stream": "vt-aerial_hevc_4320p60_8_vbr160.hevc",
+     "content": "aerial",
+     "target_kbps": 160000,
+     "kbps": 146586,
+     "deviation_pct": -8.4,
+     "fps": 37.3,
+     "stack": "installed stack 7bb41ff0 f16535f2 94e692a3 36480fb2"
+    },
+    {
+     "stream": "vt-mosaic_hevc_4320p60_8_vbr40.hevc",
+     "content": "mosaic",
+     "target_kbps": 40000,
+     "kbps": 37067,
+     "deviation_pct": -7.3,
+     "fps": 37.4,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "stream": "vt-mosaic_hevc_4320p60_8_vbr80.hevc",
+     "content": "mosaic",
+     "target_kbps": 80000,
+     "kbps": 76953,
+     "deviation_pct": -3.8,
+     "fps": 37.3,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "stream": "vt-mosaic_hevc_4320p60_8_vbr160.hevc",
+     "content": "mosaic",
+     "target_kbps": 160000,
+     "kbps": 146959,
+     "deviation_pct": -8.2,
+     "fps": 37.4,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    }
+   ],
+   "speed": {
+    "veryfast": 53.8,
+    "medium": 37.5,
+    "veryslow": 23.6
+   },
+   "max_overshoot_pct": -3.8,
+   "bd_rate_vs_qsv": [
+    {
+     "content": "mosaic",
+     "psnr_pct": -6.3,
+     "vmaf_pct": -2.6
+    }
+   ],
+   "grade": "pass",
+   "note": "speed medium 37.5 fps / veryfast 53.8 fps / veryslow 23.6 fps; VBR bitrate deviation -8.7% .. -3.8% over 6 streams; BD-rate vs QSV same settings (PSNR-Y/VMAF) mosaic -6.3%/-2.6%; measured with the installed stack 7bb41ff0 f16535f2 94e692a3 36480fb2 / installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+  },
+  {
+   "codec": "hevc",
+   "dir": "encode",
+   "bits": 10,
+   "res": "1080p",
+   "items": [
+    {
+     "stream": "vt-aerial_hevc_1080p60_10_vbr3.hevc",
+     "content": "aerial",
+     "target_kbps": 3000,
+     "kbps": 3089,
+     "deviation_pct": 3.0,
+     "fps": 499.8,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "stream": "vt-aerial_hevc_1080p60_10_vbr6.hevc",
+     "content": "aerial",
+     "target_kbps": 6000,
+     "kbps": 6255,
+     "deviation_pct": 4.3,
+     "fps": 502.2,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "stream": "vt-aerial_hevc_1080p60_10_vbr12.hevc",
+     "content": "aerial",
+     "target_kbps": 12000,
+     "kbps": 12447,
+     "deviation_pct": 3.7,
+     "fps": 503.9,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    }
+   ],
+   "max_overshoot_pct": 4.3,
+   "bd_rate_vs_qsv": [
+    {
+     "content": "aerial",
+     "psnr_pct": -10.5,
+     "vmaf_pct": -2.8
+    }
+   ],
+   "grade": "pass",
+   "note": "VBR bitrate deviation +3.0% .. +4.3% over 3 streams; BD-rate vs QSV same settings (PSNR-Y/VMAF) aerial -10.5%/-2.8%; measured with the installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+  },
+  {
+   "codec": "hevc",
+   "dir": "encode",
+   "bits": 10,
+   "res": "2160p",
+   "items": [
+    {
+     "stream": "vt-aerial_hevc_2160p60_10_vbr12.hevc",
+     "content": "aerial",
+     "target_kbps": 12000,
+     "kbps": 11968,
+     "deviation_pct": -0.3,
+     "fps": 96.3,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "stream": "vt-aerial_hevc_2160p60_10_vbr25.hevc",
+     "content": "aerial",
+     "target_kbps": 25000,
+     "kbps": 24900,
+     "deviation_pct": -0.4,
+     "fps": 120.5,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "stream": "vt-aerial_hevc_2160p60_10_vbr50.hevc",
+     "content": "aerial",
+     "target_kbps": 50000,
+     "kbps": 50729,
+     "deviation_pct": 1.5,
+     "fps": 120.5,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    }
+   ],
+   "max_overshoot_pct": 1.5,
+   "bd_rate_vs_qsv": [
+    {
+     "content": "aerial",
+     "psnr_pct": -5.1,
+     "vmaf_pct": -1.4
+    }
+   ],
+   "grade": "pass",
+   "note": "VBR bitrate deviation -0.4% .. +1.5% over 3 streams; BD-rate vs QSV same settings (PSNR-Y/VMAF) aerial -5.1%/-1.4%; measured with the installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+  },
+  {
+   "codec": "hevc",
+   "dir": "encode",
+   "bits": 10,
+   "res": "4320p",
+   "items": [
+    {
+     "stream": "vt-aerial_hevc_4320p60_10_vbr40.hevc",
+     "content": "aerial",
+     "target_kbps": 40000,
+     "kbps": 37825,
+     "deviation_pct": -5.4,
+     "fps": 26.6,
+     "stack": "installed stack 7bb41ff0 f16535f2 94e692a3 36480fb2"
+    },
+    {
+     "stream": "vt-aerial_hevc_4320p60_10_vbr80.hevc",
+     "content": "aerial",
+     "target_kbps": 80000,
+     "kbps": 71218,
+     "deviation_pct": -11.0,
+     "fps": 27.2,
+     "stack": "installed stack 7bb41ff0 f16535f2 94e692a3 36480fb2"
+    },
+    {
+     "stream": "vt-aerial_hevc_4320p60_10_vbr160.hevc",
+     "content": "aerial",
+     "target_kbps": 160000,
+     "kbps": 142028,
+     "deviation_pct": -11.2,
+     "fps": 27.1,
+     "stack": "installed stack 7bb41ff0 f16535f2 94e692a3 36480fb2"
+    },
+    {
+     "stream": "vt-mosaic_hevc_4320p60_10_vbr40.hevc",
+     "content": "mosaic",
+     "target_kbps": 40000,
+     "kbps": 37521,
+     "deviation_pct": -6.2,
+     "fps": 27.8,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "stream": "vt-mosaic_hevc_4320p60_10_vbr80.hevc",
+     "content": "mosaic",
+     "target_kbps": 80000,
+     "kbps": 76506,
+     "deviation_pct": -4.4,
+     "fps": 28.0,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "stream": "vt-mosaic_hevc_4320p60_10_vbr160.hevc",
+     "content": "mosaic",
+     "target_kbps": 160000,
+     "kbps": 147909,
+     "deviation_pct": -7.6,
+     "fps": 27.7,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    }
+   ],
+   "max_overshoot_pct": -4.4,
+   "bd_rate_vs_qsv": [
+    {
+     "content": "mosaic",
+     "psnr_pct": -6.9,
+     "vmaf_pct": -2.9
+    }
+   ],
+   "grade": "pass",
+   "note": "VBR bitrate deviation -11.2% .. -4.4% over 6 streams; BD-rate vs QSV same settings (PSNR-Y/VMAF) mosaic -6.9%/-2.9%; measured with the installed stack 7bb41ff0 f16535f2 94e692a3 36480fb2 / installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+  },
+  {
+   "codec": "av1",
+   "dir": "decode",
+   "bits": 8,
+   "res": "1080p",
+   "items": [
+    {
+     "clip": "dec_av1_8_1080p30",
+     "fps": 1693.5,
+     "cpu": "35",
+     "md5": "300/300",
+     "exact": true,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "clip": "dec_av1_8_1080p60",
+     "fps": 1652.5,
+     "cpu": "26",
+     "md5": "600/600",
+     "exact": true,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    }
+   ],
+   "windows_gpu_pinned": true,
+   "grade": "pass",
+   "note": "bit-exact, dec_av1_8_1080p30 1693.5 fps (md5 300/300) vs Windows 1115.2 fps, dec_av1_8_1080p60 1652.5 fps (md5 600/600) vs Windows 789.5 fps; >= Windows; measured with the installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+  },
+  {
+   "codec": "av1",
+   "dir": "decode",
+   "bits": 8,
+   "res": "2160p",
+   "items": [
+    {
+     "clip": "dec_av1_8_2160p60",
+     "fps": 484.4,
+     "cpu": "14",
+     "md5": "300/300",
+     "exact": true,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    }
+   ],
+   "windows_gpu_pinned": true,
+   "grade": "pass",
+   "note": "bit-exact, dec_av1_8_2160p60 484.4 fps (md5 300/300) vs Windows 332.6 fps; >= Windows; measured with the installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+  },
+  {
+   "codec": "av1",
+   "dir": "decode",
+   "bits": 8,
+   "res": "4320p",
+   "items": [
+    {
+     "clip": "dec_av1_8_4320p60",
+     "fps": 126.6,
+     "cpu": "20",
+     "md5": "60/60",
+     "exact": true,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    }
+   ],
+   "windows_gpu_pinned": true,
+   "grade": "fail",
+   "note": "bit-exact, dec_av1_8_4320p60 126.6 fps (md5 60/60) vs Windows 155.0 fps; slower than Windows; measured with the installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+  },
+  {
+   "codec": "av1",
+   "dir": "decode",
+   "bits": 10,
+   "res": "1080p",
+   "items": [
+    {
+     "clip": "dec_av1_10_1080p30",
+     "fps": 1538.0,
+     "cpu": "36",
+     "md5": "300/300",
+     "exact": true,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "clip": "dec_av1_10_1080p60",
+     "fps": 1476.3,
+     "cpu": "26",
+     "md5": "600/600",
+     "exact": true,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    }
+   ],
+   "windows_gpu_pinned": true,
+   "grade": "pass",
+   "note": "bit-exact, dec_av1_10_1080p30 1538.0 fps (md5 300/300) vs Windows 697.7 fps, dec_av1_10_1080p60 1476.3 fps (md5 600/600) vs Windows 791.6 fps; >= Windows; measured with the installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+  },
+  {
+   "codec": "av1",
+   "dir": "decode",
+   "bits": 10,
+   "res": "2160p",
+   "items": [
+    {
+     "clip": "dec_av1_10_2160p60",
+     "fps": 462.1,
+     "cpu": "18",
+     "md5": "300/300",
+     "exact": true,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    }
+   ],
+   "windows_gpu_pinned": true,
+   "grade": "pass",
+   "note": "bit-exact, dec_av1_10_2160p60 462.1 fps (md5 300/300) vs Windows 332.2 fps; >= Windows; measured with the installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+  },
+  {
+   "codec": "av1",
+   "dir": "decode",
+   "bits": 10,
+   "res": "4320p",
+   "items": [
+    {
+     "clip": "dec_av1_10_4320p60",
+     "fps": 116.4,
+     "cpu": "29",
+     "md5": "60/60",
+     "exact": true,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    }
+   ],
+   "windows_gpu_pinned": true,
+   "grade": "fail",
+   "note": "bit-exact, dec_av1_10_4320p60 116.4 fps (md5 60/60) vs Windows 121.7 fps; slower than Windows; measured with the installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+  },
+  {
+   "codec": "av1",
+   "dir": "encode",
+   "bits": 8,
+   "res": "1080p",
+   "items": [
+    {
+     "stream": "vt-aerial_av1_1080p60_8_vbr3.ivf",
+     "content": "aerial",
+     "target_kbps": 3000,
+     "kbps": 3143,
+     "deviation_pct": 4.8,
+     "fps": 511.8,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "stream": "vt-aerial_av1_1080p60_8_vbr6.ivf",
+     "content": "aerial",
+     "target_kbps": 6000,
+     "kbps": 6075,
+     "deviation_pct": 1.3,
+     "fps": 511.2,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "stream": "vt-aerial_av1_1080p60_8_vbr12.ivf",
+     "content": "aerial",
+     "target_kbps": 12000,
+     "kbps": 12219,
+     "deviation_pct": 1.8,
+     "fps": 522.9,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "stream": "vt-drive_av1_1080p60_8_vbr3.ivf",
+     "content": "drive",
+     "target_kbps": 3000,
+     "kbps": 3035,
+     "deviation_pct": 1.2,
+     "fps": 501.6,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "stream": "vt-drive_av1_1080p60_8_vbr6.ivf",
+     "content": "drive",
+     "target_kbps": 6000,
+     "kbps": 6066,
+     "deviation_pct": 1.1,
+     "fps": 504.8,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "stream": "vt-drive_av1_1080p60_8_vbr12.ivf",
+     "content": "drive",
+     "target_kbps": 12000,
+     "kbps": 12352,
+     "deviation_pct": 2.9,
+     "fps": 531.4,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    }
+   ],
+   "speed": {
+    "veryfast": 788.5,
+    "medium": 510.0,
+    "veryslow": 292.1
+   },
+   "max_overshoot_pct": 4.8,
+   "bd_rate_vs_qsv": [
+    {
+     "content": "aerial",
+     "psnr_pct": -11.4,
+     "vmaf_pct": -4.9
+    },
+    {
+     "content": "drive",
+     "psnr_pct": -12.7,
+     "vmaf_pct": -6.5
+    }
+   ],
+   "grade": "pass",
+   "note": "speed medium 510.0 fps / veryfast 788.5 fps / veryslow 292.1 fps; VBR bitrate deviation +1.1% .. +4.8% over 6 streams; BD-rate vs QSV same settings (PSNR-Y/VMAF) aerial -11.4%/-4.9%, drive -12.7%/-6.5%; measured with the installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+  },
+  {
+   "codec": "av1",
+   "dir": "encode",
+   "bits": 8,
+   "res": "2160p",
+   "items": [
+    {
+     "stream": "vt-aerial_av1_2160p60_8_vbr12.ivf",
+     "content": "aerial",
+     "target_kbps": 12000,
+     "kbps": 12141,
+     "deviation_pct": 1.2,
+     "fps": 139.4,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "stream": "vt-aerial_av1_2160p60_8_vbr25.ivf",
+     "content": "aerial",
+     "target_kbps": 25000,
+     "kbps": 25147,
+     "deviation_pct": 0.6,
+     "fps": 142.3,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "stream": "vt-aerial_av1_2160p60_8_vbr50.ivf",
+     "content": "aerial",
+     "target_kbps": 50000,
+     "kbps": 46186,
+     "deviation_pct": -7.6,
+     "fps": 143.9,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "stream": "vt-drive_av1_2160p60_8_vbr12.ivf",
+     "content": "drive",
+     "target_kbps": 12000,
+     "kbps": 12513,
+     "deviation_pct": 4.3,
+     "fps": 137.4,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "stream": "vt-drive_av1_2160p60_8_vbr25.ivf",
+     "content": "drive",
+     "target_kbps": 25000,
+     "kbps": 26124,
+     "deviation_pct": 4.5,
+     "fps": 145.8,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "stream": "vt-drive_av1_2160p60_8_vbr50.ivf",
+     "content": "drive",
+     "target_kbps": 50000,
+     "kbps": 49207,
+     "deviation_pct": -1.6,
+     "fps": 148.7,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    }
+   ],
+   "speed": {
+    "veryfast": 219.9,
+    "medium": 142.6,
+    "veryslow": 78.5
+   },
+   "max_overshoot_pct": 4.5,
+   "bd_rate_vs_qsv": [
+    {
+     "content": "aerial",
+     "psnr_pct": -5.9,
+     "vmaf_pct": 2.5
+    },
+    {
+     "content": "drive",
+     "psnr_pct": -7.5,
+     "vmaf_pct": -0.0
+    }
+   ],
+   "grade": "pass",
+   "note": "speed medium 142.6 fps / veryfast 219.9 fps / veryslow 78.5 fps; VBR bitrate deviation -7.6% .. +4.5% over 6 streams; BD-rate vs QSV same settings (PSNR-Y/VMAF) aerial -5.9%/+2.5%, drive -7.5%/-0.0%; measured with the installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+  },
+  {
+   "codec": "av1",
+   "dir": "encode",
+   "bits": 8,
+   "res": "4320p",
+   "items": [
+    {
+     "stream": "vt-mosaic_av1_4320p60_8_vbr40.ivf",
+     "content": "mosaic",
+     "target_kbps": 40000,
+     "kbps": 38319,
+     "deviation_pct": -4.2,
+     "fps": 32.7,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "stream": "vt-mosaic_av1_4320p60_8_vbr80.ivf",
+     "content": "mosaic",
+     "target_kbps": 80000,
+     "kbps": 76638,
+     "deviation_pct": -4.2,
+     "fps": 32.8,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "stream": "vt-mosaic_av1_4320p60_8_vbr160.ivf",
+     "content": "mosaic",
+     "target_kbps": 160000,
+     "kbps": 133516,
+     "deviation_pct": -16.6,
+     "fps": 35.6,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    }
+   ],
+   "speed": {
+    "veryfast": 46.9,
+    "medium": 32.8,
+    "veryslow": 18.8
+   },
+   "max_overshoot_pct": -4.2,
+   "bd_rate_vs_qsv": [
+    {
+     "content": "mosaic",
+     "psnr_pct": -13.6,
+     "vmaf_pct": -5.7
+    }
+   ],
+   "grade": "pass",
+   "note": "speed medium 32.8 fps / veryfast 46.9 fps / veryslow 18.8 fps; VBR bitrate deviation -16.6% .. -4.2% over 3 streams; BD-rate vs QSV same settings (PSNR-Y/VMAF) mosaic -13.6%/-5.7%; measured with the installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+  },
+  {
+   "codec": "av1",
+   "dir": "encode",
+   "bits": 10,
+   "res": "1080p",
+   "items": [
+    {
+     "stream": "vt-aerial_av1_1080p60_10_vbr3.ivf",
+     "content": "aerial",
+     "target_kbps": 3000,
+     "kbps": 3084,
+     "deviation_pct": 2.8,
+     "fps": 454.9,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "stream": "vt-aerial_av1_1080p60_10_vbr6.ivf",
+     "content": "aerial",
+     "target_kbps": 6000,
+     "kbps": 6021,
+     "deviation_pct": 0.4,
+     "fps": 452.1,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "stream": "vt-aerial_av1_1080p60_10_vbr12.ivf",
+     "content": "aerial",
+     "target_kbps": 12000,
+     "kbps": 12187,
+     "deviation_pct": 1.6,
+     "fps": 456.9,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    }
+   ],
+   "max_overshoot_pct": 2.8,
+   "bd_rate_vs_qsv": [
+    {
+     "content": "aerial",
+     "psnr_pct": -10.8,
+     "vmaf_pct": -5.2
+    }
+   ],
+   "grade": "pass",
+   "note": "VBR bitrate deviation +0.4% .. +2.8% over 3 streams; BD-rate vs QSV same settings (PSNR-Y/VMAF) aerial -10.8%/-5.2%; measured with the installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+  },
+  {
+   "codec": "av1",
+   "dir": "encode",
+   "bits": 10,
+   "res": "2160p",
+   "items": [
+    {
+     "stream": "vt-aerial_av1_2160p60_10_vbr12.ivf",
+     "content": "aerial",
+     "target_kbps": 12000,
+     "kbps": 12078,
+     "deviation_pct": 0.7,
+     "fps": 110.5,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "stream": "vt-aerial_av1_2160p60_10_vbr25.ivf",
+     "content": "aerial",
+     "target_kbps": 25000,
+     "kbps": 25151,
+     "deviation_pct": 0.6,
+     "fps": 108.7,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "stream": "vt-aerial_av1_2160p60_10_vbr50.ivf",
+     "content": "aerial",
+     "target_kbps": 50000,
+     "kbps": 39292,
+     "deviation_pct": -21.4,
+     "fps": 109.1,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    }
+   ],
+   "max_overshoot_pct": 0.7,
+   "bd_rate_vs_qsv": [
+    {
+     "content": "aerial",
+     "psnr_pct": -6.6,
+     "vmaf_pct": -1.1
+    }
+   ],
+   "grade": "pass",
+   "note": "VBR bitrate deviation -21.4% .. +0.7% over 3 streams; BD-rate vs QSV same settings (PSNR-Y/VMAF) aerial -6.6%/-1.1%; measured with the installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+  },
+  {
+   "codec": "av1",
+   "dir": "encode",
+   "bits": 10,
+   "res": "4320p",
+   "items": [
+    {
+     "stream": "vt-mosaic_av1_4320p60_10_vbr40.ivf",
+     "content": "mosaic",
+     "target_kbps": 40000,
+     "kbps": 38188,
+     "deviation_pct": -4.5,
+     "fps": 25.3,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "stream": "vt-mosaic_av1_4320p60_10_vbr80.ivf",
+     "content": "mosaic",
+     "target_kbps": 80000,
+     "kbps": 74424,
+     "deviation_pct": -7.0,
+     "fps": 25.3,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "stream": "vt-mosaic_av1_4320p60_10_vbr160.ivf",
+     "content": "mosaic",
+     "target_kbps": 160000,
+     "kbps": 139167,
+     "deviation_pct": -13.0,
+     "fps": 26.6,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    }
+   ],
+   "max_overshoot_pct": -4.5,
+   "bd_rate_vs_qsv": [
+    {
+     "content": "mosaic",
+     "psnr_pct": -10.8,
+     "vmaf_pct": -2.0
+    }
+   ],
+   "grade": "pass",
+   "note": "VBR bitrate deviation -13.0% .. -4.5% over 3 streams; BD-rate vs QSV same settings (PSNR-Y/VMAF) mosaic -10.8%/-2.0%; measured with the installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+  },
+  {
+   "codec": "vp9",
+   "dir": "decode",
+   "bits": 8,
+   "res": "1080p",
+   "items": [
+    {
+     "clip": "dec_vp9_8_1080p30",
+     "fps": 1420.7,
+     "cpu": "39",
+     "md5": "300/300",
+     "exact": true,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    },
+    {
+     "clip": "dec_vp9_8_1080p60",
+     "fps": 1607.6,
+     "cpu": "31",
+     "md5": "600/600",
+     "exact": true,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    }
+   ],
+   "windows_gpu_pinned": true,
+   "grade": "pass",
+   "note": "bit-exact, dec_vp9_8_1080p30 1420.7 fps (md5 300/300) vs Windows 719.4 fps, dec_vp9_8_1080p60 1607.6 fps (md5 600/600) vs Windows 707.5 fps; >= Windows; measured with the installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+  },
+  {
+   "codec": "vp9",
+   "dir": "decode",
+   "bits": 8,
+   "res": "2160p",
+   "items": [
+    {
+     "clip": "dec_vp9_8_2160p60",
+     "fps": 474.2,
+     "cpu": "18",
+     "md5": "300/300",
+     "exact": true,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    }
+   ],
+   "windows_gpu_pinned": true,
+   "grade": "pass",
+   "note": "bit-exact, dec_vp9_8_2160p60 474.2 fps (md5 300/300) vs Windows 339.8 fps; >= Windows; measured with the installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+  },
+  {
+   "codec": "vp9",
+   "dir": "decode",
+   "bits": 8,
+   "res": "4320p",
+   "items": [
+    {
+     "clip": "dec_vp9_8_4320p60",
+     "fps": 140.8,
+     "cpu": "17",
+     "md5": "120/120",
+     "exact": true,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    }
+   ],
+   "windows_gpu_pinned": true,
+   "grade": "pass",
+   "note": "bit-exact, dec_vp9_8_4320p60 140.8 fps (md5 120/120) vs Windows 104.9 fps; >= Windows; measured with the installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+  },
+  {
+   "codec": "vp9",
+   "dir": "decode",
+   "bits": 10,
+   "res": "1080p",
+   "items": [
+    {
+     "clip": "dec_vp9_10_1080p60",
+     "fps": 1424.4,
+     "cpu": "32",
+     "md5": "600/600",
+     "exact": true,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    }
+   ],
+   "windows_gpu_pinned": true,
+   "grade": "pass",
+   "note": "bit-exact, dec_vp9_10_1080p60 1424.4 fps (md5 600/600) vs Windows 692.8 fps; >= Windows; measured with the installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+  },
+  {
+   "codec": "vp9",
+   "dir": "decode",
+   "bits": 10,
+   "res": "2160p",
+   "items": [
+    {
+     "clip": "dec_vp9_10_2160p60",
+     "fps": 436.9,
+     "cpu": "20",
+     "md5": "300/300",
+     "exact": true,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    }
+   ],
+   "windows_gpu_pinned": true,
+   "grade": "pass",
+   "note": "bit-exact, dec_vp9_10_2160p60 436.9 fps (md5 300/300) vs Windows 338.2 fps; >= Windows; measured with the installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+  },
+  {
+   "codec": "vp9",
+   "dir": "decode",
+   "bits": 10,
+   "res": "4320p",
+   "items": [
+    {
+     "clip": "dec_vp9_10_4320p60",
+     "fps": 112.1,
+     "cpu": "38",
+     "md5": "60/60",
+     "exact": true,
+     "stack": "installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+    }
+   ],
+   "windows_gpu_pinned": true,
+   "grade": "pass",
+   "note": "bit-exact, dec_vp9_10_4320p60 112.1 fps (md5 60/60) vs Windows 83.4 fps; >= Windows; measured with the installed stack a7021b7e ecf35ee7 714e989a 80732b8d"
+  },
+  {
+   "codec": "vp9",
+   "dir": "encode",
+   "bits": 8,
+   "res": "1080p",
+   "grade": "unsupported",
+   "note": "Intel media-driver offers no vp9 encode entrypoint on Battlemage (Arc B580/B570) (media_softlet/linux/xe2_hpm_r0/ddi/capstable_data_xe2_hpm_r0_specific.h)"
+  },
+  {
+   "codec": "vp9",
+   "dir": "encode",
+   "bits": 8,
+   "res": "2160p",
+   "grade": "unsupported",
+   "note": "Intel media-driver offers no vp9 encode entrypoint on Battlemage (Arc B580/B570) (media_softlet/linux/xe2_hpm_r0/ddi/capstable_data_xe2_hpm_r0_specific.h)"
+  },
+  {
+   "codec": "vp9",
+   "dir": "encode",
+   "bits": 8,
+   "res": "4320p",
+   "grade": "unsupported",
+   "note": "Intel media-driver offers no vp9 encode entrypoint on Battlemage (Arc B580/B570) (media_softlet/linux/xe2_hpm_r0/ddi/capstable_data_xe2_hpm_r0_specific.h)"
+  },
+  {
+   "codec": "vp9",
+   "dir": "encode",
+   "bits": 10,
+   "res": "1080p",
+   "grade": "unsupported",
+   "note": "Intel media-driver offers no vp9 encode entrypoint on Battlemage (Arc B580/B570) (media_softlet/linux/xe2_hpm_r0/ddi/capstable_data_xe2_hpm_r0_specific.h)"
+  },
+  {
+   "codec": "vp9",
+   "dir": "encode",
+   "bits": 10,
+   "res": "2160p",
+   "grade": "unsupported",
+   "note": "Intel media-driver offers no vp9 encode entrypoint on Battlemage (Arc B580/B570) (media_softlet/linux/xe2_hpm_r0/ddi/capstable_data_xe2_hpm_r0_specific.h)"
+  },
+  {
+   "codec": "vp9",
+   "dir": "encode",
+   "bits": 10,
+   "res": "4320p",
+   "grade": "unsupported",
+   "note": "Intel media-driver offers no vp9 encode entrypoint on Battlemage (Arc B580/B570) (media_softlet/linux/xe2_hpm_r0/ddi/capstable_data_xe2_hpm_r0_specific.h)"
+  }
+ ]
+}

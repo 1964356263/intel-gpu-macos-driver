@@ -1,0 +1,17 @@
+// SPDX-License-Identifier: MIT
+#version 450
+// vkhang's spin: loops until the host writes stop != 0 or, if maxIter is not 0, after maxIter iterations. Only
+// maxIter bounds it for sure: on Xe2 a volatile load is L1-uncached but L3-cached (brw_lower_logical_sends.cpp), so the
+// host's stop flag may never be seen. maxIter 0 = a real hang that only the kernel can end.
+layout(local_size_x = 1) in;
+layout(push_constant) uniform P { uint maxIter; } pc;
+layout(std430, set = 0, binding = 0) coherent volatile buffer B { uint stop; uint iters; uint started; } b;
+void main() {
+	b.started = 1u;
+	uint n = 0u;
+	while (b.stop == 0u && (pc.maxIter == 0u || n < pc.maxIter)) {
+		n++;
+		if ((n & 0xffffu) == 0u) b.iters = n;
+	}
+	b.iters = n;
+}

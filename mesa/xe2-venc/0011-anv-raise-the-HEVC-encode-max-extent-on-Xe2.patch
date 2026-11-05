@@ -1,0 +1,31 @@
+From 96bb2520404608b0d2640ef88240dc63c65eafb9 Mon Sep 17 00:00:00 2001
+From: "Emil J. Tywoniak" <emil@tywoniak.eu>
+Date: Thu, 15 Oct 2026 00:42:42 +0200
+Subject: [PATCH 11/18] anv: raise the HEVC encode max extent on Xe2
+
+---
+ src/intel/vulkan/anv_video.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/src/intel/vulkan/anv_video.c b/src/intel/vulkan/anv_video.c
+index e4de80fc502..fe465a67d18 100644
+--- a/src/intel/vulkan/anv_video.c
++++ b/src/intel/vulkan/anv_video.c
+@@ -537,6 +537,14 @@ anv_GetPhysicalDeviceVideoCapabilitiesKHR(VkPhysicalDevice physicalDevice,
+       pCapabilities->minBitstreamBufferOffsetAlignment = 4096;
+       pCapabilities->minBitstreamBufferSizeAlignment = 4096;
+ 
++      /* VDEnc goes beyond 4K for HEVC, media-driver allows up to 16Kx12K on
++       * Xe2.
++       */
++      if (pdevice->info.verx10 >= 200) {
++         pCapabilities->maxCodedExtent.width = 8192;
++         pCapabilities->maxCodedExtent.height = 8192;
++      }
++
+       pCapabilities->maxDpbSlots = ANV_VIDEO_H265_MAX_NUM_REF_FRAME;
+       pCapabilities->maxActiveReferencePictures = ANV_VIDEO_H265_MAX_NUM_REF_FRAME;
+       pCapabilities->pictureAccessGranularity.width = ANV_MAX_H265_CTB_SIZE;
+-- 
+2.54.0 (Apple Git-157)
+

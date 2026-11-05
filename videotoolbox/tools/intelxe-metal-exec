@@ -1,0 +1,6 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# intelxe-metal-exec <tool> [args...]: run a command-line tool with Metal brought up first, so the GPU plug-in registers
+# the IntelXe VideoToolbox codecs in it (HEVC/H.264/AV1 encoders, AV1/H.264/HEVC decoders) before the tool asks
+# VideoToolbox for one. Example: intelxe-metal-exec ffmpeg -i in.mov -c:v hevc_videotoolbox -b:v 8M out.mp4
+exec env DYLD_INSERT_LIBRARIES="$(cd "$(dirname "$0")" && pwd)/metalpre.dylib${DYLD_INSERT_LIBRARIES:+:$DYLD_INSERT_LIBRARIES}" "$@"

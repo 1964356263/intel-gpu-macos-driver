@@ -1,0 +1,238 @@
+From 9c0e289b4696904c854e65f3d4971fda6c1d9c3d Mon Sep 17 00:00:00 2001
+From: "Emil J. Tywoniak" <emil@tywoniak.eu>
+Date: Sat, 17 Oct 2026 02:39:25 +0200
+Subject: [PATCH 17/18] anv: program the full HEVC LCU max bit size on Gfx12.5+
+
+lcu_max_bits_size_allowed() needs up to 18 bits (81920 for 8 bit 4:2:0
+with 64x64 CTBs) but was masked to 16, so the PAK got 16384. From
+Gfx12.5 on HCP_PIC_STATE carries the two MSBs in DW6 bits 18:17, like
+the media driver programs them (LcuMaxBitSizeAllowedMsb2its in the
+Xe_HPM and Xe2 HCP definitions). Add the field to the Gfx12.5 genxml and
+program it.
+
+No visible change in output with the LCU max size report disabled, but
+the value is no longer bogus if that is turned on.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_014zf3d6ZuUHNvTB81JRfHds
+---
+ src/intel/genxml/gen125.xml           | 167 ++++++++++++++++++++++++++
+ src/intel/vulkan/genX_cmd_video_enc.c |  10 +-
+ 2 files changed, 174 insertions(+), 3 deletions(-)
+
+diff --git a/src/intel/genxml/gen125.xml b/src/intel/genxml/gen125.xml
+index fa5f7582da7..80a206a249d 100644
+--- a/src/intel/genxml/gen125.xml
++++ b/src/intel/genxml/gen125.xml
+@@ -2045,6 +2045,173 @@
+       <field name="Quantizer Matrix 8x8" dword="0" bits="7:0" type="uint" />
+     </group>
+   </instruction>
++  <instruction name="HCP_PIC_STATE" bias="2" length="41" engine="video">
++    <field name="DWord Length" dword="0" bits="11:0" type="uint" default="39" />
++    <field name="SubOpcode" dword="0" bits="22:16" type="uint" default="16" />
++    <field name="Media Command Opcode" dword="0" bits="26:23" type="uint" default="7" />
++    <field name="Pipeline" dword="0" bits="28:27" type="uint" default="2" />
++    <field name="Command Type" dword="0" bits="31:29" type="uint" default="3" />
++    <field name="Frame Width In Minimum Coding Block Size" dword="1" bits="10:0" type="uint" />
++    <field name="PAK Transform Skip Enable" dword="1" bits="15:15" type="bool" />
++    <field name="Frame Height In Minimum Coding Block Size" dword="1" bits="26:16" type="uint" />
++    <field name="Min CU Size" dword="2" bits="1:0" type="uint" prefix="LCU">
++      <value name="64x64" value="3" />
++      <value name="32x32" value="2" />
++      <value name="16x16" value="1" />
++      <value name="8x8" value="0" />
++    </field>
++    <field name="LCU Size" dword="2" bits="3:2" type="uint" prefix="LCU">
++      <value name="64x64" value="3" />
++      <value name="32x32" value="2" />
++      <value name="16x16" value="1" />
++      <value name="Illegal/reserved" value="0" />
++    </field>
++    <field name="Min TU Size" dword="2" bits="5:4" type="uint" prefix="TU">
++      <value name="32x32" value="3" />
++      <value name="16x16" value="2" />
++      <value name="8x8" value="1" />
++      <value name="4x4" value="0" />
++    </field>
++    <field name="Max TU Size" dword="2" bits="7:6" type="uint" prefix="TU">
++      <value name="32x32" value="3" />
++      <value name="16x16" value="2" />
++      <value name="8x8" value="1" />
++      <value name="4x4" value="0" />
++    </field>
++    <field name="Min PCM Size" dword="2" bits="9:8" type="uint" prefix="PCM">
++      <value name="32x32" value="2" />
++      <value name="16x16" value="1" />
++      <value name="8x8" value="0" />
++    </field>
++    <field name="Max PCM Size" dword="2" bits="11:10" type="uint" prefix="PCM">
++      <value name="32x32" value="2" />
++      <value name="16x16" value="1" />
++      <value name="8x8" value="0" />
++    </field>
++    <field name="Log2 SAO Offset Scale Luma" dword="2" bits="14:12" type="uint" />
++    <field name="Log2 SAO Offset Scale Chroma" dword="2" bits="18:16" type="uint" />
++    <field name="Chroma QP Offset List Length" dword="2" bits="22:20" type="uint" />
++    <field name="Diff CU Chroma QP Offset Depth" dword="2" bits="27:24" type="uint" />
++    <field name="Chroma QP Offset List Enable" dword="2" bits="28:28" type="bool" />
++    <field name="Chroma Subsampling" dword="2" bits="31:29" type="uint">
++      <value name="4:2:0" value="1" />
++      <value name="4:2:2" value="2" />
++      <value name="4:4:4" value="3" />
++    </field>
++    <field name="Collocated Picture Is I Slice" dword="3" bits="0:0" type="bool" />
++    <field name="Current Picture Is I Slice" dword="3" bits="1:1" type="bool" />
++    <field name="CABAC Zero Word Insertion Test Enable" dword="3" bits="2:2" type="bool" />
++    <field name="High Precision Offsets Enable" dword="3" bits="19:19" type="bool" />
++    <field name="Log2 Max Transform Skip Size" dword="3" bits="22:20" type="uint" />
++    <field name="Cross Component Prediction Enable" dword="3" bits="23:23" type="bool" />
++    <field name="CABAC Bypass Alignment Enable" dword="3" bits="24:24" type="bool" />
++    <field name="Persistent Rice Adaptation Enable" dword="3" bits="25:25" type="bool" />
++    <field name="Intra Smoothing Disable" dword="3" bits="26:26" type="bool" />
++    <field name="Explicit RDPCM Enable" dword="3" bits="27:27" type="bool" />
++    <field name="Implicit RDPCM Enable" dword="3" bits="28:28" type="bool" />
++    <field name="Transform Skip Context Enable" dword="3" bits="29:29" type="bool" />
++    <field name="Transform Skip Rotation Enable" dword="3" bits="30:30" type="bool" />
++    <field name="SPS Range Extension Enable" dword="3" bits="31:31" type="bool" />
++    <field name="Sample Adaptive Offset Enable" dword="4" bits="3:3" type="bool" />
++    <field name="PCM Enable" dword="4" bits="4:4" type="bool" />
++    <field name="CU QP Delta Enable" dword="4" bits="5:5" type="bool" />
++    <field name="Max DQP Depth" dword="4" bits="7:6" type="uint" />
++    <field name="PCM Loop Filter Disable" dword="4" bits="8:8" type="bool" />
++    <field name="Constrained Intra Prediction" dword="4" bits="9:9" type="bool" />
++    <field name="Log2 Parallel Merge Level" dword="4" bits="12:10" type="uint" />
++    <field name="Sign Data Hiding" dword="4" bits="13:13" type="bool" />
++    <field name="Loop Filter Enable" dword="4" bits="15:15" type="bool" />
++    <field name="Entropy Coding Sync Enable" dword="4" bits="16:16" type="bool" />
++    <field name="Tiling Enable" dword="4" bits="17:17" type="bool" />
++    <field name="Weighted BiPredication Enable" dword="4" bits="18:18" type="bool" />
++    <field name="Weighted Predication Enable" dword="4" bits="19:19" type="bool" />
++    <field name="Field Pic" dword="4" bits="20:20" type="bool" />
++    <field name="Top Field" dword="4" bits="21:21" type="bool" />
++    <field name="Transform Skip Enable" dword="4" bits="22:22" type="bool" />
++    <field name="AMP Enable" dword="4" bits="23:23" type="bool" />
++    <field name="Transquant Bypass Enable" dword="4" bits="25:25" type="bool" />
++    <field name="Strong Intra Smoothing Enable" dword="4" bits="26:26" type="bool" />
++    <field name="CU Packet Structure" dword="4" bits="27:27" type="uint">
++      <value name="VME" value="0" />
++      <value name="ExtEnc" value="1" />
++    </field>
++    <field name="Picture Cb QP Offset" dword="5" bits="4:0" type="int" />
++    <field name="Picture Cr QP Offset" dword="5" bits="9:5" type="int" />
++    <field name="Intra Max Transform Hierarchy Depth" dword="5" bits="12:10" type="uint" />
++    <field name="Inter Max Transform Hierarchy Depth" dword="5" bits="15:13" type="uint" />
++    <field name="Chroma PCM Sample Bit Depth" dword="5" bits="19:16" type="uint" />
++    <field name="Luma PCM Sample Bit Depth" dword="5" bits="23:20" type="uint" />
++    <field name="Chroma Bit Depth" dword="5" bits="26:24" type="uint">
++      <value name="8-bit" value="0" />
++      <value name="9-bit" value="1" />
++      <value name="10-bit" value="2" />
++      <value name="11-bit" value="3" />
++      <value name="12-bit" value="4" />
++    </field>
++    <field name="Luma Bit Depth" dword="5" bits="29:27" type="uint">
++      <value name="8-bit" value="0" />
++      <value name="9-bit" value="1" />
++      <value name="10-bit" value="2" />
++      <value name="11-bit" value="3" />
++      <value name="12-bit" value="4" />
++    </field>
++    <field name="LCU Max Bit Size Allowed" dword="6" bits="15:0" type="uint" />
++    <field name="Non First Pass" dword="6" bits="16:16" type="bool" />
++    <field name="LCU Max Bit Size Allowed MSB" dword="6" bits="18:17" type="uint" />
++    <field name="LCU Max Size Report" dword="6" bits="24:24" type="bool" />
++    <field name="Frame Bitrate Max Report" dword="6" bits="25:25" type="bool" />
++    <field name="Frame Bitrate Min Report" dword="6" bits="26:26" type="bool" />
++    <field name="Load Bitstream Pointer Per Slice" dword="6" bits="29:29" type="bool" />
++    <field name="Frame Bitrate Max" dword="7" bits="13:0" type="uint" />
++    <field name="Frame Bitrate Max Unit" dword="7" bits="31:31" type="uint" />
++    <field name="Frame Bitrate Min" dword="8" bits="13:0" type="uint" />
++    <field name="Frame Bitrate Min Unit" dword="8" bits="31:31" type="uint" />
++    <field name="Frame Bitrate Min Delta" dword="9" bits="14:0" type="uint" />
++    <field name="Frame Bitrate Max Delta" dword="9" bits="30:16" type="uint" />
++    <field name="Frame Delta QP Max" dword="10" bits="63:0" type="FRAMEDELTAQP" />
++    <field name="Frame Delta QP Min" dword="12" bits="63:0" type="FRAMEDELTAQP" />
++    <field name="Frame Delta QP Max Range" dword="14" bits="63:0" type="FRAMEDELTAQPRANGE" />
++    <field name="Frame Delta QP Min Range" dword="16" bits="63:0" type="FRAMEDELTAQPRANGE" />
++    <field name="Minimum Frame Size" dword="18" bits="15:0" type="uint" />
++    <field name="Minimum Frame Size Units" dword="18" bits="31:30" type="uint" prefix="HCP_MFSU">
++      <value name="4Kb" value="0" />
++      <value name="16Kb" value="1" />
++      <value name="Compatibility mode" value="2" />
++      <value name="16 bytes" value="3" />
++    </field>
++    <field name="Fractional QP Input" dword="19" bits="2:0" type="uint" />
++    <field name="Fractional QP Offset" dword="19" bits="5:3" type="uint" />
++    <field name="Rho Domain Rate Control Enable" dword="19" bits="6:6" type="bool" />
++    <field name="Fractional QP Adjustment Enable" dword="19" bits="7:7" type="bool" />
++    <field name="Rho Domain Frame Level QP" dword="19" bits="13:8" type="uint" />
++    <field name="PAK Dynamic Slice Mode Enable" dword="19" bits="14:14" type="bool" />
++    <field name="No Output of Prior Pics" dword="19" bits="15:15" type="bool" />
++    <field name="First Slice Segment In Pic" dword="19" bits="16:16" type="bool" />
++    <field name="Nal Unit Type" dword="19" bits="17:17" type="uint" />
++    <field name="Slice_pic_parameter_set_id" dword="19" bits="23:18" type="uint" />
++    <field name="SSE Enable" dword="19" bits="24:24" type="bool" />
++    <field name="RDOQ Enable" dword="19" bits="25:25" type="bool" />
++    <field name="Number of LCUs InNormal Slice Size Conformance Mode" dword="19" bits="27:26" type="uint" />
++    <field name="Intra TU Count Based RDOQ Disable" dword="20" bits="6:6" type="bool" />
++    <field name="Slice Size Threshold" dword="21" bits="31:0" type="uint" />
++    <field name="Target Slice Size" dword="22" bits="31:0" type="uint" />
++    <field name="Class0_SSE_Threshold0" dword="23" bits="15:0" type="uint" />
++    <field name="Class0_SSE_Threshold1" dword="23" bits="31:16" type="uint" />
++    <field name="SSE Thresholds for Class1-8" dword="24" bits="255:0" type="uint" />
++    <field name="Cb QP Offset List[0]" dword="32" bits="4:0" type="int" />
++    <field name="Cb QP Offset List[1]" dword="32" bits="9:5" type="int" />
++    <field name="Cb QP Offset List[2]" dword="32" bits="14:10" type="int" />
++    <field name="Cb QP Offset List[3]" dword="32" bits="19:15" type="int" />
++    <field name="Cb QP Offset List[4]" dword="32" bits="24:20" type="int" />
++    <field name="Cb QP Offset List[5]" dword="32" bits="29:25" type="int" />
++    <field name="Cr QP Offset List[0]" dword="33" bits="4:0" type="int" />
++    <field name="Cr QP Offset List[1]" dword="33" bits="9:5" type="int" />
++    <field name="Cr QP Offset List[2]" dword="33" bits="14:10" type="int" />
++    <field name="Cr QP Offset List[3]" dword="33" bits="19:15" type="int" />
++    <field name="Cr QP Offset List[4]" dword="33" bits="24:20" type="int" />
++    <field name="Cr QP Offset List[5]" dword="33" bits="29:25" type="int" />
++    <field name="RDOQ Intra TU Threshold" dword="37" bits="15:0" type="uint" />
++  </instruction>
+   <instruction name="MI_FLUSH_DW" bias="2" length="5" engine="blitter|compute|video">
+     <field name="DWord Length" dword="0" bits="5:0" type="uint" default="3" />
+     <field name="Video Pipeline Cache Invalidate" dword="0" bits="7:7" type="bool" />
+diff --git a/src/intel/vulkan/genX_cmd_video_enc.c b/src/intel/vulkan/genX_cmd_video_enc.c
+index 8095c0481ec..1cd31aea427 100644
+--- a/src/intel/vulkan/genX_cmd_video_enc.c
++++ b/src/intel/vulkan/genX_cmd_video_enc.c
+@@ -2066,7 +2066,7 @@ scaling_list(struct anv_cmd_buffer *cmd_buffer,
+    }
+ }
+ 
+-static uint16_t
++static uint32_t
+ lcu_max_bits_size_allowed(const StdVideoH265SequenceParameterSet *sps)
+ {
+    uint16_t log2_max_coding_block_size =
+@@ -2092,7 +2092,7 @@ lcu_max_bits_size_allowed(const StdVideoH265SequenceParameterSet *sps)
+    raw_ctu_bits = raw_ctu_bits * (sps->bit_depth_luma_minus8 + 8);
+    raw_ctu_bits = (5 * raw_ctu_bits / 3);
+ 
+-   return raw_ctu_bits & 0xffff;
++   return raw_ctu_bits;
+ }
+ 
+ #if GFX_VER >= 12
+@@ -3004,7 +3004,11 @@ anv_h265_emit_hcp_pic_state(struct anv_cmd_buffer *cmd,
+       pic.ChromaBitDepth = sps->bit_depth_chroma_minus8;
+       pic.LumaBitDepth = sps->bit_depth_luma_minus8;
+ 
+-      pic.LCUMaxBitSizeAllowed = lcu_max_bits_size_allowed(sps);
++      const uint32_t lcu_max_bits = lcu_max_bits_size_allowed(sps);
++      pic.LCUMaxBitSizeAllowed = lcu_max_bits & 0xffff;
++#if GFX_VERx10 >= 125
++      pic.LCUMaxBitSizeAllowedMSB = (lcu_max_bits >> 16) & 0x3;
++#endif
+       pic.CbQPOffsetList0 = pps->cb_qp_offset_list[0];
+       pic.CbQPOffsetList1 = pps->cb_qp_offset_list[1];
+       pic.CbQPOffsetList2 = pps->cb_qp_offset_list[2];
+-- 
+2.54.0 (Apple Git-157)
+

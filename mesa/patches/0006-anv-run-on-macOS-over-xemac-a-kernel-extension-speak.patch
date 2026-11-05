@@ -1,0 +1,331 @@
+From 62a3813717721f43500ae574082064cf560d33c2 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Yusuf=20=C4=B0hsan=20KILIN=C3=87?= <78423442+yusufklncc@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 05:25:46 +0300
+Subject: [PATCH 6/6] anv: run on macOS over xemac, a kernel extension speaking
+ the xe uAPI
+
+-Dxemac=<dir> points at the user-space side of a macOS kernel extension
+that implements Linux's xe uAPI (DRM core syncobj ioctls plus DRM_XE_*)
+behind an IOUserClient: xemac.h/xemac.c and a libdrm stand-in
+(libdrm/xf86drm.h, xemac_drm.c) that implements the libdrm calls Mesa
+makes on top of xemac_ioctl(). With it:
+
+- dep_libdrm is the stand-in, so HAVE_LIBDRM code (vk_drm_syncobj,
+  u_sync_provider, vk_instance's DRM enumeration, intel_kmd,
+  intel_device_info) builds and runs unchanged;
+- intel_ioctl() goes to xemac_ioctl(), like intel_virtio_ioctl() for
+  virtio;
+- anv opens and closes its device through anv_kmd_open()/anv_kmd_close()
+  (xemac_open()/xemac_close()), and xe BO maps go through xemac_mmap()/
+  xemac_munmap(), since IOKit mappings must be torn down by the kernel
+  extension;
+- dma-buf/sync_file/opaque fd sharing and VK_EXT_physical_device_drm are
+  not advertised.
+
+Generated-by: LLM
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ meson.build                            | 11 ++++++++++
+ meson.options                          |  9 +++++++++
+ src/intel/common/intel_gem.h           |  5 +++++
+ src/intel/vulkan/anv_allocator.c       |  6 ++++++
+ src/intel/vulkan/anv_device.c          |  6 +++---
+ src/intel/vulkan/anv_physical_device.c | 25 +++++++++++++++--------
+ src/intel/vulkan/anv_private.h         | 28 ++++++++++++++++++++++++++
+ src/intel/vulkan/xe/anv_kmd_backend.c  | 12 +++++++++--
+ src/util/meson.build                   |  5 +++++
+ 9 files changed, 94 insertions(+), 13 deletions(-)
+
+diff --git a/meson.build b/meson.build
+index aa29b71273f..d4a36a4d382 100644
+--- a/meson.build
++++ b/meson.build
+@@ -822,6 +822,17 @@ else
+   # dependencies (such as vk-runtime) linking to it
+   dep_libdrm = null_dep
+ endif
++# macOS: the xe uAPI of a kernel extension, reached through xemac (xemac.h,
++# xemac.c and a libdrm stand-in in <xemac>/libdrm) instead of a DRM node.
++with_xemac = host_machine.system() == 'darwin' and get_option('xemac') != ''
++if with_xemac
++  _xemac_dir = get_option('xemac')
++  files_xemac = files(_xemac_dir / 'xemac.c', _xemac_dir / 'xemac_drm.c')
++  dep_libdrm = declare_dependency(
++    include_directories : include_directories(_xemac_dir, _xemac_dir / 'libdrm'),
++  )
++  pre_args += '-DHAVE_XEMAC'
++endif
+ if dep_libdrm.found()
+   pre_args += '-DHAVE_LIBDRM'
+   if with_dri_platform == 'drm' and with_dri
+diff --git a/meson.options b/meson.options
+index c4f1ed4a7e1..8fdf8f3cbcd 100644
+--- a/meson.options
++++ b/meson.options
+@@ -726,6 +726,15 @@ option(
+   description : 'Build Ray Tracing on supported hardware.'
+ )
+ 
++option(
++  'xemac',
++  type : 'string',
++  value : '',
++  description : 'macOS: directory with xemac.h, xemac.c, xemac_drm.c and ' +
++                'libdrm/xf86drm.h, the user-space side of a kernel extension ' +
++                'that implements the xe uAPI. Replaces libdrm and DRM nodes.'
++)
++
+ option(
+   'intel-internal-shaders',
+   type : 'combo',
+diff --git a/src/intel/common/intel_gem.h b/src/intel/common/intel_gem.h
+index 5a85ef1e5b0..9c0035841a9 100644
+--- a/src/intel/common/intel_gem.h
++++ b/src/intel/common/intel_gem.h
+@@ -74,6 +74,9 @@ intel_48b_address(uint64_t v)
+ #ifdef HAVE_INTEL_VIRTIO
+ extern int intel_virtio_ioctl(int fd, unsigned long request, void *arg);
+ #endif
++#ifdef HAVE_XEMAC
++extern int xemac_ioctl(int fd, unsigned long request, void *arg);
++#endif
+ 
+ /**
+  * Call ioctl, restarting if it is interrupted
+@@ -86,6 +89,8 @@ intel_ioctl(int fd, unsigned long request, void *arg)
+     do {
+ #ifdef HAVE_INTEL_VIRTIO
+       ret = intel_virtio_ioctl(fd, request, arg);
++#elif defined(HAVE_XEMAC)
++      ret = xemac_ioctl(fd, request, arg);
+ #else
+       ret = ioctl(fd, request, arg);
+ #endif
+diff --git a/src/intel/vulkan/anv_allocator.c b/src/intel/vulkan/anv_allocator.c
+index 200768b08e0..d4ddc748c7b 100644
+--- a/src/intel/vulkan/anv_allocator.c
++++ b/src/intel/vulkan/anv_allocator.c
+@@ -1895,6 +1895,10 @@ anv_device_unmap_bo(struct anv_device *device,
+ 
+    VG(VALGRIND_FREELIKE_BLOCK(map, 0));
+ 
++#ifdef HAVE_XEMAC
++   /* BO mappings are the kernel extension's; it takes them down. */
++   xemac_munmap(map, map_size);
++#endif
+    if (replace) {
+       map = mmap(map, map_size, PROT_NONE,
+                  MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+@@ -1903,7 +1907,9 @@ anv_device_unmap_bo(struct anv_device *device,
+                           "Failed to map over original mapping");
+       }
+    } else {
++#ifndef HAVE_XEMAC
+       munmap(map, map_size);
++#endif
+    }
+    return VK_SUCCESS;
+ }
+diff --git a/src/intel/vulkan/anv_device.c b/src/intel/vulkan/anv_device.c
+index f609ffc722d..eaed71ae03b 100644
+--- a/src/intel/vulkan/anv_device.c
++++ b/src/intel/vulkan/anv_device.c
+@@ -929,7 +929,7 @@ VkResult anv_CreateDevice(
+    device->kmd_backend = anv_kmd_backend_get(device->info->kmd_type);
+ 
+    /* XXX(chadv): Can we dup() physicalDevice->fd here? */
+-   device->fd = open(physical_device->path, O_RDWR | O_CLOEXEC);
++   device->fd = anv_kmd_open(physical_device->path);
+    if (device->fd == -1) {
+       result = vk_error(device, VK_ERROR_INITIALIZATION_FAILED);
+       goto fail_device;
+@@ -1469,7 +1469,7 @@ VkResult anv_CreateDevice(
+    anv_device_destroy_context_or_vm(device);
+  fail_fd:
+    intel_virtio_unref_fd(device->fd);
+-   close(device->fd);
++   anv_kmd_close(device->fd);
+  fail_device:
+    vk_device_finish(&device->vk);
+  fail_alloc:
+@@ -1620,7 +1620,7 @@ void anv_DestroyDevice(
+       }
+    }
+ 
+-   close(device->fd);
++   anv_kmd_close(device->fd);
+ 
+    vk_device_finish(&device->vk);
+    vk_free(&device->vk.alloc, device);
+diff --git a/src/intel/vulkan/anv_physical_device.c b/src/intel/vulkan/anv_physical_device.c
+index d2b2112699a..39b9295dd12 100644
+--- a/src/intel/vulkan/anv_physical_device.c
++++ b/src/intel/vulkan/anv_physical_device.c
+@@ -354,6 +354,15 @@ get_device_descriptor_limits(const struct anv_physical_device *device,
+ }
+ 
+ 
++/* With xemac there are no dma-buf, sync_file or syncobj fds (yet), and no
++ * DRM node to report.
++ */
++#ifdef HAVE_XEMAC
++#define ANV_FD_SHARING false
++#else
++#define ANV_FD_SHARING true
++#endif
++
+ static void
+ get_device_extensions(const struct anv_physical_device *device,
+                       struct vk_device_extension_table *ext)
+@@ -395,11 +404,11 @@ get_device_extensions(const struct anv_physical_device *device,
+       .KHR_dynamic_rendering_local_read      = true,
+       .KHR_extended_flags                    = true,
+       .KHR_external_fence                    = true,
+-      .KHR_external_fence_fd                 = true,
++      .KHR_external_fence_fd                 = ANV_FD_SHARING,
+       .KHR_external_memory                   = true,
+-      .KHR_external_memory_fd                = true,
++      .KHR_external_memory_fd                = ANV_FD_SHARING,
+       .KHR_external_semaphore                = true,
+-      .KHR_external_semaphore_fd             = true,
++      .KHR_external_semaphore_fd             = ANV_FD_SHARING,
+       .KHR_format_feature_flags2             = true,
+       .KHR_fragment_shader_barycentric       = device->info.ver >= 20,
+       .KHR_fragment_shading_rate             = device->info.ver >= 11,
+@@ -558,7 +567,7 @@ get_device_extensions(const struct anv_physical_device *device,
+       .EXT_extended_dynamic_state2           = true,
+       .EXT_extended_dynamic_state3           = true,
+       .EXT_external_memory_acquire_unmodified = true,
+-      .EXT_external_memory_dma_buf           = true,
++      .EXT_external_memory_dma_buf           = ANV_FD_SHARING,
+       .EXT_external_memory_host              = device->info.has_userptr_uapi,
+       .EXT_fragment_shader_interlock         = true,
+       .EXT_global_priority                   = device->max_context_priority >=
+@@ -594,7 +603,7 @@ get_device_extensions(const struct anv_physical_device *device,
+       .EXT_nested_command_buffer             = true,
+       .EXT_non_seamless_cube_map             = true,
+       .EXT_pci_bus_info                      = true,
+-      .EXT_physical_device_drm               = true,
++      .EXT_physical_device_drm               = ANV_FD_SHARING,
+       .EXT_pipeline_creation_cache_control   = true,
+       .EXT_pipeline_creation_feedback        = true,
+       .EXT_pipeline_library_group_handles    = rt_enabled,
+@@ -3020,7 +3029,7 @@ anv_physical_device_try_create(struct vk_instance *vk_instance,
+    int master_fd = -1;
+    int ret;
+ 
+-   fd = open(path, O_RDWR | O_CLOEXEC);
++   fd = anv_kmd_open(path);
+    if (fd < 0) {
+       if (errno == ENOMEM) {
+          return vk_errorf(instance, VK_ERROR_OUT_OF_HOST_MEMORY,
+@@ -3360,7 +3369,7 @@ fail_alloc:
+    vk_free(&instance->vk.alloc, device);
+ fail_fd:
+    intel_virtio_unref_fd(fd);
+-   close(fd);
++   anv_kmd_close(fd);
+    if (master_fd != -1)
+       close(master_fd);
+    return result;
+@@ -3381,7 +3390,7 @@ anv_physical_device_destroy(struct vk_physical_device *vk_device)
+    intel_perf_free(device->perf);
+    anv_physical_device_finish_drirc(device);
+    intel_virtio_unref_fd(device->local_fd);
+-   close(device->local_fd);
++   anv_kmd_close(device->local_fd);
+    if (device->master_fd >= 0)
+       close(device->master_fd);
+    vk_physical_device_finish(&device->vk);
+diff --git a/src/intel/vulkan/anv_private.h b/src/intel/vulkan/anv_private.h
+index f03d5b73163..e6cce651a98 100644
+--- a/src/intel/vulkan/anv_private.h
++++ b/src/intel/vulkan/anv_private.h
+@@ -161,6 +161,34 @@ struct intel_perf_query_result;
+ 
+ #define NSEC_PER_SEC 1000000000ull
+ 
++#ifdef HAVE_XEMAC
++#include "xemac.h"
++#else
++#include <fcntl.h>
++#include <unistd.h>
++#endif
++
++/* Opens and closes the kernel driver behind a physical device's path. */
++static inline int
++anv_kmd_open(const char *path)
++{
++#ifdef HAVE_XEMAC
++   return xemac_open();
++#else
++   return open(path, O_RDWR | O_CLOEXEC);
++#endif
++}
++
++static inline int
++anv_kmd_close(int fd)
++{
++#ifdef HAVE_XEMAC
++   return xemac_close(fd);
++#else
++   return close(fd);
++#endif
++}
++
+ /* 3DSTATE_BINDING_TABLE_POINTERS_*::PointertoBindingTable resolution */
+ #define BINDING_TABLE_VIEW_SIZE (1u << 20)
+ #define BINDING_TABLE_POOL_DEFAULT_BLOCK_SIZE (4096)
+diff --git a/src/intel/vulkan/xe/anv_kmd_backend.c b/src/intel/vulkan/xe/anv_kmd_backend.c
+index 08252478ac2..d5cc33a3f3f 100644
+--- a/src/intel/vulkan/xe/anv_kmd_backend.c
++++ b/src/intel/vulkan/xe/anv_kmd_backend.c
+@@ -32,6 +32,14 @@
+ #include "drm-uapi/gpu_scheduler.h"
+ #include "drm-uapi/xe_drm.h"
+ 
++#ifdef HAVE_XEMAC
++#define xe_mmap xemac_mmap
++#define xe_munmap xemac_munmap
++#else
++#define xe_mmap mmap
++#define xe_munmap munmap
++#endif
++
+ static bool
+ is_slab_parent_memory_mapped_placeable(struct anv_device *device,
+                                        enum anv_bo_alloc_flags alloc_flags)
+@@ -171,7 +179,7 @@ xe_gem_mmap(struct anv_device *device, struct anv_bo *bo, uint64_t offset,
+    /* The Kernel uAPI doesn't allow us to map with an offset. To work around,
+     * overallocate and then unmap the unneeded region
+     */
+-   void *ptr = mmap(placed_addr, offset + size, PROT_READ | PROT_WRITE,
++   void *ptr = xe_mmap(placed_addr, offset + size, PROT_READ | PROT_WRITE,
+                     (placed_addr != NULL ? MAP_FIXED : 0) | MAP_SHARED,
+                     device->fd, args.offset);
+    if (ptr == MAP_FAILED)
+@@ -180,7 +188,7 @@ xe_gem_mmap(struct anv_device *device, struct anv_bo *bo, uint64_t offset,
+    void *ret = ptr + offset;
+ 
+    if (offset != 0)
+-      munmap(ptr, offset);
++      xe_munmap(ptr, offset);
+ 
+    return ret;
+ }
+diff --git a/src/util/meson.build b/src/util/meson.build
+index cf4dc51ba48..8d44362dfda 100644
+--- a/src/util/meson.build
++++ b/src/util/meson.build
+@@ -323,6 +323,11 @@ if dep_libdrm.found()
+   deps_for_libmesa_util += dep_libdrm
+ endif
+ 
++if with_xemac
++  files_mesa_util += files_xemac
++  deps_for_libmesa_util += dependency('appleframeworks', modules : ['IOKit', 'CoreFoundation'])
++endif
++
+ if with_platform_android
+   deps_for_libmesa_util += dep_android
+   files_debug_stack = files('u_debug_stack_android.cpp')

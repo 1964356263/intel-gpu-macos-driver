@@ -1,0 +1,74 @@
+From 2663375102e864a55764f50d14743c1a38730d93 Mon Sep 17 00:00:00 2001
+From: "Emil J. Tywoniak" <emil@tywoniak.eu>
+Date: Sat, 17 Oct 2026 02:46:17 +0200
+Subject: [PATCH 18/18] anv: use the P010 variant format for HEVC encode
+ references
+
+For 10 bit HEVC encode the reconstructed and reference pictures have to
+be described as P010 variant, both in HCP_SURFACE_STATE and in
+VDENC_REF_SURFACE_STATE; only the raw source is plain P010. This is what
+the media driver programs (HevcBasicFeature HCP_SURFACE_STATE and
+MosFormatToVdencSurfaceReconFormat). Plain P010 everywhere made the
+motion search miss, so every P frame came out about the size of an
+IDR frame.
+
+Add the P010 variant value to the VDEnc surface format list (it shares
+3 with the old Y8_UNORM name) and program it.
+
+B580, 1152x4608 Big Buck Bunny, 10 bit:
+
+                     before                 after             iHD
+  CQP 26             326 Mbit/s  42.2 dB    33 Mbit/s 42.0 dB  35 Mbit/s 41.9 dB
+  VBR 80 Mbit/s      102 Mbit/s  31.0 dB    75 Mbit/s 45.3 dB  81 Mbit/s 45.2 dB
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_014zf3d6ZuUHNvTB81JRfHds
+---
+ src/intel/genxml/gen110.xml           |  1 +
+ src/intel/vulkan/genX_cmd_video_enc.c | 11 ++++++++++-
+ 2 files changed, 11 insertions(+), 1 deletion(-)
+
+diff --git a/src/intel/genxml/gen110.xml b/src/intel/genxml/gen110.xml
+index e588014324e..32feb88ef6d 100644
+--- a/src/intel/genxml/gen110.xml
++++ b/src/intel/genxml/gen110.xml
+@@ -464,6 +464,7 @@
+       <value name="RGBA 4:4:4:4" value="1" />
+       <value name="YUV 4:4:4" value="2" />
+       <value name="Y8_UNORM" value="3" />
++      <value name="P010_VARIANT" value="3" />
+       <value name="PLANAR_420_8" value="4" />
+       <value name="P010" value="13" />
+     </field>
+diff --git a/src/intel/vulkan/genX_cmd_video_enc.c b/src/intel/vulkan/genX_cmd_video_enc.c
+index 1cd31aea427..156f0d17a1f 100644
+--- a/src/intel/vulkan/genX_cmd_video_enc.c
++++ b/src/intel/vulkan/genX_cmd_video_enc.c
+@@ -2287,7 +2287,12 @@ anv_h265_emit_hcp_surface_state(struct anv_cmd_buffer *cmd,
+          }
+ 
+          ss.SurfacePitch = img_->planes[0].primary_surface.isl.row_pitch_B - 1;
+-         ss.SurfaceFormat = is_10bit ? P010 : PLANAR_420_8;
++         if (!is_10bit)
++            ss.SurfaceFormat = PLANAR_420_8;
++         else if (i == 0)
++            ss.SurfaceFormat = P010;
++         else
++            ss.SurfaceFormat = P010Variant;
+ 
+          ss.YOffsetforUCb = img_->planes[1].primary_surface.memory_range.offset /
+                             img_->planes[0].primary_surface.isl.row_pitch_B;
+@@ -2613,6 +2618,10 @@ anv_h265_emit_vdenc_ref_surface_state(struct anv_cmd_buffer *cmd,
+       vdenc_surface.SurfaceState =
+          anv_vdenc_surface_state(base_ref_img, base_ref_img->vk.extent.width,
+                                  base_ref_img->vk.extent.height, is_10bit);
++#if GFX_VER >= 11
++      if (is_10bit)
++         vdenc_surface.SurfaceState.SurfaceFormat = VDENC_P010_VARIANT;
++#endif
+    }
+ }
+ 
+-- 
+2.54.0 (Apple Git-157)
+

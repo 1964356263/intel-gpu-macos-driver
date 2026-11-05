@@ -1,0 +1,199 @@
+anv: keep push descriptor data in host memory, never read it back from write-combined memory
+
+anv_push_descriptor_set_init() keeps the previous descriptors on a new push with the same layout by copying the old
+descriptor memory into the new allocation (the "TODO: keep a copy of the old data on the host" there). That memory
+comes from the surface/dynamic/indirect-push state pools, which on a discrete GPU are write-combined VRAM: every push
+reads it back over PCIe uncached. Minecraft 26.3 (Vulkan) spent 17% of its render thread in that memmove (646 of
+3872 samples at ~950 fps, anv_push_descriptor_set_init+563 / +815).
+
+The command buffer's push sets now keep a host copy (push_set->host_shadow): descriptor writes go to host memory
+(set->desc_{surface,sampler}_mem.map points at it), the copy keeps the previous descriptors without any read, and
+anv_push_descriptor_set_upload() streams the whole set into the GPU allocation after each push's writes (write-only,
+which write-combined memory does at full speed). The GPU addresses, sizes and the re-allocation rule
+(set_used_on_gpu) are unchanged. Other users of anv_push_descriptor_set_init (ASTC emulation) keep the old path.
+
+--- a/src/intel/vulkan/anv_descriptor_set.c
++++ b/src/intel/vulkan/anv_descriptor_set.c
+@@ -1812,6 +1812,49 @@
+    }
+ 
+    return VK_SUCCESS;
++}
++
++/* The host copy of a push set's descriptor data, grown to `size` (keeping
++ * its contents: a push with the same layout keeps the previous descriptors).
++ */
++static bool
++anv_push_descriptor_shadow_grow(struct anv_push_descriptor_set *push_set,
++                                void **shadow, uint32_t *shadow_size,
++                                uint32_t size)
++{
++   if (*shadow_size >= size)
++      return true;
++   void *grown = vk_zalloc(push_set->shadow_alloc, size, 64,
++                           VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
++   if (grown == NULL)
++      return false;
++   if (*shadow) {
++      memcpy(grown, *shadow, *shadow_size);
++      vk_free(push_set->shadow_alloc, *shadow);
++   }
++   *shadow = grown;
++   *shadow_size = size;
++   return true;
++}
++
++/* After a push's descriptor writes: stream the host copies into the GPU
++ * memory the set points at (write-only, so write-combined memory is fine).
++ */
++void
++anv_push_descriptor_set_upload(struct anv_push_descriptor_set *push_set)
++{
++   if (!push_set->host_shadow)
++      return;
++   if (push_set->surface_gpu.map && push_set->surface_shadow) {
++      memcpy(push_set->surface_gpu.map, push_set->surface_shadow,
++             MIN2(push_set->surface_gpu.alloc_size,
++                  push_set->surface_shadow_size));
++   }
++   if (push_set->sampler_gpu.map && push_set->sampler_shadow) {
++      memcpy(push_set->sampler_gpu.map, push_set->sampler_shadow,
++             MIN2(push_set->sampler_gpu.alloc_size,
++                  push_set->sampler_shadow_size));
++   }
+ }
+ 
+ bool
+@@ -1891,7 +1934,15 @@
+       if (desc_surface_mem.map == NULL)
+          return false;
+ 
+-      if (copy_old_descriptors) {
++      if (push_set->host_shadow) {
++         /* The old descriptors stay in the host copy: no copy now, the
++          * whole set is uploaded after this push's writes.
++          */
++         if (!anv_push_descriptor_shadow_grow(push_set, &push_set->surface_shadow,
++                                              &push_set->surface_shadow_size,
++                                              desc_surface_mem.alloc_size))
++            return false;
++      } else if (copy_old_descriptors) {
+          memcpy(desc_surface_mem.map, set->desc_surface_mem.map,
+                 MIN2(desc_surface_mem.alloc_size,
+                      set->desc_surface_mem.alloc_size));
+@@ -1903,6 +1954,11 @@
+          set->desc_surface_mem);
+       set->desc_offset = anv_address_physical(set->desc_surface_addr) -
+                          push_base_address;
++
++      if (push_set->host_shadow) {
++         push_set->surface_gpu = desc_surface_mem;
++         set->desc_surface_mem.map = push_set->surface_shadow;
++      }
+    }
+ 
+    if (layout->descriptor_buffer_sampler_size &&
+@@ -1925,7 +1981,12 @@
+       if (desc_sampler_mem.map == NULL)
+          return false;
+ 
+-      if (copy_old_descriptors) {
++      if (push_set->host_shadow) {
++         if (!anv_push_descriptor_shadow_grow(push_set, &push_set->sampler_shadow,
++                                              &push_set->sampler_shadow_size,
++                                              desc_sampler_mem.alloc_size))
++            return false;
++      } else if (copy_old_descriptors) {
+          memcpy(desc_sampler_mem.map, set->desc_sampler_mem.map,
+                 MIN2(desc_sampler_mem.alloc_size,
+                      set->desc_sampler_mem.alloc_size));
+@@ -1935,6 +1996,11 @@
+       set->desc_sampler_addr = anv_state_pool_state_address(
+          push_stream->state_pool,
+          set->desc_sampler_mem);
++
++      if (push_set->host_shadow) {
++         push_set->sampler_gpu = desc_sampler_mem;
++         set->desc_sampler_mem.map = push_set->sampler_shadow;
++      }
+    }
+ 
+    if (push_set->set_used_on_gpu) {
+@@ -1952,6 +2018,12 @@
+    if (set->layout) {
+       vk_descriptor_set_layout_unref(set->base.device, &set->layout->vk);
+    }
++   if (push_set->surface_shadow)
++      vk_free(push_set->shadow_alloc, push_set->surface_shadow);
++   if (push_set->sampler_shadow)
++      vk_free(push_set->shadow_alloc, push_set->sampler_shadow);
++   push_set->surface_shadow = push_set->sampler_shadow = NULL;
++   push_set->surface_shadow_size = push_set->sampler_shadow_size = 0;
+ }
+ 
+ static const void *
+--- a/src/intel/vulkan/anv_private.h
++++ b/src/intel/vulkan/anv_private.h
+@@ -3898,6 +3898,18 @@
+    bool set_used_on_gpu;
+ 
+    struct anv_buffer_view buffer_views[MAX_PUSH_DESCRIPTORS];
++
++   /* Host copies of the descriptor data (the command buffer's push sets):
++    * descriptor writes land in host memory (set->desc_*_mem.map points here)
++    * and anv_push_descriptor_set_upload() streams them into the GPU memory,
++    * so keeping the previous descriptors on a new push never reads the
++    * write-combined GPU memory back (a CPU read of WC memory is uncached).
++    */
++   bool host_shadow;
++   const VkAllocationCallbacks *shadow_alloc;
++   void *surface_shadow, *sampler_shadow;
++   uint32_t surface_shadow_size, sampler_shadow_size;
++   struct anv_state surface_gpu, sampler_gpu;
+ };
+ 
+ static inline struct anv_address
+@@ -3974,6 +3986,9 @@
+ anv_push_descriptor_set_finish(struct anv_push_descriptor_set *push_set);
+ 
+ void
++anv_push_descriptor_set_upload(struct anv_push_descriptor_set *push_set);
++
++void
+ anv_descriptor_set_write_image_view(struct anv_device *device,
+                                     struct anv_descriptor_set *set,
+                                     const VkDescriptorImageInfo * const info,
+--- a/src/intel/vulkan/anv_cmd_buffer.c
++++ b/src/intel/vulkan/anv_cmd_buffer.c
+@@ -1209,12 +1209,15 @@
+    if (!bind_state)
+       return;
+    struct anv_push_descriptor_set *push_set = &bind_state->push_descriptor;
++   push_set->host_shadow = true;
++   push_set->shadow_alloc = &cmd_buffer->vk.pool->alloc;
+    if (!anv_push_descriptor_set_init(cmd_buffer, push_set, set_layout))
+       return;
+ 
+    anv_descriptor_set_write(cmd_buffer->device, &push_set->set,
+                             pInfo->descriptorWriteCount,
+                             pInfo->pDescriptorWrites);
++   anv_push_descriptor_set_upload(push_set);
+ 
+    anv_cmd_buffer_bind_descriptor_set(cmd_buffer, bind_point,
+                                       layout, pInfo->set, &push_set->set,
+@@ -1260,12 +1263,15 @@
+    if (!bind_state)
+       return;
+    struct anv_push_descriptor_set *push_set = &bind_state->push_descriptor;
++   push_set->host_shadow = true;
++   push_set->shadow_alloc = &cmd_buffer->vk.pool->alloc;
+    if (!anv_push_descriptor_set_init(cmd_buffer, push_set, set_layout))
+       return;
+ 
+    anv_descriptor_set_write_template(cmd_buffer->device, &push_set->set,
+                                      template,
+                                      pInfo->pData);
++   anv_push_descriptor_set_upload(push_set);
+ 
+    anv_cmd_buffer_bind_descriptor_set(cmd_buffer, template->bind_point,
+                                       layout, pInfo->set, &push_set->set,

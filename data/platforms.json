@@ -1,0 +1,810 @@
+{
+ "about": "Platform x feature matrix, hand-kept facts only (tools/parity/platforms.py renders it; the video rows come from data/caps.json and data/video.json instead). Each 'intel' fact cites the upstream line it was read from (trees in 'sources'); each 'ours' status is one of works / same / notyet / na and carries its evidence. No estimates: a platform nobody ran this driver on is 'notyet', whatever its code shares.",
+ "sources": {
+  "linux": "torvalds/linux abf8c33470f7 (7.3.0, 2026-10-30): drivers/gpu/drm/xe, drivers/gpu/drm/i915/display",
+  "mesa": "Mesa f01e9b07a91f (2026-10-27; the upstream base of our Mesa series)",
+  "neo": "intel/compute-runtime 248eb54 (2026-10-30)",
+  "ours": "this repository; device page docs/devices/b580.md"
+ },
+ "statuses": {
+  "works": {
+   "en": "works, verified on the device named",
+   "tr": "çalışıyor, adı geçen cihazda doğrulandı"
+  },
+  "same": {
+   "en": "same code path, untested on this platform",
+   "tr": "aynı kod yolu, bu platformda test edilmedi"
+  },
+  "notyet": {
+   "en": "not yet",
+   "tr": "henüz yok"
+  },
+  "na": {
+   "en": "not offered by Intel on this platform",
+   "tr": "Intel bu platformda sunmuyor"
+  }
+ },
+ "platforms": [
+  {
+   "id": "b580",
+   "short": "Arc B580",
+   "title": "Xe2 dGPU: Battlemage Arc B580",
+   "detail": "BMG-G21 8086:E20B; graphics 20.01, media 13.01, display 14.01. The development and measurement device.",
+   "caps": "bmg"
+  },
+  {
+   "id": "bmg",
+   "short": "B570, other BMG",
+   "title": "Xe2 dGPU: Battlemage B570 and the other BMG IDs",
+   "detail": "the other IDs of Linux INTEL_BMG_IDS (kernel/IntelXe/xe_probe_ids.inc kIdsBMG: E202-E223), B570 = 8086:E20C. IntelXe.kext attaches to 8086:E20B only (kernel/IntelXe/build.py IOPCIMatch 0xe20b8086).",
+   "caps": "bmg"
+  },
+  {
+   "id": "lnl",
+   "short": "Lunar Lake",
+   "title": "Xe2 iGPU: Lunar Lake",
+   "detail": "graphics 20.04 (Xe2_LPG), media 20.00 (Xe2_LPM), display 20.00.",
+   "caps": "lnl"
+  },
+  {
+   "id": "ptl",
+   "short": "Panther Lake",
+   "title": "Xe3 iGPU: Panther Lake (and Wildcat Lake)",
+   "detail": "graphics 30.0x (Xe3_LPG), media 30.0x (Xe3_LPM), display 30.00 / 30.02.",
+   "caps": "ptl"
+  },
+  {
+   "id": "mtl",
+   "short": "Meteor/Arrow Lake",
+   "title": "Xe-LPG / LPG+ iGPU: Meteor Lake, Arrow Lake",
+   "detail": "graphics 12.70-12.74, media 13.00 (Xe_LPM+), display 14.00.",
+   "caps": "mtl"
+  },
+  {
+   "id": "dg2",
+   "short": "Alchemist DG2",
+   "title": "Xe-HPG dGPU: Arc Alchemist (DG2)",
+   "detail": "graphics 12.55, media 12.55 (Xe_HPM), display 13.",
+   "caps": "dg2"
+  },
+  {
+   "id": "gen12",
+   "short": "Gen12 Xe-LP",
+   "title": "Gen12 Xe-LP: Tiger/Rocket/Alder/Raptor Lake, DG1",
+   "detail": "graphics 12.00 (DG1 12.10), media 12.00 (Xe_M), display 12 (TGL, RKL, DG1, ADL-S, RPL-S) or 13 (ADL-P, RPL-P/U). Video caps shown for Alder/Raptor Lake-S; TGL, RKL, ADL-P/N and DG1 differ only in VP8 (data/caps.json).",
+   "caps": "adls"
+  }
+ ],
+ "features": [
+  {
+   "id": "kernel",
+   "en": "Kernel driver (GPU bring-up: GuC, engines, memory)",
+   "tr": "Çekirdek sürücüsü (GPU açılışı: GuC, motorlar, bellek)"
+  },
+  {
+   "id": "probe",
+   "en": "XeProbe staged probe (docs/PROBE-MODE.md)",
+   "tr": "XeProbe aşamalı yoklama (docs/PROBE-MODE.md)"
+  },
+  {
+   "id": "display",
+   "en": "Display",
+   "tr": "Ekran"
+  },
+  {
+   "id": "vulkan",
+   "en": "Vulkan (Mesa ANV)",
+   "tr": "Vulkan (Mesa ANV)"
+  },
+  {
+   "id": "metal",
+   "en": "Metal",
+   "tr": "Metal"
+  },
+  {
+   "id": "opengl",
+   "en": "OpenGL (Apple GL over Metal, Zink)",
+   "tr": "OpenGL (Metal üzerinden Apple GL, Zink)"
+  },
+  {
+   "id": "video",
+   "en": "Video decode / encode (rows per codec below)",
+   "tr": "Video çözme / kodlama (codec satırları aşağıda)"
+  },
+  {
+   "id": "opencl",
+   "en": "OpenCL",
+   "tr": "OpenCL"
+  },
+  {
+   "id": "levelzero",
+   "en": "oneAPI / Level Zero",
+   "tr": "oneAPI / Level Zero"
+  },
+  {
+   "id": "sleep",
+   "en": "System sleep and wake",
+   "tr": "Sistem uykusu ve uyanma"
+  },
+  {
+   "id": "reset",
+   "en": "GPU reset recovery",
+   "tr": "GPU sıfırlamasından kurtulma"
+  }
+ ],
+ "intel": {
+  "kernel": {
+   "b580": [
+    "xe (default driver)",
+    "linux xe_pci.c:414 bmg_desc (no require_force_probe), :536 INTEL_BMG_IDS"
+   ],
+   "bmg": [
+    "xe (default driver)",
+    "linux xe_pci.c:414 bmg_desc, :536 INTEL_BMG_IDS"
+   ],
+   "lnl": [
+    "xe (default driver)",
+    "linux xe_pci.c:399 lnl_desc (no require_force_probe)"
+   ],
+   "ptl": [
+    "xe (default driver)",
+    "linux xe_pci.c:441 ptl_desc (no require_force_probe), :537-538 PTL/WCL IDs"
+   ],
+   "mtl": [
+    "xe, require_force_probe",
+    "linux xe_pci.c:386-388 mtl_desc .require_force_probe = true; :532 ARL IDs use mtl_desc"
+   ],
+   "dg2": [
+    "xe, require_force_probe",
+    "linux xe_pci.c:352-358 dg2_desc .require_force_probe = true"
+   ],
+   "gen12": [
+    "xe, require_force_probe",
+    "linux xe_pci.c:209-314 tgl/rkl/adl_s/adl_p/adl_n/dg1_desc .require_force_probe = true"
+   ]
+  },
+  "probe": {
+   "b580": [
+    "-",
+    "kernel/IntelXe/xe_probe_ids.inc kIdsBMG"
+   ],
+   "bmg": [
+    "-",
+    "kernel/IntelXe/xe_probe_ids.inc kIdsBMG"
+   ],
+   "lnl": [
+    "-",
+    "kernel/IntelXe/xe_probe_ids.inc kIdsLNL"
+   ],
+   "ptl": [
+    "-",
+    "kernel/IntelXe/xe_probe_ids.inc kIdsPTL, kIdsWCL"
+   ],
+   "mtl": [
+    "-",
+    "kernel/IntelXe/xe_probe_ids.inc kIdsMTL, kIdsARL"
+   ],
+   "dg2": [
+    "-",
+    "kernel/IntelXe/xe_probe_ids.inc kIdsDG2, kIdsATSM"
+   ],
+   "gen12": [
+    "-",
+    "kernel/IntelXe/xe_probe_ids.inc kIdsTGL ... kIdsDG1"
+   ]
+  },
+  "display": {
+   "b580": [
+    "display 14.01 (xe2_hpd)",
+    "linux i915/display/intel_display_device.c:1526 gmdid_display_map"
+   ],
+   "bmg": [
+    "display 14.01 (xe2_hpd)",
+    "linux intel_display_device.c:1526"
+   ],
+   "lnl": [
+    "display 20.00 (xe2_lpd)",
+    "linux intel_display_device.c:1527"
+   ],
+   "ptl": [
+    "display 30.00 / WCL 30.02",
+    "linux intel_display_device.c:1528-1529"
+   ],
+   "mtl": [
+    "display 14.00 (xe_lpdp)",
+    "linux intel_display_device.c:1525"
+   ],
+   "dg2": [
+    "display 13 (xe_hpd)",
+    "linux intel_display_device.c:1158, :1233 xe_hpd_display"
+   ],
+   "gen12": [
+    "display 12 / 13 (ADL-P, RPL-P)",
+    "linux intel_display_device.c:992 (ver 12), :1158/:1166 xe_lpd_display (ver 13)"
+   ]
+  },
+  "vulkan": {
+   "b580": [
+    "ANV; Vulkan Video encode off upstream on Xe2",
+    "mesa include/pci_ids/iris_pci_ids.h:278; anv_physical_device.c:362 hw_video_encode_supported = verx10 <= 125"
+   ],
+   "bmg": [
+    "ANV; Vulkan Video encode off upstream on Xe2",
+    "mesa iris_pci_ids.h:279 (B570); anv_physical_device.c:362"
+   ],
+   "lnl": [
+    "ANV; Vulkan Video encode off upstream on Xe2",
+    "mesa iris_pci_ids.h:261; anv_physical_device.c:362"
+   ],
+   "ptl": [
+    "ANV; Vulkan Video encode off upstream on Xe3",
+    "mesa iris_pci_ids.h:291; anv_physical_device.c:362"
+   ],
+   "mtl": [
+    "ANV, Vulkan Video encode incl. AV1",
+    "mesa iris_pci_ids.h:266, :272; anv_physical_device.c:362, :503 (AV1 encode verx10 == 125)"
+   ],
+   "dg2": [
+    "ANV, Vulkan Video encode incl. AV1",
+    "mesa iris_pci_ids.h:239; anv_physical_device.c:362, :503"
+   ],
+   "gen12": [
+    "ANV, Vulkan Video encode H.264/H.265",
+    "mesa iris_pci_ids.h:194, :205, :218, :225; anv_physical_device.c:362"
+   ]
+  },
+  "metal": {
+   "b580": [
+    "-",
+    "Metal is Apple's API; Intel's stack is Linux/Windows"
+   ],
+   "bmg": [
+    "-",
+    ""
+   ],
+   "lnl": [
+    "-",
+    ""
+   ],
+   "ptl": [
+    "-",
+    ""
+   ],
+   "mtl": [
+    "-",
+    ""
+   ],
+   "dg2": [
+    "-",
+    ""
+   ],
+   "gen12": [
+    "-",
+    ""
+   ]
+  },
+  "opengl": {
+   "b580": [
+    "Mesa iris",
+    "mesa include/pci_ids/iris_pci_ids.h:278"
+   ],
+   "bmg": [
+    "Mesa iris",
+    "mesa iris_pci_ids.h:279"
+   ],
+   "lnl": [
+    "Mesa iris",
+    "mesa iris_pci_ids.h:261"
+   ],
+   "ptl": [
+    "Mesa iris",
+    "mesa iris_pci_ids.h:291"
+   ],
+   "mtl": [
+    "Mesa iris",
+    "mesa iris_pci_ids.h:266, :272"
+   ],
+   "dg2": [
+    "Mesa iris",
+    "mesa iris_pci_ids.h:239"
+   ],
+   "gen12": [
+    "Mesa iris",
+    "mesa iris_pci_ids.h:194, :205, :218, :225"
+   ]
+  },
+  "opencl": {
+   "b580": [
+    "compute-runtime",
+    "neo shared/source/xe2_hpg_core/bmg"
+   ],
+   "bmg": [
+    "compute-runtime",
+    "neo shared/source/xe2_hpg_core/bmg"
+   ],
+   "lnl": [
+    "compute-runtime",
+    "neo shared/source/xe2_hpg_core/lnl"
+   ],
+   "ptl": [
+    "compute-runtime",
+    "neo shared/source/xe3_core/ptl"
+   ],
+   "mtl": [
+    "compute-runtime",
+    "neo shared/source/xe_hpg_core/xe_lpg, xe_hpg_core/arl"
+   ],
+   "dg2": [
+    "compute-runtime",
+    "neo shared/source/xe_hpg_core/dg2"
+   ],
+   "gen12": [
+    "compute-runtime",
+    "neo shared/source/gen12lp/{tgllp,rkl,adls,adlp,adln,dg1}"
+   ]
+  },
+  "levelzero": {
+   "b580": [
+    "compute-runtime",
+    "neo shared/source/xe2_hpg_core/bmg"
+   ],
+   "bmg": [
+    "compute-runtime",
+    "neo shared/source/xe2_hpg_core/bmg"
+   ],
+   "lnl": [
+    "compute-runtime",
+    "neo shared/source/xe2_hpg_core/lnl"
+   ],
+   "ptl": [
+    "compute-runtime",
+    "neo shared/source/xe3_core/ptl"
+   ],
+   "mtl": [
+    "compute-runtime",
+    "neo shared/source/xe_hpg_core/xe_lpg, xe_hpg_core/arl"
+   ],
+   "dg2": [
+    "compute-runtime",
+    "neo shared/source/xe_hpg_core/dg2"
+   ],
+   "gen12": [
+    "compute-runtime",
+    "neo shared/source/gen12lp/{tgllp,rkl,adls,adlp,adln,dg1}"
+   ]
+  },
+  "sleep": {
+   "b580": [
+    "xe S3 / s2idle",
+    "linux xe_pm.c:175 xe_pm_suspend"
+   ],
+   "bmg": [
+    "xe S3 / s2idle",
+    "linux xe_pm.c:175"
+   ],
+   "lnl": [
+    "xe S3 / s2idle",
+    "linux xe_pm.c:175"
+   ],
+   "ptl": [
+    "xe S3 / s2idle",
+    "linux xe_pm.c:175"
+   ],
+   "mtl": [
+    "xe S3 / s2idle",
+    "linux xe_pm.c:175"
+   ],
+   "dg2": [
+    "xe S3 / s2idle",
+    "linux xe_pm.c:175"
+   ],
+   "gen12": [
+    "xe S3 / s2idle",
+    "linux xe_pm.c:175"
+   ]
+  },
+  "reset": {
+   "b580": [
+    "xe GuC engine reset, job timeout",
+    "linux xe_guc_submit.c:1590 guc_exec_queue_timedout_job"
+   ],
+   "bmg": [
+    "xe GuC engine reset",
+    "linux xe_guc_submit.c:1590"
+   ],
+   "lnl": [
+    "xe GuC engine reset",
+    "linux xe_guc_submit.c:1590"
+   ],
+   "ptl": [
+    "xe GuC engine reset",
+    "linux xe_guc_submit.c:1590"
+   ],
+   "mtl": [
+    "xe GuC engine reset",
+    "linux xe_guc_submit.c:1590"
+   ],
+   "dg2": [
+    "xe GuC engine reset",
+    "linux xe_guc_submit.c:1590"
+   ],
+   "gen12": [
+    "xe GuC engine reset",
+    "linux xe_guc_submit.c:1590"
+   ]
+  }
+ },
+ "ours": {
+  "kernel": {
+   "b580": [
+    "works",
+    "IntelXe.kext: GuC 70.72.1 + SLPC, HuC 8.2.10, RCS/BCS/CCS x2/VCS x2 through GuC submission, VRAM, xe uAPI",
+    "2026-10-28, docs/devices/b580.md#what-works-on-the-b580"
+   ],
+   "bmg": [
+    "notyet",
+    "IntelXe.kext attaches to 8086:E20B only (kernel/IntelXe/build.py IOPCIMatch 0xe20b8086)",
+    ""
+   ],
+   "lnl": [
+    "notyet",
+    "no kernel support; XeProbe has its device IDs",
+    ""
+   ],
+   "ptl": [
+    "notyet",
+    "no kernel support; XeProbe has its device IDs",
+    ""
+   ],
+   "mtl": [
+    "notyet",
+    "no kernel support; XeProbe has its device IDs",
+    ""
+   ],
+   "dg2": [
+    "notyet",
+    "no kernel support; XeProbe has its device IDs",
+    ""
+   ],
+   "gen12": [
+    "notyet",
+    "no kernel support; XeProbe stage 1 ran on RPL-S (row below)",
+    ""
+   ]
+  },
+  "probe": {
+   "b580": [
+    "works",
+    "stages 1 (identity) and 2 (forcewake) on 8086:E20B (xeprobe=0xe20b); stages 3-5 not run",
+    "2026-10-30, docs/devices/b580.md (Araçlar / Tools)"
+   ],
+   "bmg": [
+    "same",
+    "family table entry BMG; not run on another BMG ID",
+    ""
+   ],
+   "lnl": [
+    "same",
+    "family table entry LNL (GuC image lnl); not run",
+    ""
+   ],
+   "ptl": [
+    "same",
+    "family table entry PTL/WCL (GuC image ptl); not run",
+    ""
+   ],
+   "mtl": [
+    "same",
+    "family table entry MTL/ARL (GuC image mtl); not run; media GT store test not in v1",
+    ""
+   ],
+   "dg2": [
+    "same",
+    "family table entry DG2/ATS-M (GuC image dg2); not run",
+    ""
+   ],
+   "gen12": [
+    "works",
+    "stage 1 (identity) on RPL-S iGPU 8086:A780; stage 2 refused as designed (another driver attached); stages 3-5 not run",
+    "2026-10-30, docs/devices/b580.md (Araçlar / Tools)",
+    "RPL-S A780"
+   ]
+  },
+  "display": {
+   "b580": [
+    "works",
+    "IntelXeFB: 2560x1440 180 Hz DP, 25 modes, VRR, HW cursor and gamma, link training; one monitor; hot-plug, HDR, DP audio untested",
+    "2026-10-28..30, docs/devices/b580.md (Ekran / Display)"
+   ],
+   "bmg": [
+    "notyet",
+    "",
+    ""
+   ],
+   "lnl": [
+    "notyet",
+    "",
+    ""
+   ],
+   "ptl": [
+    "notyet",
+    "",
+    ""
+   ],
+   "mtl": [
+    "notyet",
+    "",
+    ""
+   ],
+   "dg2": [
+    "notyet",
+    "",
+    ""
+   ],
+   "gen12": [
+    "notyet",
+    "",
+    ""
+   ]
+  },
+  "vulkan": {
+   "b580": [
+    "works",
+    "Mesa ANV over xemac; Vulkan CTS ~22.3k pass, the hang cases fixed; Vulkan Video decode and encode",
+    "2026-10-30/31, data/cts/runs.json"
+   ],
+   "bmg": [
+    "notyet",
+    "",
+    ""
+   ],
+   "lnl": [
+    "notyet",
+    "",
+    ""
+   ],
+   "ptl": [
+    "notyet",
+    "",
+    ""
+   ],
+   "mtl": [
+    "notyet",
+    "",
+    ""
+   ],
+   "dg2": [
+    "notyet",
+    "",
+    ""
+   ],
+   "gen12": [
+    "notyet",
+    "",
+    ""
+   ]
+  },
+  "metal": {
+   "b580": [
+    "works",
+    "Metal plugin over ANV: WindowServer composites on it; mtl_tests 7/7; Geekbench 7 Metal 85548",
+    "2026-10-28/29, docs/devices/b580.md"
+   ],
+   "bmg": [
+    "notyet",
+    "",
+    ""
+   ],
+   "lnl": [
+    "notyet",
+    "",
+    ""
+   ],
+   "ptl": [
+    "notyet",
+    "",
+    ""
+   ],
+   "mtl": [
+    "notyet",
+    "",
+    ""
+   ],
+   "dg2": [
+    "notyet",
+    "",
+    ""
+   ],
+   "gen12": [
+    "notyet",
+    "",
+    ""
+   ]
+  },
+  "opengl": {
+   "b580": [
+    "works",
+    "Apple GL 4.1 over Metal and Zink over ANV: Minecraft 1.21.1 / 26.3 measured",
+    "2026-10-30/31, docs/devices/b580.md (3B / 3D)"
+   ],
+   "bmg": [
+    "notyet",
+    "",
+    ""
+   ],
+   "lnl": [
+    "notyet",
+    "",
+    ""
+   ],
+   "ptl": [
+    "notyet",
+    "",
+    ""
+   ],
+   "mtl": [
+    "notyet",
+    "",
+    ""
+   ],
+   "dg2": [
+    "notyet",
+    "",
+    ""
+   ],
+   "gen12": [
+    "notyet",
+    "",
+    ""
+   ]
+  },
+  "opencl": {
+   "b580": [
+    "works",
+    "OpenCL 1.2 through Apple's OpenCL over Metal on the B580 (Geekbench 7 OpenCL 84235); not Intel's compute-runtime",
+    "2026-10-29, docs/devices/b580.md"
+   ],
+   "bmg": [
+    "notyet",
+    "",
+    ""
+   ],
+   "lnl": [
+    "notyet",
+    "",
+    ""
+   ],
+   "ptl": [
+    "notyet",
+    "",
+    ""
+   ],
+   "mtl": [
+    "notyet",
+    "",
+    ""
+   ],
+   "dg2": [
+    "notyet",
+    "",
+    ""
+   ],
+   "gen12": [
+    "notyet",
+    "",
+    ""
+   ]
+  },
+  "levelzero": {
+   "b580": [
+    "notyet",
+    "no Level Zero / oneAPI runtime on macOS yet; the xe uAPI items compute-runtime needs are counted in docs/parity/TODO.md",
+    ""
+   ],
+   "bmg": [
+    "notyet",
+    "",
+    ""
+   ],
+   "lnl": [
+    "notyet",
+    "",
+    ""
+   ],
+   "ptl": [
+    "notyet",
+    "",
+    ""
+   ],
+   "mtl": [
+    "notyet",
+    "",
+    ""
+   ],
+   "dg2": [
+    "notyet",
+    "",
+    ""
+   ],
+   "gen12": [
+    "notyet",
+    "",
+    ""
+   ]
+  },
+  "sleep": {
+   "b580": [
+    "works",
+    "RTC sleep test and two long sleeps clean on rb7d + IntelXeFB v10k; not re-tested on the current kernel",
+    "2026-10-30, docs/devices/b580.md (Uyku / Sleep)"
+   ],
+   "bmg": [
+    "notyet",
+    "",
+    ""
+   ],
+   "lnl": [
+    "notyet",
+    "",
+    ""
+   ],
+   "ptl": [
+    "notyet",
+    "",
+    ""
+   ],
+   "mtl": [
+    "notyet",
+    "",
+    ""
+   ],
+   "dg2": [
+    "notyet",
+    "",
+    ""
+   ],
+   "gen12": [
+    "notyet",
+    "",
+    ""
+   ]
+  },
+  "reset": {
+   "b580": [
+    "works",
+    "4 deliberate CCS hangs with WindowServer live: only the hung client reset; WindowServer's queue replaced in 0.2 ms after a GT reset (rb5/rb6b); not re-tested on the current kernel",
+    "2026-10-30, docs/devices/b580.md (Kararlılık / Stability)"
+   ],
+   "bmg": [
+    "notyet",
+    "",
+    ""
+   ],
+   "lnl": [
+    "notyet",
+    "",
+    ""
+   ],
+   "ptl": [
+    "notyet",
+    "",
+    ""
+   ],
+   "mtl": [
+    "notyet",
+    "",
+    ""
+   ],
+   "dg2": [
+    "notyet",
+    "",
+    ""
+   ],
+   "gen12": [
+    "notyet",
+    "",
+    ""
+   ]
+  }
+ }
+}

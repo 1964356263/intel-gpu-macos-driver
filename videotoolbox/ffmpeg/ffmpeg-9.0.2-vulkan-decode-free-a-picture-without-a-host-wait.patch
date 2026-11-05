@@ -1,0 +1,148 @@
+FFmpeg 9.0.2: vulkan_decode: free a decoded picture without a host wait
+
+Backport of upstream FFmpeg 4e141536 ("vulkan: manage image views with AVRefStruct", Lynne, 2026-07-26:
+"The biggest gain is no longer needing to spin on the CPU on a semaphore waiting for the image to become
+freeable"), reduced to 9.0.2's structures: the image views ff_vk_decode_prepare_frame() makes are owned by a
+refcounted holder (views_buf); ff_vk_decode_frame() makes the execution hold it for the current picture and for
+every reference, so ff_vk_decode_free_frame() just drops its reference instead of vkWaitSemaphores() on the
+picture's decode. The images themselves were already held by the executions (ff_vk_exec_add_dep_frame), the slice
+buffer is the execution's once submitted. Pictures of the SDR (compute) path keep the old wait (views_buf NULL).
+
+--- a/libavcodec/vulkan_decode.c
++++ b/libavcodec/vulkan_decode.c
+@@ -178,6 +178,45 @@
+     return avf;
+ }
+ 
++typedef struct FFVulkanDecodeViews {
++    VkDevice                     dev;
++    const VkAllocationCallbacks *alloc;
++    PFN_vkDestroyImageView       destroy_image_view;
++    int                          nb_views;
++    VkImageView                  views[2];
++} FFVulkanDecodeViews;
++
++static void free_views(void *opaque, uint8_t *data)
++{
++    FFVulkanDecodeViews *v = (FFVulkanDecodeViews *)data;
++    for (int i = 0; i < v->nb_views; i++)
++        v->destroy_image_view(v->dev, v->views[i], v->alloc);
++    av_free(v);
++}
++
++static AVBufferRef *alloc_views(FFVulkanDecodeShared *ctx)
++{
++    AVBufferRef *buf;
++    FFVulkanDecodeViews *v = av_mallocz(sizeof(*v));
++    if (!v)
++        return NULL;
++
++    v->dev                = ctx->s.hwctx->act_dev;
++    v->alloc              = ctx->s.hwctx->alloc;
++    v->destroy_image_view = ctx->s.vkfn.DestroyImageView;
++
++    buf = av_buffer_create((uint8_t *)v, sizeof(*v), free_views, NULL, 0);
++    if (!buf)
++        av_free(v);
++    return buf;
++}
++
++static void own_view(AVBufferRef *views_buf, VkImageView view)
++{
++    FFVulkanDecodeViews *v = (FFVulkanDecodeViews *)views_buf->data;
++    v->views[v->nb_views++] = view;
++}
++
+ static void init_frame(FFVulkanDecodeContext *dec, FFVulkanDecodePicture *vkpic)
+ {
+     FFVulkanDecodeShared *ctx = dec->shared_ctx;
+@@ -210,6 +249,14 @@
+         return 0;
+ 
+     init_frame(dec, vkpic);
++
++    /* The views below are owned by views_buf, which every execution using
++     * them references (ff_vk_decode_frame), so ff_vk_decode_free_frame()
++     * does not have to wait for the picture's decode on the host. */
++    av_buffer_unref(&vkpic->views_buf);
++    vkpic->views_buf = alloc_views(ctx);
++    if (!vkpic->views_buf)
++        return AVERROR(ENOMEM);
+ 
+     if (ctx->common.layered_dpb && alloc_dpb) {
+         vkpic->view.ref[0] = ctx->common.layered_view;
+@@ -228,6 +275,7 @@
+                                 dpb_hwfc->format[0], VK_IMAGE_USAGE_VIDEO_DECODE_DPB_BIT_KHR);
+         if (err < 0)
+             return err;
++        own_view(vkpic->views_buf, vkpic->view.ref[0]);
+ 
+         vkpic->view.dst[0] = vkpic->view.ref[0];
+     }
+@@ -245,6 +293,7 @@
+                                 // the above fixes VUID-VkVideoBeginCodingInfoKHR-slotIndex-07245
+         if (err < 0)
+             return err;
++        own_view(vkpic->views_buf, vkpic->view.out[0]);
+ 
+         if (!alloc_dpb) {
+             vkpic->view.ref[0] = vkpic->view.out[0];
+@@ -582,6 +631,13 @@
+                                       pic);
+     if (err < 0)
+         return err;
++
++    /* The picture's image views live as long as this execution needs them */
++    if (vp->views_buf) {
++        err = ff_vk_exec_add_dep_buf(&ctx->s, exec, &vp->views_buf, 1, 1);
++        if (err < 0)
++            return err;
++    }
+ 
+     /* Output image - change layout, as it comes from a pool */
+     img_bar[nb_img_bar] = (VkImageMemoryBarrier2) {
+@@ -638,6 +694,13 @@
+                     return err;
+             }
+ 
++            /* And so do the reference's */
++            if (rvp->views_buf) {
++                err = ff_vk_exec_add_dep_buf(&ctx->s, exec, &rvp->views_buf, 1, 1);
++                if (err < 0)
++                    return err;
++            }
++
+             if (!rvp->dpb_frame) {
+                 AVVkFrame *rvkf = (AVVkFrame *)ref->data[0];
+ 
+@@ -695,6 +758,16 @@
+ {
+     AVVulkanDeviceContext *hwctx = dev_ctx->hwctx;
+ 
++    if (vp->views_buf) {
++        /* The views are kept alive by every execution referencing them, the
++         * images by the frame references those executions hold, and the slice
++         * data belongs to the execution once submitted: no host wait. */
++        av_buffer_unref(&vp->slices_buf);
++        av_buffer_unref(&vp->views_buf);
++        av_frame_free(&vp->dpb_frame);
++        return;
++    }
++
+     VkSemaphoreWaitInfo sem_wait = (VkSemaphoreWaitInfo) {
+         .sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
+         .pSemaphores = &vp->sem,
+--- a/libavcodec/vulkan_decode.h
++++ b/libavcodec/vulkan_decode.h
+@@ -99,6 +99,11 @@
+     AVBufferRef                    *slices_buf;
+     size_t                          slices_size;
+ 
++    /* Owner of the image views ff_vk_decode_prepare_frame() made. Every
++     * execution that uses them holds a reference, so freeing the picture
++     * needs no host wait (pictures made by the SDR path leave it NULL). */
++    AVBufferRef                    *views_buf;
++
+     /* Vulkan functions needed for destruction, as no other context is guaranteed to exist */
+     PFN_vkWaitSemaphores            wait_semaphores;
+     PFN_vkDestroyImageView          destroy_image_view;

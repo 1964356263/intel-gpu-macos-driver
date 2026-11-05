@@ -1,0 +1,780 @@
+egl, zink: a macOS EGL platform, zink through kopper with VK_EXT_metal_surface
+
+OpenGL on macOS without Apple's OpenGL: EGL on zink, on a Vulkan driver that
+has VK_EXT_metal_surface (ANV over B580.kext here, or MoltenVK/KosmicKrisp).
+
+egl: a native platform "macos" (_EGL_PLATFORM_MACOS, the default display with
+-Dplatforms=macos). EGLNativeWindowType is a CALayer * (a CAMetalLayer or an
+NSView's backing layer), as with ANGLE's Metal back end, so GLFW's EGL context
+API on Cocoa works unchanged. There is no DRM device: the platform loads zink,
+which picks its Vulkan device itself. Window surfaces are kopper drawables
+(VkMetalSurfaceCreateInfoEXT on the layer), sized by the layer's bounds times
+its contentsScale; pbuffers as on the surfaceless platform; swap intervals 0
+and 1. Windows are opaque, as with NSOpenGL, unless the application made its
+NSWindow non-opaque (GLFW_TRANSPARENT_FRAMEBUFFER): the layer is marked opaque
+with a black background and the swapchain's presenting sublayer's contents
+opaque (contentsOpaque), so an application that leaves alpha 0 in the window
+framebuffer (Minecraft blits with alpha writes masked) is not see-through.
+MESA_MACOS_OPAQUE=0 leaves the layer alone.
+
+egl/surfaceless: without a DRM device, MESA_LOADER_DRIVER_OVERRIDE=zink (and
+the zink fallback of eglInitialize) uses zink's own device choice, as
+LIBGL_ALWAYS_SOFTWARE does.
+
+zink: kopper presents to VK_EXT_metal_surface surfaces (KOPPER_METAL; the
+instance enables the extension when the loader has it).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+diff --git a/meson.build b/meson.build
+index 5fb70510911..6b033df0cb0 100644
+--- a/meson.build
++++ b/meson.build
+@@ -584,7 +584,7 @@ if with_egl
+   endif
+ 
+   # All the other platforms can be detected and cannot reach the native platform code
+-  _undetectable_platforms = ['x11', 'haiku', 'android', 'surfaceless']
++  _undetectable_platforms = ['x11', 'haiku', 'android', 'surfaceless', 'macos']
+ 
+   # Don't enforce the native platform if none of the undetectable platforms are enabled
+   _undetectable_platforms_enabled = []
+diff --git a/meson.options b/meson.options
+index d9470d0f16b..6859197e8aa 100644
+--- a/meson.options
++++ b/meson.options
+@@ -23,7 +23,7 @@ option(
+   type : 'combo',
+   value : 'auto',
+   choices : [
+-    'auto', 'x11', 'haiku', 'android', 'surfaceless',
++    'auto', 'x11', 'haiku', 'android', 'surfaceless', 'macos',
+   ],
+   description : 'the window system EGL assumes for EGL_DEFAULT_DISPLAY',
+ )
+diff --git a/src/egl/drivers/dri2/egl_dri2.c b/src/egl/drivers/dri2/egl_dri2.c
+index 69a2e6991f7..d5550c6d806 100644
+--- a/src/egl/drivers/dri2/egl_dri2.c
++++ b/src/egl/drivers/dri2/egl_dri2.c
+@@ -930,6 +930,9 @@ dri2_initialize(_EGLDisplay *disp)
+    case _EGL_PLATFORM_ANDROID:
+       ret = dri2_initialize_android(disp);
+       break;
++   case _EGL_PLATFORM_MACOS:
++      ret = dri2_initialize_macos(disp);
++      break;
+    default:
+       UNREACHABLE("Callers ensure we cannot get here.");
+       return EGL_FALSE;
+@@ -1021,6 +1024,8 @@ dri2_display_destroy(_EGLDisplay *disp)
+       break;
+    case _EGL_PLATFORM_DEVICE:
+       break;
++   case _EGL_PLATFORM_MACOS:
++      break;
+    default:
+       UNREACHABLE("Platform teardown is not properly hooked.");
+       break;
+diff --git a/src/egl/drivers/dri2/egl_dri2.h b/src/egl/drivers/dri2/egl_dri2.h
+index 31916f825e7..57c79120a9f 100644
+--- a/src/egl/drivers/dri2/egl_dri2.h
++++ b/src/egl/drivers/dri2/egl_dri2.h
+@@ -355,6 +355,13 @@ struct dri2_egl_surface {
+    } color_buffers[4], *back, *current;
+ #endif
+ 
++#ifdef HAVE_MACOS_PLATFORM
++   /* the window (NSWindow) is not opaque: GLFW_TRANSPARENT_FRAMEBUFFER */
++   bool macos_transparent;
++   /* the presenting sublayer was marked contentsOpaque */
++   bool macos_contents_opaque;
++#endif
++
+ #ifdef HAVE_ANDROID_PLATFORM
+    struct ANativeWindow *window;
+    struct ANativeWindowBuffer *buffer;
+@@ -551,6 +558,17 @@ dri2_teardown_wayland(struct dri2_egl_display *dri2_dpy)
+ }
+ #endif
+ 
++#ifdef HAVE_MACOS_PLATFORM
++EGLBoolean
++dri2_initialize_macos(_EGLDisplay *disp);
++#else
++static inline EGLBoolean
++dri2_initialize_macos(_EGLDisplay *disp)
++{
++   return _eglError(EGL_NOT_INITIALIZED, "macOS platform not built");
++}
++#endif
++
+ #ifdef HAVE_ANDROID_PLATFORM
+ EGLBoolean
+ dri2_initialize_android(_EGLDisplay *disp);
+diff --git a/src/egl/drivers/dri2/platform_macos.c b/src/egl/drivers/dri2/platform_macos.c
+new file mode 100644
+index 00000000000..0ba6a7b3d6b
+--- /dev/null
++++ b/src/egl/drivers/dri2/platform_macos.c
+@@ -0,0 +1,353 @@
++/*
++ * Copyright © 2026 Mesa contributors
++ * SPDX-License-Identifier: MIT
++ */
++
++/*
++ * The macOS EGL platform: zink through kopper, presenting with
++ * VK_EXT_metal_surface.
++ *
++ * EGLNativeDisplayType is EGL_DEFAULT_DISPLAY; EGLNativeWindowType is a
++ * CALayer * (a CAMetalLayer or a view's backing layer), as with ANGLE's
++ * Metal back end, so GLFW's EGL context API on Cocoa works unchanged.  There
++ * is no DRM device: zink picks the Vulkan device itself, like the
++ * surfaceless platform's zink fallback.
++ */
++
++#include <stdlib.h>
++#include <string.h>
++
++#include "util/format/u_format.h"
++#include "util/u_debug.h"
++
++#include "dri_screen.h"
++#include "dri_util.h"
++#include "egl_dri2.h"
++#include "kopper_interface.h"
++#include "loader.h"
++
++#include <vulkan/vulkan_core.h>
++#include <vulkan/vulkan_metal.h>
++
++#include "platform_macos_layer.h"
++
++static_assert(sizeof(struct kopper_vk_surface_create_storage) >=
++                 sizeof(VkMetalSurfaceCreateInfoEXT),
++              "");
++
++static void
++macos_drawable_size(struct dri2_egl_surface *dri2_surf, int *w, int *h)
++{
++   if (dri2_surf->base.Type == EGL_WINDOW_BIT) {
++      dri2_macos_layer_size(dri2_surf->base.NativeSurface, w, h);
++   } else {
++      *w = dri2_surf->base.Width;
++      *h = dri2_surf->base.Height;
++   }
++}
++
++static _EGLSurface *
++dri2_macos_create_surface(_EGLDisplay *disp, EGLint type, _EGLConfig *conf,
++                          void *native_surface, const EGLint *attrib_list)
++{
++   struct dri2_egl_display *dri2_dpy = dri2_egl_display(disp);
++   struct dri2_egl_config *dri2_conf = dri2_egl_config(conf);
++   struct dri2_egl_surface *dri2_surf;
++   const struct dri_config *config;
++
++   dri2_surf = calloc(1, sizeof *dri2_surf);
++   if (!dri2_surf) {
++      _eglError(EGL_BAD_ALLOC, "dri2_macos_create_surface");
++      return NULL;
++   }
++
++   if (!dri2_init_surface(&dri2_surf->base, disp, type, conf, attrib_list,
++                          false, native_surface))
++      goto cleanup_surf;
++
++   config = dri2_get_dri_config(dri2_conf, type, dri2_surf->base.GLColorspace);
++   if (!config) {
++      _eglError(EGL_BAD_MATCH,
++                "Unsupported surfacetype/colorspace configuration");
++      goto cleanup_surf;
++   }
++
++   if (type == EGL_WINDOW_BIT) {
++      if (!dri2_macos_layer_retain(native_surface,
++                                   &dri2_surf->macos_transparent)) {
++         _eglError(EGL_BAD_NATIVE_WINDOW, "not a CALayer");
++         goto cleanup_surf;
++      }
++      int w, h;
++      macos_drawable_size(dri2_surf, &w, &h);
++      dri2_surf->base.Width = w;
++      dri2_surf->base.Height = h;
++   }
++
++   if (!dri2_create_drawable(dri2_dpy, config, dri2_surf, dri2_surf)) {
++      if (type == EGL_WINDOW_BIT)
++         dri2_macos_layer_release(native_surface);
++      goto cleanup_surf;
++   }
++
++   return &dri2_surf->base;
++
++cleanup_surf:
++   free(dri2_surf);
++   return NULL;
++}
++
++static EGLBoolean
++dri2_macos_swap_interval(_EGLDisplay *disp, _EGLSurface *surf, EGLint interval)
++{
++   struct dri2_egl_surface *dri2_surf = dri2_egl_surface(surf);
++
++   kopperSetSwapInterval(dri2_surf->dri_drawable, interval);
++   return EGL_TRUE;
++}
++
++static _EGLSurface *
++dri2_macos_create_window_surface(_EGLDisplay *disp, _EGLConfig *conf,
++                                 void *native_window, const EGLint *attrib_list)
++{
++   struct dri2_egl_display *dri2_dpy = dri2_egl_display(disp);
++   _EGLSurface *surf;
++
++   surf = dri2_macos_create_surface(disp, EGL_WINDOW_BIT, conf, native_window,
++                                    attrib_list);
++   if (surf) {
++      surf->SwapInterval = 1;
++      /* Override that with a driconf-set value. */
++      dri2_macos_swap_interval(disp, surf, dri2_dpy->default_swap_interval);
++   }
++   return surf;
++}
++
++static _EGLSurface *
++dri2_macos_create_pbuffer_surface(_EGLDisplay *disp, _EGLConfig *conf,
++                                  const EGLint *attrib_list)
++{
++   return dri2_macos_create_surface(disp, EGL_PBUFFER_BIT, conf, NULL,
++                                    attrib_list);
++}
++
++static EGLBoolean
++dri2_macos_destroy_surface(_EGLDisplay *disp, _EGLSurface *surf)
++{
++   struct dri2_egl_surface *dri2_surf = dri2_egl_surface(surf);
++
++   driDestroyDrawable(dri2_surf->dri_drawable);
++   if (surf->Type == EGL_WINDOW_BIT)
++      dri2_macos_layer_release(surf->NativeSurface);
++
++   dri2_fini_surface(surf);
++   free(surf);
++   return EGL_TRUE;
++}
++
++static EGLBoolean
++dri2_macos_swap_buffers(_EGLDisplay *disp, _EGLSurface *draw,
++                        const EGLint *rects, EGLint numRects)
++{
++   struct dri2_egl_surface *dri2_surf = dri2_egl_surface(draw);
++
++   kopperSwapBuffers(dri2_surf->dri_drawable,
++                     __DRI2_FLUSH_CONTEXT | __DRI2_FLUSH_INVALIDATE_ANCILLARY,
++                     numRects, rects);
++
++   /* the swapchain's presenting sublayer exists after the first present */
++   if (!dri2_surf->macos_transparent && !dri2_surf->macos_contents_opaque &&
++       draw->Type == EGL_WINDOW_BIT)
++      dri2_surf->macos_contents_opaque =
++         dri2_macos_layer_mark_contents_opaque(draw->NativeSurface);
++
++   /* kopper re-creates the swapchain when the layer was resized */
++   kopperQuerySurfaceSize(dri2_surf->dri_drawable, &dri2_surf->base.Width,
++                          &dri2_surf->base.Height);
++   return EGL_TRUE;
++}
++
++static EGLint
++dri2_macos_query_buffer_age(_EGLDisplay *disp, _EGLSurface *surf)
++{
++   struct dri2_egl_surface *dri2_surf = dri2_egl_surface(surf);
++
++   return kopperQueryBufferAge(dri2_surf->dri_drawable);
++}
++
++static EGLBoolean
++dri2_macos_query_surface(_EGLDisplay *disp, _EGLSurface *surf,
++                         EGLint attribute, EGLint *value)
++{
++   struct dri2_egl_surface *dri2_surf = dri2_egl_surface(surf);
++
++   switch (attribute) {
++   case EGL_WIDTH:
++   case EGL_HEIGHT:
++      if (surf->Type == EGL_WINDOW_BIT) {
++         int w, h;
++         macos_drawable_size(dri2_surf, &w, &h);
++         if (surf->Width != w || surf->Height != h) {
++            surf->Width = w;
++            surf->Height = h;
++            dri_invalidate_drawable(dri2_surf->dri_drawable);
++         }
++      }
++      break;
++   default:
++      break;
++   }
++   return _eglQuerySurface(disp, surf, attribute, value);
++}
++
++static const struct dri2_egl_display_vtbl dri2_macos_display_vtbl = {
++   .create_window_surface = dri2_macos_create_window_surface,
++   .create_pbuffer_surface = dri2_macos_create_pbuffer_surface,
++   .destroy_surface = dri2_macos_destroy_surface,
++   .create_image = dri2_create_image_khr,
++   .swap_interval = dri2_macos_swap_interval,
++   .swap_buffers = dri2_macos_swap_buffers,
++   .query_buffer_age = dri2_macos_query_buffer_age,
++   .query_surface = dri2_macos_query_surface,
++};
++
++static void
++kopperSetSurfaceCreateInfo(void *_draw, struct kopper_loader_info *ci)
++{
++   struct dri2_egl_surface *dri2_surf = _draw;
++   VkMetalSurfaceCreateInfoEXT *metal = (VkMetalSurfaceCreateInfoEXT *)&ci->bos;
++
++   /* pbuffers have no Vulkan surface (sType 0) */
++   if (dri2_surf->base.Type != EGL_WINDOW_BIT)
++      return;
++
++   metal->sType = VK_STRUCTURE_TYPE_METAL_SURFACE_CREATE_INFO_EXT;
++   metal->pNext = NULL;
++   metal->flags = 0;
++   metal->pLayer = dri2_surf->base.NativeSurface;
++   /* Windows are opaque, as with CGL/NSOpenGL, unless the application made
++    * the window transparent: an alpha channel in the config alone does not
++    * make the window see-through (GLFW asks for 8 alpha bits by default).
++    */
++   ci->has_alpha = dri2_surf->macos_transparent &&
++                   dri2_surf->base.Config->AlphaSize > 0;
++   ci->present_opaque = !ci->has_alpha;
++}
++
++static void
++kopperGetDrawableInfo(struct dri_drawable *draw, int *w, int *h,
++                      void *loaderPrivate)
++{
++   macos_drawable_size(loaderPrivate, w, h);
++}
++
++static unsigned
++kopperGetCapability(void *loaderPrivate, enum dri_loader_cap cap)
++{
++   switch (cap) {
++   case DRI_LOADER_CAP_RGBA_ORDERING:
++      return 1;
++   case DRI_LOADER_CAP_FP16:
++      return 1;
++   default:
++      return 0;
++   }
++}
++
++static const __DRIkopperLoaderExtension kopper_loader_extension = {
++   .SetSurfaceCreateInfo = kopperSetSurfaceCreateInfo,
++   .GetDrawableInfo = kopperGetDrawableInfo,
++   .getCapability = kopperGetCapability,
++};
++
++static const struct dri_loader_funcs kopper_loader_funcs = {
++   .image_lookup = &image_lookup_extension,
++   .kopper = &kopper_loader_extension,
++};
++
++/* Window configs: the formats the Metal WSI can present (8-bit BGRA);
++ * every format the surfaceless platform offers stays usable for pbuffers.
++ */
++static void
++dri2_macos_add_configs(_EGLDisplay *disp)
++{
++   struct dri2_egl_display *dri2_dpy = dri2_egl_display(disp);
++   unsigned count = 0;
++
++   for (unsigned i = 0; dri2_dpy->driver_configs[i] != NULL; i++) {
++      const struct gl_config *gl_config =
++         (const struct gl_config *)dri2_dpy->driver_configs[i];
++      EGLint surface_type;
++
++      switch (gl_config->color_format) {
++      case PIPE_FORMAT_BGRA8888_UNORM:
++      case PIPE_FORMAT_BGRX8888_UNORM:
++         surface_type = EGL_WINDOW_BIT | EGL_PBUFFER_BIT;
++         break;
++      case PIPE_FORMAT_R16G16B16A16_FLOAT:
++      case PIPE_FORMAT_R16G16B16X16_FLOAT:
++      case PIPE_FORMAT_B10G10R10A2_UNORM:
++      case PIPE_FORMAT_B10G10R10X2_UNORM:
++      case PIPE_FORMAT_B5G6R5_UNORM:
++         surface_type = EGL_PBUFFER_BIT;
++         break;
++      default:
++         continue;
++      }
++
++      const EGLint attr_list[] = {
++         EGL_CONFIG_SELECT_GROUP_EXT,
++         (surface_type & EGL_WINDOW_BIT) ? 0 : 1,
++         EGL_NONE,
++      };
++      if (dri2_add_config(disp, dri2_dpy->driver_configs[i], surface_type,
++                          attr_list))
++         count++;
++   }
++
++   if (!count)
++      _eglLog(_EGL_DEBUG, "macOS: no usable DRI config");
++}
++
++EGLBoolean
++dri2_initialize_macos(_EGLDisplay *disp)
++{
++   struct dri2_egl_display *dri2_dpy = dri2_egl_display(disp);
++
++   if (disp->Options.ForceSoftware && !disp->Options.Zink)
++      return _eglError(EGL_NOT_INITIALIZED, "macOS: only zink");
++
++   dri2_dpy->fd_render_gpu = -1;
++   dri2_dpy->fd_display_gpu = -1;
++   dri2_dpy->driver_name = strdup("zink");
++   if (!dri2_dpy->driver_name)
++      return _eglError(EGL_BAD_ALLOC, "macOS: strdup");
++
++   dri2_detect_swrast_kopper(disp);
++   if (!dri2_dpy->kopper)
++      return _eglError(EGL_NOT_INITIALIZED, "macOS: kopper disabled");
++   dri2_dpy->loader_funcs = &kopper_loader_funcs;
++
++   if (!dri2_create_screen(disp))
++      return _eglError(EGL_NOT_INITIALIZED, "macOS: failed to create screen");
++
++   if (!dri2_setup_device(disp, true))
++      return _eglError(EGL_NOT_INITIALIZED, "macOS: failed to set up EGLDevice");
++
++   dri2_setup_screen(disp);
++
++   /* kopper: swap intervals 0 and 1 (IMMEDIATE/MAILBOX, FIFO) */
++   dri2_setup_swap_interval(disp, 1);
++
++   disp->Extensions.EXT_buffer_age = EGL_TRUE;
++   disp->Extensions.EXT_swap_buffers_with_damage = EGL_TRUE;
++
++   dri2_macos_add_configs(disp);
++
++   /* Fill vtbl last to prevent accidentally calling virtual function during
++    * initialization.
++    */
++   dri2_dpy->vtbl = &dri2_macos_display_vtbl;
++
++   return EGL_TRUE;
++}
+diff --git a/src/egl/drivers/dri2/platform_macos_layer.h b/src/egl/drivers/dri2/platform_macos_layer.h
+new file mode 100644
+index 00000000000..3c20c644a0d
+--- /dev/null
++++ b/src/egl/drivers/dri2/platform_macos_layer.h
+@@ -0,0 +1,25 @@
++/*
++ * Copyright © 2026 Mesa contributors
++ * SPDX-License-Identifier: MIT
++ */
++#ifndef PLATFORM_MACOS_LAYER_H
++#define PLATFORM_MACOS_LAYER_H
++
++#include <stdbool.h>
++
++/* EGLNativeWindowType on macOS: a CALayer *. */
++/* Retains the layer; returns false if it is not a CALayer.  *transparent is
++ * set when the application made its window non-opaque (a transparent
++ * framebuffer); otherwise the layer is made opaque.
++ */
++bool dri2_macos_layer_retain(void *layer, bool *transparent);
++void dri2_macos_layer_release(void *layer);
++/* Marks the Vulkan WSI's presenting sublayer of the layer contentsOpaque, so
++ * Core Animation and the window server ignore the alpha of the presented
++ * IOSurfaces; returns false while that sublayer does not exist yet.
++ */
++bool dri2_macos_layer_mark_contents_opaque(void *layer);
++/* the layer's size in pixels (bounds × contentsScale) */
++void dri2_macos_layer_size(void *layer, int *width, int *height);
++
++#endif
+diff --git a/src/egl/drivers/dri2/platform_macos_layer.m b/src/egl/drivers/dri2/platform_macos_layer.m
+new file mode 100644
+index 00000000000..0f0e51a5f2c
+--- /dev/null
++++ b/src/egl/drivers/dri2/platform_macos_layer.m
+@@ -0,0 +1,111 @@
++/*
++ * Copyright © 2026 Mesa contributors
++ * SPDX-License-Identifier: MIT
++ */
++#include "platform_macos_layer.h"
++
++#import <QuartzCore/QuartzCore.h>
++#include <stdlib.h>
++#include <string.h>
++
++bool
++dri2_macos_layer_retain(void *layer, bool *transparent)
++{
++   id obj = (id)layer;
++   *transparent = false;
++   if (!obj || ![obj isKindOfClass:[CALayer class]])
++      return false;
++   [obj retain];
++
++   @autoreleasepool {
++      CALayer *l = (CALayer *)obj;
++
++      /* A view's backing layer has the view as its delegate.  An application
++       * that wants a see-through window makes the NSWindow non-opaque
++       * (GLFW_TRANSPARENT_FRAMEBUFFER does), as with NSOpenGL's
++       * NSOpenGLContextParameterSurfaceOpacity = 0.
++       */
++      id delegate = l.delegate;
++      if (delegate && [delegate respondsToSelector:@selector(window)]) {
++         id window = [delegate performSelector:@selector(window)];
++         if (window && [window respondsToSelector:@selector(isOpaque)] &&
++             ![window isOpaque])
++            *transparent = true;
++      }
++      if (*transparent)
++         return true;
++
++      /* Opaque by default, like NSOpenGL (surface opacity 1): the layer is
++       * marked opaque and gets an opaque black background (what shows where
++       * the presented contents do not cover the layer, e.g. while a resize is
++       * pending).  The presented contents themselves are made opaque by the
++       * swapchain (an OPAQUE swapchain marks them contentsOpaque) and, for a
++       * WSI that does not, by dri2_macos_layer_mark_contents_opaque().
++       *   MESA_MACOS_OPAQUE=0       leave the layer as it is
++       *   MESA_MACOS_OPAQUE=hint    only the opaque hint, no background
++       */
++      const char *env = getenv("MESA_MACOS_OPAQUE");
++      bool hint = !env || strcmp(env, "0") != 0;
++      bool background =
++         !env || (strcmp(env, "0") != 0 && strcmp(env, "hint") != 0);
++      [CATransaction begin];
++      [CATransaction setDisableActions:YES];
++      if (hint)
++         l.opaque = YES;
++      if (background) {
++         CGColorRef black = CGColorCreateSRGB(0.0, 0.0, 0.0, 1.0);
++         l.backgroundColor = black;
++         CGColorRelease(black);
++      }
++      [CATransaction commit];
++   }
++   return true;
++}
++
++bool
++dri2_macos_layer_mark_contents_opaque(void *layer)
++{
++   bool found = false;
++   @autoreleasepool {
++      CALayer *l = (CALayer *)layer;
++      /* Mesa's Metal WSI presents into a sublayer with this name; the window
++       * is opaque, so the presented IOSurfaces' alpha must not be applied:
++       * Core Animation blends IOSurface contents by their alpha whatever the
++       * layer's "opaque" hint says, and an application that leaves alpha 0
++       * in the window framebuffer (Minecraft blits with alpha writes masked)
++       * would show black or see-through.  contentsOpaque makes Core Animation
++       * treat the contents as opaque (alpha 1), as CAMetalLayer does when it
++       * is opaque and NSOpenGL with surface opacity 1.
++       */
++      for (CALayer *sub in l.sublayers) {
++         if (![sub.name isEqualToString:@"org.freedesktop.mesa.wsi.iosurface"])
++            continue;
++         if ([sub respondsToSelector:@selector(setContentsOpaque:)]) {
++            [CATransaction begin];
++            [CATransaction setDisableActions:YES];
++            [sub setValue:@YES forKey:@"contentsOpaque"];
++            [CATransaction commit];
++         }
++         found = true;
++      }
++   }
++   return found;
++}
++
++void
++dri2_macos_layer_release(void *layer)
++{
++   [(id)layer release];
++}
++
++void
++dri2_macos_layer_size(void *layer, int *width, int *height)
++{
++   @autoreleasepool {
++      CALayer *l = (CALayer *)layer;
++      CGSize size = l.bounds.size;
++      CGFloat scale = l.contentsScale;
++      *width = (int)(size.width * scale);
++      *height = (int)(size.height * scale);
++   }
++}
+diff --git a/src/egl/drivers/dri2/platform_surfaceless.c b/src/egl/drivers/dri2/platform_surfaceless.c
+index 16b4e3d6033..1eded38c095 100644
+--- a/src/egl/drivers/dri2/platform_surfaceless.c
++++ b/src/egl/drivers/dri2/platform_surfaceless.c
+@@ -389,8 +389,11 @@ dri2_initialize_surfaceless(_EGLDisplay *disp)
+     */
+    driver_loaded = surfaceless_probe_device(disp, disp->Options.ForceSoftware,
+                                             disp->Options.Zink);
+-   if (!driver_loaded && disp->Options.ForceSoftware) {
+-      _eglLog(_EGL_DEBUG, "Falling back to surfaceless swrast without DRM.");
++   /* Without a DRM device (macOS), zink is still possible: it finds its
++    * Vulkan device itself.
++    */
++   if (!driver_loaded && (disp->Options.ForceSoftware || disp->Options.Zink)) {
++      _eglLog(_EGL_DEBUG, "Falling back to surfaceless swrast/zink without DRM.");
+       driver_loaded = surfaceless_probe_device_sw(disp);
+    }
+ 
+diff --git a/src/egl/main/egldisplay.c b/src/egl/main/egldisplay.c
+index ef653aa1d8b..8f9b601493f 100644
+--- a/src/egl/main/egldisplay.c
++++ b/src/egl/main/egldisplay.c
+@@ -84,6 +84,7 @@ static const struct {
+    {_EGL_PLATFORM_SURFACELESS, "surfaceless"},
+    {_EGL_PLATFORM_DEVICE, "device"},
+    {_EGL_PLATFORM_WINDOWS, "windows"},
++   {_EGL_PLATFORM_MACOS, "macos"},
+ };
+ 
+ /**
+diff --git a/src/egl/main/egldisplay.h b/src/egl/main/egldisplay.h
+index 6178140e7e7..2629f09f6cd 100644
+--- a/src/egl/main/egldisplay.h
++++ b/src/egl/main/egldisplay.h
+@@ -55,6 +55,7 @@ enum _egl_platform_type {
+    _EGL_PLATFORM_SURFACELESS,
+    _EGL_PLATFORM_DEVICE,
+    _EGL_PLATFORM_WINDOWS,
++   _EGL_PLATFORM_MACOS,
+ 
+    _EGL_NUM_PLATFORMS,
+    _EGL_INVALID_PLATFORM = -1
+diff --git a/src/egl/meson.build b/src/egl/meson.build
+index b0553606e22..1dd852b12c6 100644
+--- a/src/egl/meson.build
++++ b/src/egl/meson.build
+@@ -119,6 +119,13 @@ if with_dri
+       ]
+     endif
+   endif
++  if with_platform_macos
++    files_egl += files(
++      'drivers/dri2/platform_macos.c',
++      'drivers/dri2/platform_macos_layer.m',
++    )
++    deps_for_egl += [idep_vulkan_wsi_defines, dependency('appleframeworks', modules : ['QuartzCore', 'Foundation'])]
++  endif
+   if with_platform_android
+     deps_for_egl += [dep_android, idep_u_gralloc]
+     files_egl += files('drivers/dri2/platform_android.c')
+diff --git a/src/gallium/drivers/zink/zink_instance.py b/src/gallium/drivers/zink/zink_instance.py
+index 108191562f1..041779465b7 100755
+--- a/src/gallium/drivers/zink/zink_instance.py
++++ b/src/gallium/drivers/zink/zink_instance.py
+@@ -49,6 +49,7 @@ EXTENSIONS = [
+     Extension("VK_KHR_wayland_surface"),
+     Extension("VK_KHR_xcb_surface"),
+     Extension("VK_KHR_win32_surface"),
++    Extension("VK_EXT_metal_surface"),
+     Extension("VK_EXT_swapchain_colorspace"),
+ ]
+ 
+diff --git a/src/gallium/drivers/zink/zink_kopper.c b/src/gallium/drivers/zink/zink_kopper.c
+index 9e4686e2f18..81760b01a19 100644
+--- a/src/gallium/drivers/zink/zink_kopper.c
++++ b/src/gallium/drivers/zink/zink_kopper.c
+@@ -79,6 +79,11 @@ init_dt_type(struct kopper_displaytarget *cdt)
+    case VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR:
+       cdt->type = KOPPER_WIN32;
+       break;
++#endif
++#ifdef VK_USE_PLATFORM_METAL_EXT
++   case VK_STRUCTURE_TYPE_METAL_SURFACE_CREATE_INFO_EXT:
++      cdt->type = KOPPER_METAL;
++      break;
+ #endif
+    default:
+       UNREACHABLE("unsupported!");
+@@ -118,6 +123,13 @@ kopper_CreateSurface(struct zink_screen *screen, struct kopper_displaytarget *cd
+       error = VKSCR(CreateWin32SurfaceKHR)(screen->instance, win32, NULL, &surface);
+       break;
+    }
++#endif
++#ifdef VK_USE_PLATFORM_METAL_EXT
++   case VK_STRUCTURE_TYPE_METAL_SURFACE_CREATE_INFO_EXT: {
++      VkMetalSurfaceCreateInfoEXT *metal = (VkMetalSurfaceCreateInfoEXT *)&cdt->info.bos;
++      error = VKSCR(CreateMetalSurfaceEXT)(screen->instance, metal, NULL, &surface);
++      break;
++   }
+ #endif
+    default:
+       UNREACHABLE("unsupported!");
+@@ -247,6 +259,13 @@ find_dt_entry(struct zink_screen *screen, const struct kopper_displaytarget *cdt
+       he = _mesa_hash_table_search(&screen->dts, win32->hwnd);
+       break;
+    }
++#endif
++#ifdef VK_USE_PLATFORM_METAL_EXT
++   case KOPPER_METAL: {
++      VkMetalSurfaceCreateInfoEXT *metal = (VkMetalSurfaceCreateInfoEXT *)&cdt->info.bos;
++      he = _mesa_hash_table_search(&screen->dts, metal->pLayer);
++      break;
++   }
+ #endif
+    default:
+       UNREACHABLE("unsupported!");
+@@ -328,6 +347,7 @@ kopper_CreateSwapchain(struct zink_screen *screen, struct kopper_displaytarget *
+    switch (cdt->type) {
+    case KOPPER_X11:
+    case KOPPER_WIN32:
++   case KOPPER_METAL:
+       /* With Xcb, minImageExtent, maxImageExtent, and currentExtent must always equal the window size.
+        * ...
+        * Due to above restrictions, it is only possible to create a new swapchain on this
+@@ -464,6 +484,7 @@ zink_kopper_displaytarget_create(struct zink_screen *screen, unsigned tex_usage,
+             break;
+          case KOPPER_WAYLAND:
+          case KOPPER_WIN32:
++         case KOPPER_METAL:
+             _mesa_hash_table_init(&screen->dts, screen, _mesa_hash_pointer, _mesa_key_pointer_equal);
+             break;
+          default:
+@@ -535,6 +556,13 @@ zink_kopper_displaytarget_create(struct zink_screen *screen, unsigned tex_usage,
+       _mesa_hash_table_insert(&screen->dts, win32->hwnd, cdt);
+       break;
+    }
++#endif
++#ifdef VK_USE_PLATFORM_METAL_EXT
++   case KOPPER_METAL: {
++      VkMetalSurfaceCreateInfoEXT *metal = (VkMetalSurfaceCreateInfoEXT *)&cdt->info.bos;
++      _mesa_hash_table_insert(&screen->dts, metal->pLayer, cdt);
++      break;
++   }
+ #endif
+    default:
+       UNREACHABLE("unsupported!");
+diff --git a/src/gallium/drivers/zink/zink_kopper.h b/src/gallium/drivers/zink/zink_kopper.h
+index 0b99c4dc9d1..d059db889dd 100644
+--- a/src/gallium/drivers/zink/zink_kopper.h
++++ b/src/gallium/drivers/zink/zink_kopper.h
+@@ -76,7 +76,8 @@ struct kopper_swapchain {
+ enum kopper_type {
+    KOPPER_X11,
+    KOPPER_WAYLAND,
+-   KOPPER_WIN32
++   KOPPER_WIN32,
++   KOPPER_METAL
+ };
+ 
+ struct kopper_displaytarget

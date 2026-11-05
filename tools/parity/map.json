@@ -1,0 +1,1511 @@
+{
+ "_doc": [
+  "Only two kinds of hand entries live here; every other status is COMPUTED by scan.py from the sources:",
+  "1) not_applicable: na = 'linux' (Linux-only interface/infrastructure) or 'hw' (hardware the B580 does not have) + a one-line reason.",
+  "2) missing: only with a machine-checked proof: 'refuse' regexes that must match in our sources (a feature refused with an error)",
+  "   and/or 'absent' tokens (names or register offsets) that must not occur in our sources. If the proof fails, the file is 'unverified'.",
+  "Computed statuses: ported = every upstream function (or, for headers without functions, every #define) occurs in our sources;",
+  "partial = some do; unverified = none do and no proof of absence. Mesa: upstream/patched/ours/not_built from git diff + compile_commands.json.",
+  "Paths: xe/... drivers/gpu/drm/xe, display/... drivers/gpu/drm/i915/display, uapi/xe_drm.h, mesa/... = Mesa src/, ours/... = repo user/.",
+  "n/a 'hw' rules carry 'future': the other Intel GPU family the file serves (future target); n/a 'old' = pre-Gen12 platforms outside xe (not needed)."
+ ],
+ "groups": [
+  [
+   "uapi/*",
+   "uAPI & queries"
+  ],
+  [
+   "xe/xe_query*",
+   "uAPI & queries"
+  ],
+  [
+   "xe/xe_drm_client*",
+   "uAPI & queries"
+  ],
+  [
+   "xe/display/*",
+   "xe display glue"
+  ],
+  [
+   "xe/compat-i915-headers/*",
+   "xe display glue"
+  ],
+  [
+   "xe/tests/*",
+   "Linux glue (tests, debugfs, sysfs, trace)"
+  ],
+  [
+   "xe/*debugfs*",
+   "Linux glue (tests, debugfs, sysfs, trace)"
+  ],
+  [
+   "xe/*sysfs*",
+   "Linux glue (tests, debugfs, sysfs, trace)"
+  ],
+  [
+   "xe/xe_trace*",
+   "Linux glue (tests, debugfs, sysfs, trace)"
+  ],
+  [
+   "xe/xe_module*",
+   "Linux glue (tests, debugfs, sysfs, trace)"
+  ],
+  [
+   "xe/xe_configfs*",
+   "Linux glue (tests, debugfs, sysfs, trace)"
+  ],
+  [
+   "xe/*printk*",
+   "Linux glue (tests, debugfs, sysfs, trace)"
+  ],
+  [
+   "xe/xe_gen_wa_oob*",
+   "Linux glue (tests, debugfs, sysfs, trace)"
+  ],
+  [
+   "xe/*sriov*",
+   "Virtualization (SR-IOV)"
+  ],
+  [
+   "xe/xe_lmtt*",
+   "Virtualization (SR-IOV)"
+  ],
+  [
+   "xe/xe_memirq*",
+   "Virtualization (SR-IOV)"
+  ],
+  [
+   "xe/xe_guc_relay*",
+   "Virtualization (SR-IOV)"
+  ],
+  [
+   "xe/abi/guc_relay*",
+   "Virtualization (SR-IOV)"
+  ],
+  [
+   "xe/xe_mert*",
+   "Virtualization (SR-IOV)"
+  ],
+  [
+   "xe/regs/xe_mert*",
+   "Virtualization (SR-IOV)"
+  ],
+  [
+   "xe/xe_guc_db_mgr*",
+   "Virtualization (SR-IOV)"
+  ],
+  [
+   "xe/xe_pxp*",
+   "Security: PXP / GSC"
+  ],
+  [
+   "xe/xe_gsc*",
+   "Security: PXP / GSC"
+  ],
+  [
+   "xe/xe_heci*",
+   "Security: PXP / GSC"
+  ],
+  [
+   "xe/abi/gsc_*",
+   "Security: PXP / GSC"
+  ],
+  [
+   "xe/regs/xe_gsc*",
+   "Security: PXP / GSC"
+  ],
+  [
+   "xe/regs/xe_pxp*",
+   "Security: PXP / GSC"
+  ],
+  [
+   "xe/instructions/xe_gsc*",
+   "Security: PXP / GSC"
+  ],
+  [
+   "xe/xe_huc*",
+   "Media (HuC, video engines)"
+  ],
+  [
+   "xe/instructions/xe_mfx*",
+   "Media (HuC, video engines)"
+  ],
+  [
+   "xe/xe_oa*",
+   "Observability (OA, PMU, capture, logs)"
+  ],
+  [
+   "xe/xe_observation*",
+   "Observability (OA, PMU, capture, logs)"
+  ],
+  [
+   "xe/xe_eu_stall*",
+   "Observability (OA, PMU, capture, logs)"
+  ],
+  [
+   "xe/regs/xe_oa*",
+   "Observability (OA, PMU, capture, logs)"
+  ],
+  [
+   "xe/regs/xe_eu_stall*",
+   "Observability (OA, PMU, capture, logs)"
+  ],
+  [
+   "xe/xe_pmu*",
+   "Observability (OA, PMU, capture, logs)"
+  ],
+  [
+   "xe/xe_devcoredump*",
+   "Observability (OA, PMU, capture, logs)"
+  ],
+  [
+   "xe/xe_guc_capture*",
+   "Observability (OA, PMU, capture, logs)"
+  ],
+  [
+   "xe/abi/guc_capture*",
+   "Observability (OA, PMU, capture, logs)"
+  ],
+  [
+   "xe/xe_guc_log*",
+   "Observability (OA, PMU, capture, logs)"
+  ],
+  [
+   "xe/abi/guc_log*",
+   "Observability (OA, PMU, capture, logs)"
+  ],
+  [
+   "xe/abi/guc_lfd*",
+   "Observability (OA, PMU, capture, logs)"
+  ],
+  [
+   "xe/abi/xe_log*",
+   "Observability (OA, PMU, capture, logs)"
+  ],
+  [
+   "xe/xe_log*",
+   "Observability (OA, PMU, capture, logs)"
+  ],
+  [
+   "xe/xe_gt_stats*",
+   "Observability (OA, PMU, capture, logs)"
+  ],
+  [
+   "xe/xe_guc_engine_activity*",
+   "Observability (OA, PMU, capture, logs)"
+  ],
+  [
+   "xe/xe_psmi*",
+   "Observability (OA, PMU, capture, logs)"
+  ],
+  [
+   "xe/xe_pm*",
+   "Power & clocks"
+  ],
+  [
+   "xe/xe_guc_pc*",
+   "Power & clocks"
+  ],
+  [
+   "xe/xe_guc_rc*",
+   "Power & clocks"
+  ],
+  [
+   "xe/abi/guc_actions_slpc*",
+   "Power & clocks"
+  ],
+  [
+   "xe/xe_gt_idle*",
+   "Power & clocks"
+  ],
+  [
+   "xe/xe_gt_freq*",
+   "Power & clocks"
+  ],
+  [
+   "xe/xe_gt_throttle*",
+   "Power & clocks"
+  ],
+  [
+   "xe/xe_hwmon*",
+   "Power & clocks"
+  ],
+  [
+   "xe/xe_gt_clock*",
+   "Power & clocks"
+  ],
+  [
+   "xe/xe_vram_freq*",
+   "Power & clocks"
+  ],
+  [
+   "xe/xe_pcode*",
+   "Power & clocks"
+  ],
+  [
+   "xe/regs/xe_pcode*",
+   "Power & clocks"
+  ],
+  [
+   "xe/xe_guc*",
+   "GuC / firmware"
+  ],
+  [
+   "xe/xe_uc*",
+   "GuC / firmware"
+  ],
+  [
+   "xe/xe_wopcm*",
+   "GuC / firmware"
+  ],
+  [
+   "xe/abi/*",
+   "GuC / firmware"
+  ],
+  [
+   "xe/regs/xe_guc*",
+   "GuC / firmware"
+  ],
+  [
+   "xe/xe_late_bind*",
+   "GuC / firmware"
+  ],
+  [
+   "xe/xe_bo*",
+   "Memory: BO / VM / page tables"
+  ],
+  [
+   "xe/xe_vm*",
+   "Memory: BO / VM / page tables"
+  ],
+  [
+   "xe/xe_pt*",
+   "Memory: BO / VM / page tables"
+  ],
+  [
+   "xe/xe_ggtt*",
+   "Memory: BO / VM / page tables"
+  ],
+  [
+   "xe/xe_ttm*",
+   "Memory: BO / VM / page tables"
+  ],
+  [
+   "xe/xe_vram*",
+   "Memory: BO / VM / page tables"
+  ],
+  [
+   "xe/xe_migrate*",
+   "Memory: BO / VM / page tables"
+  ],
+  [
+   "xe/xe_userptr*",
+   "Memory: BO / VM / page tables"
+  ],
+  [
+   "xe/xe_svm*",
+   "Memory: BO / VM / page tables"
+  ],
+  [
+   "xe/xe_dma_buf*",
+   "Memory: BO / VM / page tables"
+  ],
+  [
+   "xe/xe_shrinker*",
+   "Memory: BO / VM / page tables"
+  ],
+  [
+   "xe/xe_sa*",
+   "Memory: BO / VM / page tables"
+  ],
+  [
+   "xe/xe_bb*",
+   "Memory: BO / VM / page tables"
+  ],
+  [
+   "xe/xe_mem_pool*",
+   "Memory: BO / VM / page tables"
+  ],
+  [
+   "xe/xe_res_cursor*",
+   "Memory: BO / VM / page tables"
+  ],
+  [
+   "xe/xe_tlb_inval*",
+   "Memory: BO / VM / page tables"
+  ],
+  [
+   "xe/xe_guc_tlb*",
+   "Memory: BO / VM / page tables"
+  ],
+  [
+   "xe/xe_pagefault*",
+   "Memory: BO / VM / page tables"
+  ],
+  [
+   "xe/xe_page_reclaim*",
+   "Memory: BO / VM / page tables"
+  ],
+  [
+   "xe/xe_range_fence*",
+   "Memory: BO / VM / page tables"
+  ],
+  [
+   "xe/xe_validation*",
+   "Memory: BO / VM / page tables"
+  ],
+  [
+   "xe/xe_map*",
+   "Memory: BO / VM / page tables"
+  ],
+  [
+   "xe/xe_mmio_gem*",
+   "Memory: BO / VM / page tables"
+  ],
+  [
+   "xe/xe_cpu_bind*",
+   "Memory: BO / VM / page tables"
+  ],
+  [
+   "xe/regs/xe_gtt*",
+   "Memory: BO / VM / page tables"
+  ],
+  [
+   "xe/xe_exec*",
+   "Submission & sync"
+  ],
+  [
+   "xe/xe_sched_job*",
+   "Submission & sync"
+  ],
+  [
+   "xe/xe_gpu_scheduler*",
+   "Submission & sync"
+  ],
+  [
+   "xe/xe_dep_*",
+   "Submission & sync"
+  ],
+  [
+   "xe/xe_sync*",
+   "Submission & sync"
+  ],
+  [
+   "xe/xe_hw_fence*",
+   "Submission & sync"
+  ],
+  [
+   "xe/xe_wait_user_fence*",
+   "Submission & sync"
+  ],
+  [
+   "xe/xe_preempt_fence*",
+   "Submission & sync"
+  ],
+  [
+   "xe/xe_hw_engine_group*",
+   "Submission & sync"
+  ],
+  [
+   "xe/xe_ring_ops*",
+   "Submission & sync"
+  ],
+  [
+   "xe/xe_execlist*",
+   "Submission & sync"
+  ],
+  [
+   "xe/xe_gt*",
+   "GT & engines"
+  ],
+  [
+   "xe/xe_hw_engine*",
+   "GT & engines"
+  ],
+  [
+   "xe/xe_lrc*",
+   "GT & engines"
+  ],
+  [
+   "xe/xe_mocs*",
+   "GT & engines"
+  ],
+  [
+   "xe/xe_pat*",
+   "GT & engines"
+  ],
+  [
+   "xe/xe_wa*",
+   "GT & engines"
+  ],
+  [
+   "xe/xe_device_wa*",
+   "GT & engines"
+  ],
+  [
+   "xe/xe_tuning*",
+   "GT & engines"
+  ],
+  [
+   "xe/xe_rtp*",
+   "GT & engines"
+  ],
+  [
+   "xe/xe_reg_*",
+   "GT & engines"
+  ],
+  [
+   "xe/xe_force_wake*",
+   "GT & engines"
+  ],
+  [
+   "xe/xe_step*",
+   "GT & engines"
+  ],
+  [
+   "xe/regs/xe_engine*",
+   "GT & engines"
+  ],
+  [
+   "xe/regs/xe_gt_regs*",
+   "GT & engines"
+  ],
+  [
+   "xe/regs/xe_lrc*",
+   "GT & engines"
+  ],
+  [
+   "xe/instructions/*",
+   "GT & engines"
+  ],
+  [
+   "xe/*",
+   "Device, PCI, IRQ"
+  ],
+  [
+   "display/i9xx_*",
+   "Display: other hardware"
+  ],
+  [
+   "display/g4x_*",
+   "Display: other hardware"
+  ],
+  [
+   "display/vlv_*",
+   "Display: other hardware"
+  ],
+  [
+   "display/chv_*",
+   "Display: other hardware"
+  ],
+  [
+   "display/bxt_*",
+   "Display: other hardware"
+  ],
+  [
+   "display/hsw_*",
+   "Display: other hardware"
+  ],
+  [
+   "display/dvo_*",
+   "Display: other hardware"
+  ],
+  [
+   "display/icl_dsi*",
+   "Display: other hardware"
+  ],
+  [
+   "display/intel_dsi*",
+   "Display: other hardware"
+  ],
+  [
+   "display/intel_dvo*",
+   "Display: other hardware"
+  ],
+  [
+   "display/intel_sdvo*",
+   "Display: other hardware"
+  ],
+  [
+   "display/intel_tv*",
+   "Display: other hardware"
+  ],
+  [
+   "display/intel_crt*",
+   "Display: other hardware"
+  ],
+  [
+   "display/intel_lvds*",
+   "Display: other hardware"
+  ],
+  [
+   "display/intel_overlay*",
+   "Display: other hardware"
+  ],
+  [
+   "display/intel_sprite*",
+   "Display: other hardware"
+  ],
+  [
+   "display/intel_fdi*",
+   "Display: other hardware"
+  ],
+  [
+   "display/intel_pch*",
+   "Display: other hardware"
+  ],
+  [
+   "display/intel_sbi*",
+   "Display: other hardware"
+  ],
+  [
+   "display/intel_lpe_audio*",
+   "Display: other hardware"
+  ],
+  [
+   "display/intel_load_detect*",
+   "Display: other hardware"
+  ],
+  [
+   "display/intel_lspcon*",
+   "Display: other hardware"
+  ],
+  [
+   "display/intel_dpio_phy*",
+   "Display: other hardware"
+  ],
+  [
+   "display/intel_combo_phy*",
+   "Display: other hardware"
+  ],
+  [
+   "display/intel_dkl_phy*",
+   "Display: other hardware"
+  ],
+  [
+   "display/intel_mg_phy*",
+   "Display: other hardware"
+  ],
+  [
+   "display/intel_snps_phy*",
+   "Display: other hardware"
+  ],
+  [
+   "display/intel_lt_phy*",
+   "Display: other hardware"
+  ],
+  [
+   "display/intel_panel*",
+   "Display: other hardware"
+  ],
+  [
+   "display/intel_backlight*",
+   "Display: other hardware"
+  ],
+  [
+   "display/intel_dp_aux_backlight*",
+   "Display: other hardware"
+  ],
+  [
+   "display/intel_pps*",
+   "Display: other hardware"
+  ],
+  [
+   "display/intel_psr*",
+   "Display: other hardware"
+  ],
+  [
+   "display/intel_alpm*",
+   "Display: other hardware"
+  ],
+  [
+   "display/intel_drrs*",
+   "Display: other hardware"
+  ],
+  [
+   "display/intel_opregion*",
+   "Display: other hardware"
+  ],
+  [
+   "display/intel_acpi*",
+   "Display: other hardware"
+  ],
+  [
+   "display/intel_dram*",
+   "Display: other hardware"
+  ],
+  [
+   "display/intel_mchbar*",
+   "Display: other hardware"
+  ],
+  [
+   "display/intel_hti*",
+   "Display: other hardware"
+  ],
+  [
+   "display/intel_cmtg*",
+   "Display: other hardware"
+  ],
+  [
+   "display/intel_casf*",
+   "Display: other hardware"
+  ],
+  [
+   "display/intel_flipq*",
+   "Display: other hardware"
+  ],
+  [
+   "display/intel_tc*",
+   "Display: other hardware"
+  ],
+  [
+   "display/intel_pfit*",
+   "Display: other hardware"
+  ],
+  [
+   "display/intel_dp_tunnel*",
+   "Display: other hardware"
+  ],
+  [
+   "display/intel_display_clock_gating*",
+   "Display: other hardware"
+  ],
+  [
+   "display/intel_display_reset*",
+   "Display: other hardware"
+  ],
+  [
+   "display/skl_universal_plane*",
+   "Display: planes, cursor, colour"
+  ],
+  [
+   "display/intel_cursor*",
+   "Display: planes, cursor, colour"
+  ],
+  [
+   "display/intel_color*",
+   "Display: planes, cursor, colour"
+  ],
+  [
+   "display/skl_scaler*",
+   "Display: planes, cursor, colour"
+  ],
+  [
+   "display/intel_fb*",
+   "Display: planes, cursor, colour"
+  ],
+  [
+   "display/intel_plane*",
+   "Display: planes, cursor, colour"
+  ],
+  [
+   "display/intel_dpt*",
+   "Display: planes, cursor, colour"
+  ],
+  [
+   "display/intel_initial_plane*",
+   "Display: planes, cursor, colour"
+  ],
+  [
+   "display/intel_dsb*",
+   "Display: planes, cursor, colour"
+  ],
+  [
+   "display/intel_frontbuffer*",
+   "Display: planes, cursor, colour"
+  ],
+  [
+   "display/intel_dp*",
+   "Display: DP, link, PHY, outputs"
+  ],
+  [
+   "display/intel_ddi*",
+   "Display: DP, link, PHY, outputs"
+  ],
+  [
+   "display/intel_cx0*",
+   "Display: DP, link, PHY, outputs"
+  ],
+  [
+   "display/intel_dpll*",
+   "Display: DP, link, PHY, outputs"
+  ],
+  [
+   "display/intel_snps_hdmi*",
+   "Display: DP, link, PHY, outputs"
+  ],
+  [
+   "display/intel_link_bw*",
+   "Display: DP, link, PHY, outputs"
+  ],
+  [
+   "display/intel_vdsc*",
+   "Display: DP, link, PHY, outputs"
+  ],
+  [
+   "display/intel_qp_tables*",
+   "Display: DP, link, PHY, outputs"
+  ],
+  [
+   "display/intel_hdcp*",
+   "Display: DP, link, PHY, outputs"
+  ],
+  [
+   "display/intel_hdmi*",
+   "Display: DP, link, PHY, outputs"
+  ],
+  [
+   "display/intel_dip*",
+   "Display: DP, link, PHY, outputs"
+  ],
+  [
+   "display/intel_gmbus*",
+   "Display: DP, link, PHY, outputs"
+  ],
+  [
+   "display/intel_audio*",
+   "Display: DP, link, PHY, outputs"
+  ],
+  [
+   "display/intel_encoder*",
+   "Display: DP, link, PHY, outputs"
+  ],
+  [
+   "display/intel_connector*",
+   "Display: DP, link, PHY, outputs"
+  ],
+  [
+   "display/intel_display_power*",
+   "Display: power, clocks, bandwidth"
+  ],
+  [
+   "display/intel_cdclk*",
+   "Display: power, clocks, bandwidth"
+  ],
+  [
+   "display/intel_bw*",
+   "Display: power, clocks, bandwidth"
+  ],
+  [
+   "display/intel_dbuf*",
+   "Display: power, clocks, bandwidth"
+  ],
+  [
+   "display/skl_watermark*",
+   "Display: power, clocks, bandwidth"
+  ],
+  [
+   "display/skl_prefill*",
+   "Display: power, clocks, bandwidth"
+  ],
+  [
+   "display/intel_wm*",
+   "Display: power, clocks, bandwidth"
+  ],
+  [
+   "display/intel_pmdemand*",
+   "Display: power, clocks, bandwidth"
+  ],
+  [
+   "display/intel_dmc*",
+   "Display: power, clocks, bandwidth"
+  ],
+  [
+   "display/intel_display_wa*",
+   "Display: power, clocks, bandwidth"
+  ],
+  [
+   "display/intel_display_rps*",
+   "Display: power, clocks, bandwidth"
+  ],
+  [
+   "display/intel_display_irq*",
+   "Display: IRQ, hotplug, vblank"
+  ],
+  [
+   "display/intel_hotplug*",
+   "Display: IRQ, hotplug, vblank"
+  ],
+  [
+   "display/intel_vblank*",
+   "Display: IRQ, hotplug, vblank"
+  ],
+  [
+   "display/intel_fifo_underrun*",
+   "Display: IRQ, hotplug, vblank"
+  ],
+  [
+   "display/intel_pipe_crc*",
+   "Display: IRQ, hotplug, vblank"
+  ],
+  [
+   "display/intel_bios*",
+   "Display: device & firmware tables"
+  ],
+  [
+   "display/intel_vbt*",
+   "Display: device & firmware tables"
+  ],
+  [
+   "display/intel_rom*",
+   "Display: device & firmware tables"
+  ],
+  [
+   "display/intel_oprom*",
+   "Display: device & firmware tables"
+  ],
+  [
+   "display/intel_display_device*",
+   "Display: device & firmware tables"
+  ],
+  [
+   "display/intel_vga*",
+   "Display: device & firmware tables"
+  ],
+  [
+   "display/intel_quirks*",
+   "Display: device & firmware tables"
+  ],
+  [
+   "display/intel_display.*",
+   "Display: pipe, transcoder, timing, VRR"
+  ],
+  [
+   "display/intel_display_regs*",
+   "Display: pipe, transcoder, timing, VRR"
+  ],
+  [
+   "display/intel_crtc*",
+   "Display: pipe, transcoder, timing, VRR"
+  ],
+  [
+   "display/intel_vrr*",
+   "Display: pipe, transcoder, timing, VRR"
+  ],
+  [
+   "display/intel_modeset*",
+   "Display: pipe, transcoder, timing, VRR"
+  ],
+  [
+   "display/*",
+   "Display: Linux glue (atomic, debugfs, types)"
+  ],
+  [
+   "mesa/intel/vulkan/anv_nvmtl*",
+   "macOS additions (ours)"
+  ],
+  [
+   "mesa/vulkan/wsi/wsi_common_metal*",
+   "macOS additions (ours)"
+  ],
+  [
+   "mesa/intel/vulkan/xe/*",
+   "ANV kernel backends"
+  ],
+  [
+   "mesa/intel/vulkan/i915/*",
+   "ANV kernel backends"
+  ],
+  [
+   "mesa/intel/vulkan/anv_kmd_backend*",
+   "ANV kernel backends"
+  ],
+  [
+   "mesa/intel/vulkan/anv_gem*",
+   "ANV kernel backends"
+  ],
+  [
+   "mesa/intel/vulkan/*video*",
+   "ANV video (decode/encode)"
+  ],
+  [
+   "mesa/intel/vulkan/*huc*",
+   "ANV video (decode/encode)"
+  ],
+  [
+   "mesa/intel/vulkan/*vdenc*",
+   "ANV video (decode/encode)"
+  ],
+  [
+   "mesa/intel/vulkan/*brc*",
+   "ANV video (decode/encode)"
+  ],
+  [
+   "mesa/intel/vulkan/av1_*",
+   "ANV video (decode/encode)"
+  ],
+  [
+   "mesa/intel/vulkan/bvh/*",
+   "ANV ray tracing / BVH"
+  ],
+  [
+   "mesa/intel/vulkan/*acceleration*",
+   "ANV ray tracing / BVH"
+  ],
+  [
+   "mesa/intel/vulkan/genX_*",
+   "ANV genX (commands & state)"
+  ],
+  [
+   "mesa/intel/vulkan/*",
+   "ANV core"
+  ],
+  [
+   "mesa/intel/isl/*",
+   "ISL (surface layout)"
+  ],
+  [
+   "mesa/intel/blorp/*",
+   "BLORP (blits, clears)"
+  ],
+  [
+   "mesa/intel/common/*",
+   "intel/common"
+  ],
+  [
+   "mesa/vulkan/wsi/*",
+   "Vulkan WSI"
+  ],
+  [
+   "ours/*",
+   "macOS additions (ours)"
+  ]
+ ],
+ "rules": [
+  {
+   "match": [
+    "xe/tests/*",
+    "xe/display/tests/*"
+   ],
+   "status": "not_applicable",
+   "na": "linux",
+   "reason": "KUnit/live kernel tests"
+  },
+  {
+   "match": [
+    "xe/*debugfs*",
+    "display/*debugfs*"
+   ],
+   "status": "not_applicable",
+   "na": "linux",
+   "reason": "debugfs"
+  },
+  {
+   "match": [
+    "xe/*sysfs*",
+    "xe/xe_gt_freq*",
+    "xe/xe_gt_throttle*",
+    "xe/xe_vram_freq*",
+    "xe/xe_gt_ccs_mode*"
+   ],
+   "status": "not_applicable",
+   "na": "linux",
+   "reason": "sysfs attributes"
+  },
+  {
+   "match": [
+    "xe/xe_trace*",
+    "display/intel_display_trace*"
+   ],
+   "status": "not_applicable",
+   "na": "linux",
+   "reason": "tracepoints"
+  },
+  {
+   "match": [
+    "xe/xe_module*",
+    "xe/xe_configfs*",
+    "xe/xe_defaults.h",
+    "display/intel_display_params*"
+   ],
+   "status": "not_applicable",
+   "na": "linux",
+   "reason": "module parameters / configfs"
+  },
+  {
+   "match": [
+    "xe/*printk*",
+    "xe/xe_macros.h",
+    "xe/xe_assert.h",
+    "xe/xe_args.h",
+    "xe/xe_any*",
+    "xe/xe_guard.h",
+    "xe/xe_sleep.h",
+    "xe/xe_drv.h",
+    "xe/xe_validation*",
+    "display/intel_display_utils*",
+    "display/intel_display_conversion*",
+    "display/intel_display_jiffies.h",
+    "display/intel_fixed.h"
+   ],
+   "status": "not_applicable",
+   "na": "linux",
+   "reason": "Linux kernel helper macros"
+  },
+  {
+   "match": [
+    "xe/xe_bo_doc.h",
+    "xe/xe_vm_doc.h",
+    "xe/xe_migrate_doc.h"
+   ],
+   "status": "not_applicable",
+   "na": "linux",
+   "reason": "documentation-only header"
+  },
+  {
+   "match": [
+    "xe/xe_gen_wa_oob*"
+   ],
+   "status": "not_applicable",
+   "na": "linux",
+   "reason": "build-time generator"
+  },
+  {
+   "match": [
+    "xe/xe_drm_client*"
+   ],
+   "status": "not_applicable",
+   "na": "linux",
+   "reason": "DRM fdinfo"
+  },
+  {
+   "match": [
+    "xe/xe_pmu*"
+   ],
+   "status": "not_applicable",
+   "na": "linux",
+   "reason": "perf PMU"
+  },
+  {
+   "match": [
+    "xe/xe_hwmon*"
+   ],
+   "status": "not_applicable",
+   "na": "linux",
+   "reason": "hwmon"
+  },
+  {
+   "match": [
+    "xe/xe_vsec*",
+    "xe/regs/xe_pmt.h",
+    "xe/xe_soc_remapper*",
+    "xe/regs/xe_soc_remapper*"
+   ],
+   "status": "not_applicable",
+   "na": "linux",
+   "reason": "Intel PMT/vsec telemetry driver; SoC remapper for telemetry (BMG has it, xe_pci.c bmg_desc)"
+  },
+  {
+   "match": [
+    "xe/xe_psmi*"
+   ],
+   "status": "not_applicable",
+   "na": "linux",
+   "reason": "debugfs capture"
+  },
+  {
+   "match": [
+    "xe/xe_devcoredump*"
+   ],
+   "status": "not_applicable",
+   "na": "linux",
+   "reason": "devcoredump"
+  },
+  {
+   "match": [
+    "xe/xe_svm*"
+   ],
+   "status": "not_applicable",
+   "na": "linux",
+   "reason": "Linux HMM shared virtual memory"
+  },
+  {
+   "match": [
+    "xe/xe_shrinker*"
+   ],
+   "status": "not_applicable",
+   "na": "linux",
+   "reason": "Linux memory shrinker"
+  },
+  {
+   "match": [
+    "xe/xe_execlist*"
+   ],
+   "status": "not_applicable",
+   "na": "linux",
+   "reason": "execlist backend (Linux force_execlist debug option)"
+  },
+  {
+   "match": [
+    "xe/*sriov*",
+    "xe/xe_lmtt*",
+    "xe/xe_memirq*",
+    "xe/xe_guc_relay*",
+    "xe/abi/guc_relay*",
+    "xe/abi/guc_actions_sriov*",
+    "xe/xe_mert*",
+    "xe/regs/xe_mert*",
+    "xe/xe_guc_db_mgr*",
+    "xe/xe_guc_klv_thresholds*"
+   ],
+   "status": "not_applicable",
+   "na": "linux",
+   "reason": "SR-IOV virtualisation"
+  },
+  {
+   "match": [
+    "xe/xe_pxp*",
+    "xe/regs/xe_pxp*",
+    "xe/abi/gsc_pxp*"
+   ],
+   "status": "not_applicable",
+   "na": "linux",
+   "reason": "PXP protected content"
+  },
+  {
+   "match": [
+    "xe/xe_gsc*",
+    "xe/xe_heci_gsc*",
+    "xe/abi/gsc_*",
+    "xe/regs/xe_gsc*",
+    "xe/instructions/xe_gsc*",
+    "xe/display/xe_hdcp_gsc*"
+   ],
+   "status": "not_applicable",
+   "na": "hw",
+   "future": "Intel iGPUs with a GSC: MTL, LNL, PTL, NVL",
+   "reason": "GSC microcontroller; xe_uc_fw.c XE_GSC_FIRMWARE_DEFS lists NVL-S, PTL, LNL, MTL (BMG has none)"
+  },
+  {
+   "match": [
+    "xe/xe_sysctrl*",
+    "xe/abi/xe_sysctrl*",
+    "xe/regs/xe_sysctrl*"
+   ],
+   "status": "not_applicable",
+   "na": "hw",
+   "future": "Crescent Island (CRI)",
+   "reason": "system controller: xe_pci.c sets has_sysctrl only in cri_desc"
+  },
+  {
+   "match": [
+    "display/intel_tc*",
+    "display/intel_dp_tunnel*"
+   ],
+   "status": "not_applicable",
+   "na": "hw",
+   "future": "Intel iGPUs TGL…PTL (Type-C / Thunderbolt)",
+   "reason": "Type-C/TBT subsystem; intel_phy_is_tc() is false on dGPU (intel_display.c)"
+  },
+  {
+   "match": [
+    "display/icl_dsi*",
+    "display/intel_dsi.*",
+    "display/intel_dsi_dcs*",
+    "display/intel_dsi_vbt*",
+    "display/intel_panel*",
+    "display/intel_backlight*",
+    "display/intel_dp_aux_backlight*",
+    "display/intel_pps*",
+    "display/intel_psr*",
+    "display/intel_alpm*",
+    "display/intel_drrs*",
+    "display/intel_opregion*",
+    "display/intel_acpi*",
+    "display/intel_pfit*"
+   ],
+   "status": "not_applicable",
+   "na": "hw",
+   "future": "Intel iGPU laptops TGL…PTL (eDP / DSI panels)",
+   "reason": "internal-panel features (eDP/DSI, PSR, panel power, backlight, OpRegion); the B580 has no internal panel"
+  },
+  {
+   "match": [
+    "display/intel_dram*",
+    "display/intel_mchbar*"
+   ],
+   "status": "not_applicable",
+   "na": "hw",
+   "future": "Intel iGPUs TGL…PTL (system-memory bandwidth)",
+   "reason": "DRAM/MCHBAR bandwidth info used by integrated displays"
+  },
+  {
+   "match": [
+    "display/intel_combo_phy*",
+    "display/intel_dkl_phy*"
+   ],
+   "status": "not_applicable",
+   "na": "hw",
+   "future": "Gen12 TGL / RKL / ADL / DG1 (combo and Dekel PHYs)",
+   "reason": "PHY selection in intel_ddi.c: combo PHY for DISPLAY_VER >= 12 before 14; Dekel for TGL/ADL Type-C"
+  },
+  {
+   "match": [
+    "display/intel_snps_phy*"
+   ],
+   "status": "not_applicable",
+   "na": "hw",
+   "future": "DG2 / Alchemist (SNPS PHY)",
+   "reason": "intel_ddi.c: snps signal levels when platform.dg2"
+  },
+  {
+   "match": [
+    "display/intel_lt_phy*"
+   ],
+   "status": "not_applicable",
+   "na": "hw",
+   "future": "NVL (LT PHY)",
+   "reason": "intel_display_device.h: HAS_LT_PHY = platform.novalake"
+  },
+  {
+   "match": [
+    "display/intel_casf*"
+   ],
+   "status": "not_applicable",
+   "na": "hw",
+   "future": "display 20+ (LNL, PTL)",
+   "reason": "intel_display_device.h: HAS_CASF = DISPLAY_VER >= 20 (BMG is 14)"
+  },
+  {
+   "match": [
+    "display/intel_flipq*"
+   ],
+   "status": "not_applicable",
+   "na": "hw",
+   "future": "display 30+ (PTL)",
+   "reason": "intel_flipq.c: DISPLAY_VER >= 30 checks (BMG is 14)"
+  },
+  {
+   "match": [
+    "display/i9xx_*",
+    "display/g4x_*",
+    "display/vlv_*",
+    "display/chv_*",
+    "display/bxt_*",
+    "display/hsw_*",
+    "display/dvo_*",
+    "display/intel_dvo*",
+    "display/intel_sdvo*",
+    "display/intel_tv*",
+    "display/intel_crt*",
+    "display/intel_lvds*",
+    "display/intel_overlay*",
+    "display/intel_sprite.*",
+    "display/intel_sprite_regs.h",
+    "display/intel_fdi*",
+    "display/intel_pch_display*",
+    "display/intel_pch_refclk*",
+    "display/intel_sbi*",
+    "display/intel_lpe_audio*",
+    "display/intel_load_detect*",
+    "display/intel_lspcon*",
+    "display/intel_dpio_phy*",
+    "display/intel_mg_phy*",
+    "display/intel_display_clock_gating*",
+    "display/intel_display_reset*",
+    "display/intel_wm_types.h"
+   ],
+   "status": "not_applicable",
+   "na": "old",
+   "reason": "platforms before Gen12 (i915 only, outside the xe driver; our strategy covers xe-supported families)"
+  },
+  {
+   "match": [
+    "xe/xe_nvm*"
+   ],
+   "status": "not_applicable",
+   "na": "linux",
+   "reason": "flash access via MTD"
+  },
+  {
+   "match": [
+    "xe/xe_i2c*",
+    "xe/regs/xe_i2c*",
+    "xe/xe_amc*"
+   ],
+   "status": "not_applicable",
+   "na": "linux",
+   "reason": "Linux I2C/MCU drivers"
+  },
+  {
+   "match": [
+    "xe/xe_survivability_mode*"
+   ],
+   "status": "not_applicable",
+   "na": "linux",
+   "reason": "survivability / firmware-update sysfs"
+  },
+  {
+   "match": [
+    "xe/display/xe_display_rpm*",
+    "xe/display/xe_frontbuffer*",
+    "xe/display/xe_panic*",
+    "xe/compat-i915-headers/*"
+   ],
+   "status": "not_applicable",
+   "na": "linux",
+   "reason": "xe <-> i915-display glue (runtime PM, frontbuffer, panic, compat)"
+  },
+  {
+   "match": [
+    "display/intel_atomic*",
+    "display/intel_global_state*",
+    "display/intel_modeset_lock*",
+    "display/intel_modeset_verify*",
+    "display/intel_display_types.h",
+    "display/intel_display_core.h",
+    "display/intel_display_driver*",
+    "display/intel_display_rpm*",
+    "display/intel_display_snapshot*",
+    "display/intel_fbdev*",
+    "display/intel_frontbuffer*",
+    "display/intel_bo*",
+    "display/intel_parent*",
+    "display/intel_gvt*",
+    "display/intel_pipe_crc*",
+    "display/intel_crtc_state_dump*",
+    "display/intel_dp_test*",
+    "display/intel_colorop*",
+    "display/intel_color_pipeline*",
+    "display/intel_sprite_uapi*",
+    "display/intel_connector*",
+    "display/intel_encoder*",
+    "display/intel_vga*",
+    "display/intel_quirks*",
+    "display/intel_display_rps*"
+   ],
+   "status": "not_applicable",
+   "na": "linux",
+   "reason": "DRM/KMS framework glue (atomic state, fbdev, CRC, uapi objects, VGA arbiter, quirks)"
+  },
+  {
+   "match": [
+    "xe/xe_wait_user_fence*"
+   ],
+   "status": "missing",
+   "reason": "user fences are refused",
+   "proof": {
+    "refuse": [
+     "DRM_XE_SYNC_TYPE_USER_FENCE\\) return EINVAL"
+    ],
+    "absent": [
+     "DRM_IOCTL_XE_WAIT_USER_FENCE"
+    ]
+   }
+  },
+  {
+   "match": [
+    "xe/xe_preempt_fence*",
+    "xe/xe_pagefault*",
+    "xe/xe_guc_pagefault*"
+   ],
+   "status": "missing",
+   "reason": "LR and fault-mode VMs are refused",
+   "proof": {
+    "refuse": [
+     "DRM_XE_VM_CREATE_FLAG_LR_MODE \\| DRM_XE_VM_CREATE_FLAG_FAULT_MODE\\)\\) return EINVAL"
+    ]
+   }
+  },
+  {
+   "match": [
+    "xe/xe_vm_madvise*"
+   ],
+   "status": "missing",
+   "reason": "no MADVISE ioctl",
+   "proof": {
+    "absent": [
+     "DRM_IOCTL_XE_MADVISE"
+    ]
+   }
+  },
+  {
+   "match": [
+    "xe/xe_oa*",
+    "xe/xe_observation*",
+    "xe/xe_eu_stall*",
+    "xe/regs/xe_oa*",
+    "xe/regs/xe_eu_stall*"
+   ],
+   "status": "missing",
+   "reason": "no observation (OA / EU stall) ioctl",
+   "proof": {
+    "absent": [
+     "DRM_IOCTL_XE_OBSERVATION"
+    ]
+   }
+  },
+  {
+   "match": [
+    "xe/xe_guc_log*",
+    "xe/abi/guc_log*"
+   ],
+   "status": "missing",
+   "reason": "GuC log disabled in the GuC parameters",
+   "proof": {
+    "refuse": [
+     "GUC_CTL_DEBUG\\] = GUC_LOG_DISABLED"
+    ]
+   }
+  },
+  {
+   "match": [
+    "display/intel_dmc*"
+   ],
+   "status": "missing",
+   "reason": "no DMC register by name or offset",
+   "proof": {
+    "absent": [
+     "DMC_PROGRAM",
+     "DMC_SSP_BASE",
+     "DMC_HTP_SKL",
+     "0x8F074",
+     "0x8F004"
+    ]
+   }
+  },
+  {
+   "match": [
+    "display/intel_fbc*"
+   ],
+   "status": "missing",
+   "reason": "no FBC control register by name or offset",
+   "proof": {
+    "absent": [
+     "ILK_DPFC_CONTROL",
+     "0x43208"
+    ]
+   }
+  },
+  {
+   "match": [
+    "display/intel_vdsc*",
+    "display/intel_qp_tables*"
+   ],
+   "status": "missing",
+   "reason": "no DSC register by name or offset",
+   "proof": {
+    "absent": [
+     "DSCA_PPS",
+     "DSCA_PICTURE_PARAMETER_SET_0",
+     "ICL_DSC0_PICTURE_PARAMETER_SET_0",
+     "0x6B200"
+    ]
+   }
+  },
+  {
+   "match": [
+    "display/intel_audio*"
+   ],
+   "status": "missing",
+   "reason": "no audio register by name or offset",
+   "proof": {
+    "absent": [
+     "AUD_CONFIG_BE",
+     "0x65ef0",
+     "0x65EF0"
+    ]
+   }
+  }
+ ]
+}

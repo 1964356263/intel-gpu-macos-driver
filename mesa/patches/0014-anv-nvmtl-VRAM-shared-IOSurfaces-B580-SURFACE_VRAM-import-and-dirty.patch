@@ -1,0 +1,228 @@
+diff -ruN a/src/intel/vulkan/anv_allocator.c b/src/intel/vulkan/anv_allocator.c
+--- a/src/intel/vulkan/anv_allocator.c	2026-10-29 15:09:29
++++ b/src/intel/vulkan/anv_allocator.c	2026-10-29 15:09:29
+@@ -2156,6 +2156,60 @@
+    return VK_SUCCESS;
+ }
+ 
++/* nvmtl (gpuperf): anv_device_import_bo for a GEM handle the kernel already gave this client (B580.kext's
++ * DRM_IOCTL_B580_SURFACE_VRAM: an IOSurface's VRAM backing, shared with other processes) and its size. The handle is
++ * this import's: a second import of the same surface gets its own handle (and its own anv_bo); on failure it is closed. */
++VkResult
++anv_device_import_bo_handle(struct anv_device *device, uint32_t gem_handle, uint64_t size,
++                            enum anv_bo_alloc_flags alloc_flags, uint64_t client_address,
++                            struct anv_bo **bo_out)
++{
++   assert(alloc_flags & ANV_BO_ALLOC_EXTERNAL);
++   struct anv_bo_cache *cache = &device->bo_cache;
++   simple_mtx_lock(&cache->mutex);
++   struct anv_bo *bo = anv_device_lookup_bo(device, gem_handle);
++   struct anv_bo new_bo = {
++      .name = "nvmtl-surface-vram",
++      .gem_handle = gem_handle,
++      .refcount = 1,
++      .offset = -1,
++      .alloc_flags = alloc_flags | ANV_BO_ALLOC_IMPORTED,
++      .size = size,
++      .actual_size = size,
++   };
++   if (!bo || bo->refcount > 0 || !size) {
++      device->kmd_backend->gem_close(device, &new_bo);
++      simple_mtx_unlock(&cache->mutex);
++      return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
++   }
++   uint32_t bo_flags;
++   VkResult result = anv_gem_import_bo_alloc_flags_to_bo_flags(device, bo, new_bo.alloc_flags, &bo_flags);
++   if (result != VK_SUCCESS) {
++      device->kmd_backend->gem_close(device, &new_bo);
++      simple_mtx_unlock(&cache->mutex);
++      return result;
++   }
++   uint32_t alignment = anv_bo_vma_calc_alignment_requirement(device, new_bo.alloc_flags, size);
++   result = anv_bo_vma_alloc_or_close(device, &new_bo, new_bo.alloc_flags, client_address, alignment);
++   if (result != VK_SUCCESS) {
++      simple_mtx_unlock(&cache->mutex);
++      return result;
++   }
++   result = device->kmd_backend->vm_bind_bo(device, &new_bo);
++   if (result != VK_SUCCESS) {
++      anv_bo_vma_free(device, &new_bo);
++      device->kmd_backend->gem_close(device, &new_bo);
++      simple_mtx_unlock(&cache->mutex);
++      return result;
++   }
++   *bo = new_bo;
++   ANV_RMV(bo_allocate, device, bo);
++   bo->flags = bo_flags;
++   simple_mtx_unlock(&cache->mutex);
++   *bo_out = bo;
++   return VK_SUCCESS;
++}
++
+ VkResult
+ anv_device_export_bo(struct anv_device *device,
+                      struct anv_bo *bo, int *fd_out)
+diff -ruN a/src/intel/vulkan/anv_device.c b/src/intel/vulkan/anv_device.c
+--- a/src/intel/vulkan/anv_device.c	2026-10-29 15:09:29
++++ b/src/intel/vulkan/anv_device.c	2026-10-29 15:09:29
+@@ -1930,6 +1930,14 @@
+    /* The Vulkan spec permits handleType to be 0, in which case the struct is
+     * ignored.
+     */
++   if (fd_info && fd_info->handleType &&
++       anv_nvmtl_surface_vram_staged(device, aligned_alloc_size, alloc_flags, client_address, &mem->bo, &result)) {
++      /* nvmtl: an IOSurface's shared VRAM (nvmtl_anv_surface_vram_stage_v1); the fd is a placeholder */
++      if (result != VK_SUCCESS)
++         goto fail;
++      close(fd_info->fd);
++      goto success;
++   }
+    if (fd_info && fd_info->handleType) {
+       /* At the moment, we support only the below handle types. */
+       assert(fd_info->handleType ==
+diff -ruN a/src/intel/vulkan/anv_nvmtl_surface.c b/src/intel/vulkan/anv_nvmtl_surface.c
+--- a/src/intel/vulkan/anv_nvmtl_surface.c	2026-10-29 15:09:29
++++ b/src/intel/vulkan/anv_nvmtl_surface.c	2026-10-29 15:09:29
+@@ -17,6 +17,47 @@
+ #include "drm-uapi/drm.h"
+ #include "../../../../b580/uapi/b580_drm.h"
+ 
++#ifndef DRM_IOCTL_B580_SURFACE_VRAM   /* B580.kext gpuperf phase 1 (b580-surfvram uapi/b580_drm.h); older headers lack it */
++#define B580_CAP_SURFACE_VRAM 0xb5800002ull
++#define B580_SURFACE_VRAM_CREATE (1u << 0)
++#define B580_SURFACE_DIRTY_TRYLOCK (1u << 0)
++struct drm_b580_surface_vram {
++   __u32 surface_id;
++   __u32 plane;
++   __u64 size;
++   __u32 flags;
++   __u32 handle;
++   __u64 size_out;
++   __u32 gen;
++   __u32 pad;
++};
++struct drm_b580_surface_dirty {
++   __u32 surface_id;
++   __u32 plane;
++   __u32 flags;
++   __u32 pad;
++};
++#define DRM_B580_SURFACE_VRAM 0x53
++#define DRM_B580_SURFACE_DIRTY 0x54
++#define DRM_IOCTL_B580_SURFACE_VRAM DRM_IOWR(DRM_COMMAND_BASE + DRM_B580_SURFACE_VRAM, struct drm_b580_surface_vram)
++#define DRM_IOCTL_B580_SURFACE_DIRTY DRM_IOW(DRM_COMMAND_BASE + DRM_B580_SURFACE_DIRTY, struct drm_b580_surface_dirty)
++#endif
++
++/* VRAM-shared IOSurfaces (gpuperf phase 2). The plugin stages a request, then calls vkAllocateMemory with a
++ * VkImportMemoryFdInfoKHR (OPAQUE_FD, any placeholder fd it owns, consumed on success) in the same thread: that import
++ * becomes the surface's VRAM backing (DRM_IOCTL_B580_SURFACE_VRAM), the way NVK's nvmtl_nvk_stage_import works. */
++struct nvmtl_anv_surface_vram_req {
++   uint32_t version;     /* 1 */
++   uint32_t surface_id, plane, flags;   /* flags: B580_SURFACE_VRAM_CREATE */
++   uint64_t size;        /* bytes the caller needs */
++   uint64_t size_out;    /* out: the backing's bytes */
++   uint32_t gen;         /* out: its generation */
++   int32_t err;          /* out: errno of the kernel call (0: imported) */
++};
++PUBLIC VkResult nvmtl_anv_surface_vram_cap_v1(VkDevice _device, uint32_t *level);
++PUBLIC VkResult nvmtl_anv_surface_vram_stage_v1(VkDevice _device, struct nvmtl_anv_surface_vram_req *req);
++PUBLIC VkResult nvmtl_anv_surface_dirty_v1(VkDevice _device, uint32_t surface_id, uint32_t plane, uint32_t flags);
++
+ PUBLIC VkResult nvmtl_anv_surface_cap_v1(VkDevice _device, uint32_t *supported);
+ PUBLIC VkResult nvmtl_anv_surface_attach_v1(VkDevice _device, VkFence fence, VkSemaphore sem, uint64_t value,
+                                             uint32_t surface_id, uint32_t flags);
+@@ -125,4 +166,76 @@
+    ANV_FROM_HANDLE(anv_device, device, _device);
+    struct drm_b580_surface_fence_wait w = { .surface_id = surface_id, .flags = flags, .timeout_ns = timeout_abs_ns };
+    return nvmtl_ioctl(device->fd, DRM_IOCTL_B580_SURFACE_FENCE_WAIT, &w) ? nvmtl_errno_result(errno) : VK_SUCCESS;
++}
++
++/* *level = debug.b580.surfvram as the kernel reports it (B580_CAP_SURFACE_VRAM): 0 off or absent, 1 apps, 2 apps and
++ * WindowServer. */
++PUBLIC VkResult
++nvmtl_anv_surface_vram_cap_v1(VkDevice _device, uint32_t *level)
++{
++   ANV_FROM_HANDLE(anv_device, device, _device);
++   struct drm_get_cap cap = { .capability = B580_CAP_SURFACE_VRAM };
++   *level = 0;
++   if (nvmtl_ioctl(device->fd, DRM_IOCTL_GET_CAP, &cap) == 0)
++      *level = (uint32_t)cap.value;
++   return VK_SUCCESS;
++}
++
++static __thread struct nvmtl_anv_surface_vram_req *nvmtl_staged_vram;
++
++/* Stage (req) or clear (NULL) the request the next fd import on this thread turns into. */
++PUBLIC VkResult
++nvmtl_anv_surface_vram_stage_v1(VkDevice _device, struct nvmtl_anv_surface_vram_req *req)
++{
++   (void)_device;
++   if (req && req->version != 1)
++      return VK_ERROR_FEATURE_NOT_PRESENT;
++   nvmtl_staged_vram = req;
++   return VK_SUCCESS;
++}
++
++bool
++anv_nvmtl_surface_vram_staged(struct anv_device *device, uint64_t need, enum anv_bo_alloc_flags alloc_flags,
++                              uint64_t client_address, struct anv_bo **bo, VkResult *result)
++{
++   struct nvmtl_anv_surface_vram_req *req = nvmtl_staged_vram;
++   if (!req)
++      return false;
++   nvmtl_staged_vram = NULL;   /* one import per stage */
++   struct drm_b580_surface_vram v = {
++      .surface_id = req->surface_id, .plane = req->plane,
++      .size = req->size > need ? req->size : need, .flags = req->flags & B580_SURFACE_VRAM_CREATE,
++   };
++   if (nvmtl_ioctl(device->fd, DRM_IOCTL_B580_SURFACE_VRAM, &v)) {
++      req->err = errno;
++      *result = vk_errorf(device, VK_ERROR_INVALID_EXTERNAL_HANDLE, "surface %u VRAM: errno %d", req->surface_id, req->err);
++      return true;
++   }
++   req->err = 0;
++   req->size_out = v.size_out;
++   req->gen = v.gen;
++   if (v.size_out < need) {
++      struct anv_bo tmp = { .gem_handle = v.handle };
++      device->kmd_backend->gem_close(device, &tmp);
++      req->err = ENOSPC;
++      *result = vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
++      return true;
++   }
++   *result = anv_device_import_bo_handle(device, v.handle, v.size_out, alloc_flags | ANV_BO_ALLOC_EXTERNAL,
++                                         client_address, bo);
++   if (*result != VK_SUCCESS)
++      req->err = EIO;
++   return true;
++}
++
++/* The GPU copy of surface `surface_id` is newer than its pages (a job that wrote it was submitted and its fence
++ * attached): a CPU lock pages it off first. flags: B580_SURFACE_DIRTY_TRYLOCK. */
++PUBLIC VkResult
++nvmtl_anv_surface_dirty_v1(VkDevice _device, uint32_t surface_id, uint32_t plane, uint32_t flags)
++{
++   ANV_FROM_HANDLE(anv_device, device, _device);
++   struct drm_b580_surface_dirty d = { .surface_id = surface_id, .plane = plane, .flags = flags };
++   if (nvmtl_ioctl(device->fd, DRM_IOCTL_B580_SURFACE_DIRTY, &d))
++      return errno == EBUSY ? VK_NOT_READY : nvmtl_errno_result(errno);
++   return VK_SUCCESS;
+ }
+diff -ruN a/src/intel/vulkan/anv_private.h b/src/intel/vulkan/anv_private.h
+--- a/src/intel/vulkan/anv_private.h	2026-10-29 15:09:29
++++ b/src/intel/vulkan/anv_private.h	2026-10-29 15:09:29
+@@ -3184,6 +3184,14 @@
+                                             enum anv_bo_alloc_flags alloc_flags,
+                                             uint64_t client_address,
+                                             struct anv_bo **bo_out);
++/* nvmtl (gpuperf): a GEM handle the kernel gave this client (B580.kext SURFACE_VRAM), imported as a PRIME fd's would be */
++VkResult anv_device_import_bo_handle(struct anv_device *device, uint32_t gem_handle, uint64_t size,
++                                     enum anv_bo_alloc_flags alloc_flags, uint64_t client_address,
++                                     struct anv_bo **bo);
++/* nvmtl: vkAllocateMemory's fd import after nvmtl_anv_surface_vram_stage_v1 (anv_nvmtl_surface.c): true when it was
++ * one (then *result says how it went and *bo is the import) */
++bool anv_nvmtl_surface_vram_staged(struct anv_device *device, uint64_t need, enum anv_bo_alloc_flags alloc_flags,
++                                   uint64_t client_address, struct anv_bo **bo, VkResult *result);
+ VkResult anv_device_import_bo(struct anv_device *device, int fd,
+                               enum anv_bo_alloc_flags alloc_flags,
+                               uint64_t client_address,

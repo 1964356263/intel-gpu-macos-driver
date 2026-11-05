@@ -1,0 +1,24 @@
+<!doctype html><html><head><meta charset="utf-8"><title>scrolltest</title>
+<style>
+body{margin:0;font:14px sans-serif}
+.row{height:120px;margin:8px;border-radius:12px;background:linear-gradient(90deg,#3a6,#36a);color:#fff;padding:10px;box-shadow:0 4px 16px rgba(0,0,0,.4)}
+.spin{position:fixed;right:20px;top:20px;width:80px;height:80px;background:#e33;border-radius:16px;animation:sp 1s linear infinite;z-index:9}
+@keyframes sp{to{transform:rotate(360deg)}}
+#hud{position:fixed;left:10px;top:10px;background:#000c;color:#0f0;padding:6px;z-index:10;font:12px monospace}
+</style></head><body><div class="spin"></div><div id="hud"></div><div id="c"></div>
+<script>
+const P=new URLSearchParams(location.search);if(P.get('heavy')){const st=document.createElement('style');st.textContent='.row{box-shadow:0 10px 40px rgba(0,0,0,.7);filter:saturate(1.3) blur(0.6px);text-shadow:0 0 8px #000;height:220px;background:radial-gradient(circle at 30% 40%,#fa5,#36a 60%,#123)}';document.head.appendChild(st);}
+if(P.get('real')){const st=document.createElement('style');st.textContent='body{background:#f4f1ea}.row{height:auto;background:#fff;color:#222;box-shadow:0 2px 6px rgba(0,0,0,.15);border-radius:6px;padding:18px;font:16px/1.6 Georgia,serif}.row img{width:100%;height:340px;object-fit:cover;border-radius:4px;display:block;margin-bottom:10px}#bar{position:sticky;top:0;height:64px;z-index:8;backdrop-filter:blur(24px) saturate(1.6);-webkit-backdrop-filter:blur(24px) saturate(1.6);background:rgba(255,255,255,.55);border-bottom:1px solid #0002;font:600 22px sans-serif;padding:18px}';document.head.appendChild(st);const bar=document.createElement('div');bar.id='bar';bar.textContent='The Daily Test';document.body.insertBefore(bar,document.getElementById('c'));
+ const imgs=[];for(let k=0;k<6;k++){const cv=document.createElement('canvas');cv.width=1200;cv.height=500;const g=cv.getContext('2d');const gr=g.createLinearGradient(0,0,1200,500);gr.addColorStop(0,'hsl('+k*60+',70%,55%)');gr.addColorStop(1,'hsl('+(k*60+120)+',60%,30%)');g.fillStyle=gr;g.fillRect(0,0,1200,500);for(let q=0;q<400;q++){g.fillStyle='hsla('+(q*7)%360+',80%,60%,.35)';g.beginPath();g.arc(Math.random()*1200,Math.random()*500,10+Math.random()*60,0,7);g.fill();}imgs.push(cv.toDataURL('image/jpeg',.85));}
+ window.__imgs=imgs;}
+const c=document.getElementById('c');const NR=P.get('real')?400:3000;for(let i=0;i<NR;i++){const d=document.createElement('div');d.className='row';if(P.get('real')){if(i%3==0){const im=document.createElement('img');im.src=window.__imgs[i%6];d.appendChild(im);}const pp=document.createElement('p');pp.textContent=('Paragraph '+i+'. '+'The quick brown fox jumps over the lazy dog while the article keeps going with more text to lay out. ').repeat(5);d.appendChild(pp);}else d.textContent='row '+i+' '+'lorem ipsum dolor sit amet '.repeat(6);c.appendChild(d);}
+function gl(){try{const cv=document.createElement('canvas');const g=cv.getContext('webgl2')||cv.getContext('webgl');if(!g)return 'no webgl';const e=g.getExtension('WEBGL_debug_renderer_info');return (e?g.getParameter(e.UNMASKED_VENDOR_WEBGL)+' | '+g.getParameter(e.UNMASKED_RENDERER_WEBGL):g.getParameter(g.RENDERER));}catch(x){return 'err '+x}}
+console.log('SCROLLTEST renderer: '+gl()+' | webgpu '+(!!navigator.gpu));
+const T=parseFloat(P.get('t')||'12');
+let last=performance.now(),t0=last,n=0,nsec=0,secStart=last,long=0,worst=0,hist=[];
+function f(now){const dt=now-last;last=now;n++;nsec++;if(dt>1000/50){long++;}if(dt>worst)worst=dt;
+ window.scrollBy(0,P.get('real')?14:6);
+ if(now-secStart>=1000){const fps=nsec*1000/(now-secStart);hist.push(fps.toFixed(0));document.getElementById('hud').textContent=fps.toFixed(0)+' fps';console.log('SCROLLTEST fps '+fps.toFixed(1)+' long '+long+' worst '+worst.toFixed(1));secStart=now;nsec=0;long=0;worst=0;}
+ if(now-t0<T*1000)requestAnimationFrame(f);else console.log('SCROLLTEST done '+(n*1000/(now-t0)).toFixed(1)+' fps avg; per-second '+hist.join(','));}
+setTimeout(()=>requestAnimationFrame(f),1500);
+</script></body></html>

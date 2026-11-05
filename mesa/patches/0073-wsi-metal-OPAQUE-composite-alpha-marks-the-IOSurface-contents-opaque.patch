@@ -1,0 +1,21 @@
+wsi/metal: OPAQUE composite alpha marks the IOSurface contents opaque (contentsOpaque)
+
+diff --git a/src/vulkan/wsi/wsi_common_metal_layer.m b/src/vulkan/wsi/wsi_common_metal_layer.m
+index 71a3f8e09e0..db7394f9470 100644
+--- a/src/vulkan/wsi/wsi_common_metal_layer.m
++++ b/src/vulkan/wsi/wsi_common_metal_layer.m
+@@ -535,6 +535,14 @@
+          [(CAMetalLayer *)metal_layer addSublayer:layer];
+       }
+       layer.opaque = opaque;
++      /* "opaque" is only a hint for layers that draw their own backing
++       * store: Core Animation still blends IOSurface contents by their
++       * alpha.  An OPAQUE composite-alpha swapchain must not show alpha
++       * (X11 depth-24 windows, NSOpenGL and an opaque CAMetalLayer ignore
++       * it), so mark the contents themselves opaque.
++       */
++      if ([layer respondsToSelector:@selector(setContentsOpaque:)])
++         [layer setValue:@(opaque) forKey:@"contentsOpaque"];
+       [CATransaction commit];
+       [CATransaction flush];
+ 

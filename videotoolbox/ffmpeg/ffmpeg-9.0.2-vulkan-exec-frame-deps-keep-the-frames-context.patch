@@ -1,0 +1,38 @@
+FFmpeg 9.0.2 vulkan: an execution's frame dependency keeps the frame's frames context alive
+
+ff_vk_exec_add_dep_frame() keeps a reference to the frame's buffer (buf[0]) until the execution is reused or its pool
+freed, but not to the AVHWFramesContext the buffer belongs to. When a decoder drops a frames context while an
+execution still depends on one of its frames - VP9 changes resolution inside a stream and keeps predicting from the
+old-size references (reference scaling), so the new size's decodes depend on frames of the old frames context, which
+goes away with its last AVFrame - the buffer goes back to a freed pool: hwcontext_vulkan's vulkan_frame_free_cb then
+reads the freed AVHWFramesContext (EXC_BAD_ACCESS at 0x10 in VideoToolbox clients, at the end of the session:
+avcodec_free_context -> ff_vk_decode_uninit -> ff_vk_exec_pool_free -> ff_vk_exec_discard_deps -> av_buffer_unref ->
+pool_release_buffer -> vulkan_frame_free_cb, on the libvpx conformance vector vp90-2-05-resize). The dependency now
+also references hw_frames_ctx, after the buffer in buf_deps so that it is released after it. FFmpeg master still has
+the same code (libavutil/vulkan.c ff_vk_exec_add_dep_frame).
+
+--- a/libavutil/vulkan.c
++++ b/libavutil/vulkan.c
+@@ -848,6 +848,22 @@
+             return AVERROR(ENOMEM);
+         }
+         e->nb_buf_deps++;
++
++        /* The frame's buffer goes back to its frames context's pool when the
++         * execution drops it: keep that context alive until then (after it in
++         * buf_deps, so it is released after the buffer). A decode can depend on
++         * frames of a frames context the decoder no longer uses (VP9 reference
++         * scaling across a resolution change), which is freed with its last
++         * frame otherwise, and the pool's free callback then reads freed memory. */
++        if (f->hw_frames_ctx) {
++            ARR_REALLOC(e, buf_deps, &e->buf_deps_alloc_size, e->nb_buf_deps);
++            e->buf_deps[e->nb_buf_deps] = av_buffer_ref(f->hw_frames_ctx);
++            if (!e->buf_deps[e->nb_buf_deps]) {
++                ff_vk_exec_discard_deps(s, e);
++                return AVERROR(ENOMEM);
++            }
++            e->nb_buf_deps++;
++        }
+     }
+ 
+     e->frame_deps[e->nb_frame_deps] = f;

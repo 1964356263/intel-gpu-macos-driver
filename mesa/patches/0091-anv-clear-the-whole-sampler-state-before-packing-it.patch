@@ -1,0 +1,37 @@
+From: Yusuf İhsan KILINÇ
+Subject: [PATCH 0091] anv: clear the whole sampler state before packing it
+
+On top of 0090 (src/mesa-cts1, build-cts1). NOT installed.
+
+genX(emit_sampler_state) packs SAMPLER_STATE (4 dwords on Gfx12/Xe2) into slots of ANV_SAMPLER_STATE_DWORDS (8)
+and never wrote the other 4. anv_WriteSamplerDescriptorsEXT (VK_EXT_descriptor_heap) packs into an
+uninitialized stack struct anv_sampler_state and copies ANV_SAMPLER_STATE_SIZE (32) bytes, the reported sampler
+descriptor size, so the upper 16 bytes of every sampler descriptor were stack garbage.
+dEQP-VK.binding_model.descriptor_heap.capture_replay.sampler{,_custom_border} compare two writes of the same
+sampler made from different call histories: "Descriptor data is not invariant" (2 fails; the invariance.*
+variant passes only because its writes come from one tight loop with identical stack contents).
+anv_nir_lower_descriptor_heap had the same garbage in embedded_key.sampler, which is hashed and compared for
+embedded samplers. vkCreateSampler was not affected (its state is in zeroed object memory).
+
+Generated-by: LLM
+
+diff --git a/src/intel/vulkan/genX_init_state.c b/src/intel/vulkan/genX_init_state.c
+index c849fcf..f2e8e61 100644
+--- a/src/intel/vulkan/genX_init_state.c
++++ b/src/intel/vulkan/genX_init_state.c
+@@ -1464,6 +1464,15 @@ genX(emit_sampler_state)(const struct anv_device *device,
+    const bool seamless_cube =
+       !(vk_state->flags & VK_SAMPLER_CREATE_NON_SEAMLESS_CUBE_MAP_BIT_EXT);
+ 
++   /* SAMPLER_STATE is 4 dwords but each plane slot is
++    * ANV_SAMPLER_STATE_DWORDS (8) dwords, all of which are copied out: into
++    * descriptor heaps by vkWriteSamplerDescriptorsEXT (descriptor size
++    * ANV_SAMPLER_STATE_SIZE) and into embedded_key, which is hashed and
++    * compared. The callers may pass uninitialized stack memory, so clear the
++    * whole state for the unused dwords to be zero instead of stack garbage.
++    */
++   memset(state, 0, sizeof(*state));
++
+    const struct vk_format_ycbcr_info *ycbcr_info =
+       vk_state->has_ycbcr_conversion ?
+       vk_format_get_ycbcr_info(vk_state->format) : NULL;

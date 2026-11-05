@@ -1,0 +1,708 @@
+FFmpeg 9.0.2 Vulkan encoders (on top of codecs-enc1's libavcodec: decode 0001/0002, consecutive-b-frames-all, dyadic
+reference pattern, and the AV1 CDEF-under-RC patch): multiple P references, H.264 reference list modifications, and
+an AV1 B pyramid.
+
+hw_base_encode:
+ - P-pictures reference the last p_refs top-layer pictures (anchors), nearest first = the default H.264/H.265 list
+   order; p_refs = ref_l0 for AV1 (as before) and, for the other codecs, when -refs asks for it (upstream TODO
+   "apply both previous and forward multi reference for all vaapi encoders"). The older anchors stay in the DPB of
+   the B-pictures in between; anchors restart at every intra picture (H.265 trailing pictures).
+ - H.264 max_num_ref_frames / max_dec_frame_buffering and H.265 max_dec_pic_buffering count those references.
+ - AV1 repeat frames (show_existing_frame tails) are queued, several at a time, and each is sent once every picture
+   before it in display order has been output (a pyramid has several hidden frames pending).
+vulkan_encode:
+ - several hidden frames are kept and sent, in coding order, in the temporal unit of the next shown frame (was one:
+   assert !prev_buf_ref).
+ - a DPB slot is reused once its picture is no longer referenced by a picture still to be coded (and is not a
+   forward reference of the next P); the picture itself may stay alive longer for DPB bookkeeping. A 7-B pyramid
+   needs more pictures in flight than anv's 9 AV1 DPB slots.
+vulkan_encode_h264:
+ - refList0/1ModOpCount is the number of modification operations (was one less, dropping the last).
+ - num_ref_idx_active_override_flag whenever the active counts differ from the PPS defaults.
+vulkan_encode_h265:
+ - every reference is active (was forced to the PPS default, one), with num_ref_idx_active_override_flag set after
+   setup_slices() (which reset it).
+vulkan_encode_av1:
+ - reference frame slots (VBI) are allocated: a referenced picture (P, or a B in a pyramid) refreshes a slot whose
+   frame neither stays in its DPB nor still waits to be shown (was: P toggled between slots 0 and 1, B never
+   refreshed); ref_order_hint[] carries every slot's order hint; P names its nearest reference LAST and the next
+   GOLDEN by display order.
+ - show_frame: a frame is shown when coded only if every frame before it in display order is already coded (the
+   encode/display index comparison shows pyramid B frames out of order after a closed GOP).
+
+--- a/libavcodec/hw_base_encode.c
++++ b/libavcodec/hw_base_encode.c
+@@ -168,7 +168,33 @@
+ 
+         hw_base_encode_set_b_pictures(ctx, pic, end, next,
+                                       current_depth + 1, last);
++    }
++}
++
++static void hw_base_encode_add_anchor(FFHWBaseEncodeContext *ctx,
++                                      FFHWBaseEncodePicture *pic)
++{
++    int i;
++
++    // Pictures after an intra picture in decoding and output order must
++    // not reference pictures before it (H.265 trailing pictures).
++    if (pic->type == FF_HW_PICTURE_TYPE_IDR ||
++        pic->type == FF_HW_PICTURE_TYPE_I) {
++        for (i = 0; i < ctx->nb_anchors; i++) {
++            --ctx->anchors[i]->ref_count[0];
++            ctx->anchors[i] = NULL;
++        }
++        ctx->nb_anchors = 0;
+     }
++
++    if (ctx->nb_anchors == ctx->p_refs) {
++        --ctx->anchors[0]->ref_count[0];
++        for (i = 0; i < ctx->nb_anchors - 1; i++)
++            ctx->anchors[i] = ctx->anchors[i + 1];
++        --ctx->nb_anchors;
++    }
++    ctx->anchors[ctx->nb_anchors++] = pic;
++    ++pic->ref_count[0];
+ }
+ 
+ static void hw_base_encode_add_next_prev(FFHWBaseEncodeContext *ctx,
+@@ -328,29 +354,52 @@
+ 
+     hw_base_encode_add_ref(pic, pic, 0, 1, 0);
+     if (pic->type != FF_HW_PICTURE_TYPE_IDR) {
+-        // TODO: apply both previous and forward multi reference for all vaapi encoders.
+-        // And L0/L1 reference frame number can be set dynamically through query
+-        // VAConfigAttribEncMaxRefFrames attribute.
+-        if (avctx->codec_id == AV_CODEC_ID_AV1) {
+-            for (i = 0; i < ctx->nb_next_prev; i++)
+-                hw_base_encode_add_ref(pic, ctx->next_prev[i],
+-                                       pic->type == FF_HW_PICTURE_TYPE_P,
+-                                       b_counter > 0, 0);
+-        } else
++        // A P-picture references the last p_refs top-layer pictures,
++        // nearest first, which is also the order of the default H.264
++        // and H.265 reference picture lists.  With one reference this is
++        // just the previous top-layer picture (start).
++        if (pic->type == FF_HW_PICTURE_TYPE_P && ctx->nb_anchors > 0 &&
++            ctx->anchors[ctx->nb_anchors - 1] == start) {
++            for (i = ctx->nb_anchors - 1; i >= 0; i--)
++                hw_base_encode_add_ref(pic, ctx->anchors[i], 1,
++                                       b_counter > 0 || ctx->p_refs > 1, 0);
++        } else {
+             hw_base_encode_add_ref(pic, start,
+                                    pic->type == FF_HW_PICTURE_TYPE_P,
+                                    b_counter > 0, 0);
++        }
+ 
+         hw_base_encode_add_ref(pic, ctx->next_prev[ctx->nb_next_prev - 1], 0, 0, 1);
+     }
+ 
+     if (b_counter > 0) {
++        FFHWBaseEncodePicture *b;
++
+         hw_base_encode_set_b_pictures(ctx, start, pic, pic, 1,
+                                       &prev);
++
++        // The older top-layer pictures the next P-picture will reference
++        // have to stay in the DPB of every picture in between.
++        if (pic->type == FF_HW_PICTURE_TYPE_P && ctx->nb_anchors > 0 &&
++            ctx->anchors[ctx->nb_anchors - 1] == start) {
++            for (b = start->next; b != pic; b = b->next) {
++                for (i = FFMAX(ctx->nb_anchors - ctx->p_refs + 1, 0);
++                     i < ctx->nb_anchors; i++) {
++                    int j;
++                    for (j = 0; j < b->nb_dpb_pics; j++) {
++                        if (b->dpb[j] == ctx->anchors[i])
++                            break;
++                    }
++                    if (j == b->nb_dpb_pics)
++                        hw_base_encode_add_ref(b, ctx->anchors[i], 0, 1, 0);
++                }
++            }
++        }
+     } else {
+         prev = pic;
+     }
+     hw_base_encode_add_next_prev(ctx, prev);
++    hw_base_encode_add_anchor(ctx, pic);
+ 
+     return 0;
+ }
+@@ -566,15 +615,28 @@
+                ctx->op->output && ctx->op->free);
+ 
+ start:
+-    /** if no B frame before repeat P frame, sent repeat P frame out. */
+-    if (ctx->tail_pkt->size) {
+-        for (FFHWBaseEncodePicture *tmp = ctx->pic_start; tmp; tmp = tmp->next) {
+-            if (tmp->type == FF_HW_PICTURE_TYPE_B && tmp->pts < ctx->tail_pkt->pts)
++    /** Send the earliest pending repeat frame (AV1 show_existing_frame) once
++     *  every picture before it in display order has been output. */
++    if (ctx->nb_tail_queue) {
++        FFHWBaseEncodePicture *tmp;
++        int i, first = 0;
++
++        for (i = 1; i < ctx->nb_tail_queue; i++) {
++            if (ctx->tail_queue[i]->pts < ctx->tail_queue[first]->pts)
++                first = i;
++        }
++        for (tmp = ctx->pic_start; tmp; tmp = tmp->next) {
++            if (!tmp->output_done && tmp->pts < ctx->tail_queue[first]->pts)
+                 break;
+-            else if (!tmp->next) {
+-                av_packet_move_ref(pkt, ctx->tail_pkt);
+-                goto end;
+-            }
++        }
++        if (!tmp) {
++            AVPacket *tail = ctx->tail_queue[first];
++            av_packet_move_ref(pkt, tail);
++            av_packet_free(&tail);
++            for (i = first; i < ctx->nb_tail_queue - 1; i++)
++                ctx->tail_queue[i] = ctx->tail_queue[i + 1];
++            --ctx->nb_tail_queue;
++            goto end;
+         }
+     }
+ 
+@@ -642,6 +704,19 @@
+     if (err < 0) {
+         av_log(avctx, AV_LOG_ERROR, "Output failed: %d.\n", err);
+         return err;
++    }
++    pic->output_done = 1;
++
++    if (ctx->tail_pkt->size) {
++        AVPacket *tail;
++
++        if (ctx->nb_tail_queue == FF_ARRAY_ELEMS(ctx->tail_queue))
++            return AVERROR_BUG;
++        tail = av_packet_alloc();
++        if (!tail)
++            return AVERROR(ENOMEM);
++        av_packet_move_ref(tail, ctx->tail_pkt);
++        ctx->tail_queue[ctx->nb_tail_queue++] = tail;
+     }
+ 
+     ctx->output_order = pic->encode_order;
+@@ -671,6 +746,13 @@
+         ctx->ref_l1 = FFMIN(ctx->ref_l1, avctx->refs);
+     }
+ 
++    // AV1 always used every forward reference the driver supports; the
++    // other codecs use more than one only when asked for with -refs.
++    if (avctx->codec_id == AV_CODEC_ID_AV1 || avctx->refs > 0)
++        ctx->p_refs = FFMAX(ctx->ref_l0, 1);
++    else
++        ctx->p_refs = 1;
++
+     if (flags & FF_HW_FLAG_INTRA_ONLY || avctx->gop_size <= 1) {
+         av_log(avctx, AV_LOG_VERBOSE, "Using intra frames only.\n");
+         ctx->gop_size = 1;
+@@ -822,6 +904,9 @@
+ 
+     av_frame_free(&ctx->frame);
+     av_packet_free(&ctx->tail_pkt);
++    for (int i = 0; i < ctx->nb_tail_queue; i++)
++        av_packet_free(&ctx->tail_queue[i]);
++    ctx->nb_tail_queue = 0;
+ 
+     av_buffer_unref(&ctx->device_ref);
+     av_buffer_unref(&ctx->input_frames_ref);
+--- a/libavcodec/hw_base_encode.h
++++ b/libavcodec/hw_base_encode.h
+@@ -79,6 +79,8 @@
+     int             b_depth;
+     int             encode_issued;
+     int             encode_complete;
++    // Whether ctx->op->output() has run for this picture.
++    int             output_done;
+ 
+     AVFrame        *input_image;
+     AVFrame        *recon_image;
+@@ -162,6 +164,10 @@
+     // encoding order. Order from small to large in encoding order.
+     FFHWBaseEncodePicture *next_prev[MAX_PICTURE_REFERENCES];
+     int                  nb_next_prev;
++    // The last top-layer (I/P) pictures in encoding order, oldest first:
++    // the forward references of the next P-picture.
++    FFHWBaseEncodePicture *anchors[MAX_PICTURE_REFERENCES];
++    int                  nb_anchors;
+ 
+     // Next input order index (display order).
+     int64_t         input_order;
+@@ -196,6 +202,8 @@
+     // The number of L0/L1 references supported by the driver.
+     int             ref_l0;
+     int             ref_l1;
++    // The number of forward references a P-picture uses (at most ref_l0).
++    int             p_refs;
+ 
+     // Whether the driver supports ROI at all.
+     int             roi_allowed;
+@@ -222,6 +230,10 @@
+ 
+     /** Tail data of a pic, now only used for av1 repeat frame header. */
+     AVPacket        *tail_pkt;
++    /** Tail packets waiting for every earlier picture in display order to
++     *  be output (several hidden frames are pending in a B-pyramid). */
++    AVPacket        *tail_queue[MAX_REORDER_DELAY];
++    int              nb_tail_queue;
+ } FFHWBaseEncodeContext;
+ 
+ int ff_hw_base_encode_set_output_property(FFHWBaseEncodeContext *ctx, AVCodecContext *avctx,
+--- a/libavcodec/hw_base_encode_h264.c
++++ b/libavcodec/hw_base_encode_h264.c
+@@ -66,7 +66,12 @@
+     if (base_ctx->gop_size == 1)
+         common->dpb_frames = 0;
+     else
+-        common->dpb_frames = 1 + base_ctx->max_b_depth;
++        // References held after marking: a B-picture keeps its hierarchy
++        // (1 + max_b_depth) and the older P references of the next
++        // P-picture; a P-picture keeps itself and its p_refs references.
++        common->dpb_frames = FFMAX3(1 + base_ctx->max_b_depth,
++                                    base_ctx->max_b_depth + base_ctx->p_refs - 1,
++                                    base_ctx->p_refs > 1 ? base_ctx->p_refs + 1 : 1);
+ 
+     if (avctx->level != AV_LEVEL_UNKNOWN) {
+         sps->level_idc = avctx->level;
+@@ -231,7 +236,8 @@
+     sps->vui.log2_max_mv_length_horizontal = 15;
+     sps->vui.log2_max_mv_length_vertical   = 15;
+     sps->vui.max_num_reorder_frames        = base_ctx->max_b_depth;
+-    sps->vui.max_dec_frame_buffering       = base_ctx->max_b_depth + 1;
++    sps->vui.max_dec_frame_buffering       = FFMAX(base_ctx->max_b_depth + 1,
++                                                   common->dpb_frames);
+ 
+     pps->nal_unit_header.nal_ref_idc = 3;
+     pps->nal_unit_header.nal_unit_type = H264_NAL_PPS;
+--- a/libavcodec/hw_base_encode_h265.c
++++ b/libavcodec/hw_base_encode_h265.c
+@@ -132,7 +132,9 @@
+     }
+ 
+     vps->vps_sub_layer_ordering_info_present_flag = 0;
+-    vps->vps_max_dec_pic_buffering_minus1[0]      = base_ctx->max_b_depth + 1;
++    vps->vps_max_dec_pic_buffering_minus1[0]      = FFMAX3(base_ctx->max_b_depth + 1,
++                                                           base_ctx->max_b_depth + base_ctx->p_refs - 1,
++                                                           base_ctx->p_refs);
+     vps->vps_max_num_reorder_pics[0]              = base_ctx->max_b_depth;
+     vps->vps_max_latency_increase_plus1[0]        = 0;
+ 
+--- a/libavcodec/vulkan_encode.c
++++ b/libavcodec/vulkan_encode.c
+@@ -44,6 +44,10 @@
+ 
+     ff_hw_base_encode_close(&ctx->base);
+ 
++    for (int i = 0; i < ctx->nb_prev_buf; i++)
++        av_buffer_unref(&ctx->prev_buf_ref[i]);
++    ctx->nb_prev_buf = 0;
++
+     av_buffer_pool_uninit(&ctx->buf_pool);
+ 
+     ff_vk_video_common_uninit(s, &ctx->common);
+@@ -107,9 +111,45 @@
+         vk->DestroyImageView(ctx->s.hwctx->act_dev, vp->dpb.view,
+                              ctx->s.hwctx->alloc);
+ 
+-    ctx->slots[vp->dpb_slot.slotIndex] = NULL;
++    /* The slot may already hold a later picture, see slot_reusable(). */
++    if (ctx->slots[vp->dpb_slot.slotIndex] == pic)
++        ctx->slots[vp->dpb_slot.slotIndex] = NULL;
+ 
+     return 0;
++}
++
++/* A DPB slot only has to live as long as its picture can still be used as
++ * a reference: a picture that is still kept in memory (because others point
++ * at it for DPB bookkeeping) does not need its slot once no picture that is
++ * still to be encoded references it or keeps it in its DPB, and it is not one
++ * of the pictures the next P-picture will reference.  With a B-pyramid the
++ * encoding window holds more pictures than the implementation has slots. */
++static int slot_reusable(FFHWBaseEncodeContext *base_ctx,
++                         FFHWBaseEncodePicture *old)
++{
++    if (!old->encode_complete)
++        return 0;
++
++    for (int i = 0; i < base_ctx->nb_anchors; i++)
++        if (base_ctx->anchors[i] == old)
++            return 0;
++    for (int i = 0; i < base_ctx->nb_next_prev; i++)
++        if (base_ctx->next_prev[i] == old)
++            return 0;
++
++    for (FFHWBaseEncodePicture *p = base_ctx->pic_start; p; p = p->next) {
++        if (p->encode_complete)
++            continue;
++        for (int l = 0; l < MAX_REFERENCE_LIST_NUM; l++)
++            for (int i = 0; i < p->nb_refs[l]; i++)
++                if (p->refs[l][i] == old)
++                    return 0;
++        for (int i = 0; i < p->nb_dpb_pics; i++)
++            if (p->dpb[i] == old)
++                return 0;
++    }
++
++    return 1;
+ }
+ 
+ static int init_pic_rc(AVCodecContext *avctx, FFHWBaseEncodePicture *pic,
+@@ -213,7 +253,17 @@
+             break;
+         }
+     }
+-    av_assert0(slot_index >= 0);
++    for (int i = 0; slot_index < 0 && i < ctx->caps.maxDpbSlots; i++) {
++        if (slot_reusable(&ctx->base, ctx->slots[i])) {
++            slot_index = i;
++            ctx->slots[i] = base_pic;
++        }
++    }
++    if (slot_index < 0) {
++        av_log(avctx, AV_LOG_ERROR, "No free DPB slot (%u slots).\n",
++               ctx->caps.maxDpbSlots);
++        return AVERROR_BUG;
++    }
+ 
+     /* Current picture's ref slot */
+     vp->dpb_res = (VkVideoPictureResourceInfoKHR) {
+@@ -517,10 +567,11 @@
+     }
+ 
+     if (vp->non_independent_frame) {
+-        av_assert0(!ctx->prev_buf_ref);
+-        size_t prev_buf_size = vp->slices_offset + query_data[0] + query_data[1];
+-        ctx->prev_buf_ref = vp->pkt_buf;
+-        ctx->prev_buf_size = prev_buf_size;
++        if (ctx->nb_prev_buf == FF_ARRAY_ELEMS(ctx->prev_buf_ref))
++            return AVERROR_BUG;
++        ctx->prev_buf_ref[ctx->nb_prev_buf] = vp->pkt_buf;
++        ctx->prev_buf_size[ctx->nb_prev_buf] = vp->slices_offset + query_data[0] + query_data[1];
++        ctx->nb_prev_buf++;
+         vp->pkt_buf = NULL;
+ 
+         if (vp->tail_size) {
+@@ -535,19 +586,28 @@
+             pkt_ptr = base_ctx->tail_pkt;
+         }
+     } else {
+-        if (ctx->prev_buf_ref) {
+-            FFVkBuffer *prev_sd_buf = (FFVkBuffer *)ctx->prev_buf_ref->data;
+-            size_t prev_size = ctx->prev_buf_size;
++        if (ctx->nb_prev_buf) {
++            size_t prev_size = 0, offs = 0;
+             size_t size = (vp->slices_offset + query_data[0] + query_data[1]);
+ 
++            for (int i = 0; i < ctx->nb_prev_buf; i++)
++                prev_size += ctx->prev_buf_size[i];
++
+             ret = ff_get_encode_buffer(avctx, pkt, prev_size + size, 0);
+             if (ret < 0)
+                 return ret;
+ 
+-            memcpy(pkt->data, prev_sd_buf->mapped_mem, prev_size);
++            /* The hidden frames precede the shown frame of the temporal
++             * unit, in the order they were encoded. */
++            for (int i = 0; i < ctx->nb_prev_buf; i++) {
++                FFVkBuffer *prev_sd_buf = (FFVkBuffer *)ctx->prev_buf_ref[i]->data;
++                memcpy(pkt->data + offs, prev_sd_buf->mapped_mem, ctx->prev_buf_size[i]);
++                offs += ctx->prev_buf_size[i];
++                av_buffer_unref(&ctx->prev_buf_ref[i]);
++            }
++            ctx->nb_prev_buf = 0;
+             memcpy(pkt->data + prev_size, sd_buf->mapped_mem, size);
+ 
+-            av_buffer_unref(&ctx->prev_buf_ref);
+             av_buffer_unref(&vp->pkt_buf);
+         } else {
+             pkt->data = sd_buf->mapped_mem;
+--- a/libavcodec/vulkan_encode.h
++++ b/libavcodec/vulkan_encode.h
+@@ -197,8 +197,11 @@
+ 
+     FFHWBaseEncodePicture *slots[32];
+ 
+-    AVBufferRef *prev_buf_ref;
+-    size_t prev_buf_size;
++    /* Hidden frames (encoded ahead of display) waiting to be sent in the
++     * temporal unit of the next shown frame, in encoding order. */
++    AVBufferRef *prev_buf_ref[16];
++    size_t prev_buf_size[16];
++    int nb_prev_buf;
+ } FFVulkanEncodeContext;
+ 
+ #define VULKAN_ENCODE_COMMON_OPTIONS \
+--- a/libavcodec/vulkan_encode_h264.c
++++ b/libavcodec/vulkan_encode_h264.c
+@@ -272,10 +272,14 @@
+     hp->slice_hdr = (StdVideoEncodeH264SliceHeader) {
+         .flags = (StdVideoEncodeH264SliceHeaderFlags) {
+             .direct_spatial_mv_pred_flag = 1,
+-            /* The vk_samples code does this */
++            /* Override whenever this slice uses a different number of
++             * active references than the PPS defaults (H.264 7.4.3). */
+             .num_ref_idx_active_override_flag =
+-                ((enc->units.raw_pps.num_ref_idx_l0_default_active_minus1) &&
+-                 (pic->type == FF_HW_PICTURE_TYPE_B)) ? 1 : 0,
++                (pic->type == FF_HW_PICTURE_TYPE_P ||
++                 pic->type == FF_HW_PICTURE_TYPE_B) &&
++                (pic->nb_refs[0] - 1 != enc->units.raw_pps.num_ref_idx_l0_default_active_minus1 ||
++                 (pic->type == FF_HW_PICTURE_TYPE_B &&
++                  pic->nb_refs[1] - 1 != enc->units.raw_pps.num_ref_idx_l1_default_active_minus1)),
+         },
+         .first_mb_in_slice = 1,
+         .slice_type = hp->slice_type,
+@@ -530,7 +534,7 @@
+                 pic_num = href->frame_num;
+             }
+             hp->ref_list_info.pRefList0ModOperations = hp->mods[0];
+-            hp->ref_list_info.refList0ModOpCount = i - 1;
++            hp->ref_list_info.refList0ModOpCount = i;
+         }
+     } else {
+         int need_rplm_l0 = 0, need_rplm_l1 = 0;
+@@ -574,7 +578,7 @@
+                 ++j;
+             }
+             hp->ref_list_info.pRefList0ModOperations = hp->mods[0];
+-            hp->ref_list_info.refList0ModOpCount = j - 1;
++            hp->ref_list_info.refList0ModOpCount = j;
+         }
+ 
+         hp->ref_list_info.flags.ref_pic_list_modification_flag_l1 = need_rplm_l1;
+@@ -598,7 +602,7 @@
+                 ++j;
+             }
+             hp->ref_list_info.pRefList1ModOperations = hp->mods[1];
+-            hp->ref_list_info.refList1ModOpCount = j - 1;
++            hp->ref_list_info.refList1ModOpCount = j;
+         }
+     }
+ }
+--- a/libavcodec/vulkan_encode_h265.c
++++ b/libavcodec/vulkan_encode_h265.c
+@@ -511,9 +511,17 @@
+             hp->slice_hdr.collocated_ref_idx = 0;
+         }
+ 
+-        hp->slice_hdr.flags.num_ref_idx_active_override_flag = 0;
+-        hp->ref_list_info.num_ref_idx_l0_active_minus1 = enc->units.raw_pps.num_ref_idx_l0_default_active_minus1;
+-        hp->ref_list_info.num_ref_idx_l1_active_minus1 = enc->units.raw_pps.num_ref_idx_l1_default_active_minus1;
++        /* Every reference of the picture is active: override the PPS
++         * defaults when the counts differ (several P references). */
++        if (pic->type == FF_HW_PICTURE_TYPE_P || pic->type == FF_HW_PICTURE_TYPE_B) {
++            hp->ref_list_info.num_ref_idx_l0_active_minus1 = pic->nb_refs[0] - 1;
++            hp->ref_list_info.num_ref_idx_l1_active_minus1 =
++                pic->type == FF_HW_PICTURE_TYPE_B ? pic->nb_refs[1] - 1 :
++                enc->units.raw_pps.num_ref_idx_l1_default_active_minus1;
++        } else {
++            hp->ref_list_info.num_ref_idx_l0_active_minus1 = enc->units.raw_pps.num_ref_idx_l0_default_active_minus1;
++            hp->ref_list_info.num_ref_idx_l1_active_minus1 = enc->units.raw_pps.num_ref_idx_l1_default_active_minus1;
++        }
+     }
+ 
+     hp->h265pic_info.pShortTermRefPicSet = &hp->s_rps;
+@@ -592,6 +600,16 @@
+ 
+     setup_slices(avctx, pic);
+ 
++    /* Every reference of the picture is active (setup_refs()): override the
++     * PPS defaults in the slice header when the counts differ. */
++    if (pic->type == FF_HW_PICTURE_TYPE_P || pic->type == FF_HW_PICTURE_TYPE_B)
++        hp->slice_hdr.flags.num_ref_idx_active_override_flag =
++            hp->ref_list_info.num_ref_idx_l0_active_minus1 !=
++                enc->units.raw_pps.num_ref_idx_l0_default_active_minus1 ||
++            (pic->type == FF_HW_PICTURE_TYPE_B &&
++             hp->ref_list_info.num_ref_idx_l1_active_minus1 !=
++                enc->units.raw_pps.num_ref_idx_l1_default_active_minus1);
++
+     return 0;
+ }
+ 
+--- a/libavcodec/vulkan_encode_av1.c
++++ b/libavcodec/vulkan_encode_av1.c
+@@ -102,6 +102,12 @@
+     int q_idx_p;
+     int q_idx_b;
+ 
++    /* Occupant of each reference frame slot (VBI): identity, and the
++     * display order and order hint it was coded with. */
++    FFHWBaseEncodePicture *vbi_pic[AV1_NUM_REF_FRAMES];
++    int64_t vbi_display[AV1_NUM_REF_FRAMES];
++    int vbi_hint[AV1_NUM_REF_FRAMES];
++
+     uint8_t *padding_payload;
+ } VulkanEncodeAV1Context;
+ 
+@@ -163,6 +169,52 @@
+     return 0;
+ }
+ 
++/* A frame is shown when it is coded only if every frame before it in display
++ * order is already coded; otherwise it is a hidden frame, shown later with
++ * show_existing_frame.  (Comparing encode and display order indices is not
++ * enough in a B-pyramid, where a referenced B-frame can be coded early at the
++ * same index distance as a frame that is shown in order.) */
++static int shown_when_coded(FFHWBaseEncodeContext *base_ctx,
++                            FFHWBaseEncodePicture *pic)
++{
++    for (FFHWBaseEncodePicture *p = base_ctx->pic_start; p; p = p->next) {
++        if (p != pic && !p->encode_issued && p->display_order < pic->display_order)
++            return 0;
++    }
++    return 1;
++}
++
++/* Reference frame slot for a picture that is kept as a reference: one whose
++ * occupant neither stays in this picture's DPB nor is still to be shown
++ * (a hidden frame waiting for its show_existing_frame), or a second copy of
++ * a frame; the oldest such. */
++static int pick_ref_slot(VulkanEncodeAV1Context *enc, FFHWBaseEncodePicture *pic)
++{
++    int best = -1;
++
++    for (int i = 0; i < AV1_NUM_REF_FRAMES; i++) {
++        int keep = 0;
++
++        if (!enc->vbi_pic[i])
++            return i;
++        for (int j = 0; j < pic->nb_dpb_pics; j++) {
++            if (pic->dpb[j] == enc->vbi_pic[i] && pic->dpb[j] != pic)
++                keep = 1;
++        }
++        if (enc->vbi_display[i] > pic->display_order)
++            keep = 1;
++        /* A frame held in several slots (after a key frame) needs only one. */
++        for (int j = 0; j < i; j++) {
++            if (enc->vbi_pic[j] == enc->vbi_pic[i])
++                keep = 0;
++        }
++        if (!keep && (best < 0 || enc->vbi_display[i] < enc->vbi_display[best]))
++            best = i;
++    }
++    av_assert0(best >= 0);
++    return best;
++}
++
+ static int set_name_slot(int slot, int *slot_indices, uint32_t allowed_idx, int group)
+ {
+     int from = group ? AV1_REF_FRAME_GOLDEN : 0;
+@@ -293,7 +345,7 @@
+         .flags = (StdVideoEncodeAV1PictureInfoFlags) {
+             .error_resilient_mode = (pic->type == FF_HW_PICTURE_TYPE_I ||
+                                      pic->type == FF_HW_PICTURE_TYPE_IDR) &&
+-                                    (pic->display_order <= pic->encode_order),
++                                    shown_when_coded(base_ctx, pic),
+             .disable_cdf_update = 0,
+             .use_superres = 0,
+             .render_and_frame_size_different = 0,
+@@ -320,7 +372,7 @@
+             .segmentation_update_data = 0,
+             .UsesLr = 0,
+             .usesChromaLr = 0,
+-            .show_frame = pic->display_order <= pic->encode_order,
++            .show_frame = shown_when_coded(base_ctx, pic),
+             .showable_frame = 0,
+             /* Reserved */
+         },
+@@ -365,15 +417,25 @@
+         pred_mode = VK_VIDEO_ENCODE_AV1_PREDICTION_MODE_INTRA_ONLY_KHR;
+         rc_group = VK_VIDEO_ENCODE_AV1_RATE_CONTROL_GROUP_INTRA_KHR;
+         break;
+-    case FF_HW_PICTURE_TYPE_P:
+-        ref = pic->refs[0][pic->nb_refs[0] - 1];
++    case FF_HW_PICTURE_TYPE_P: {
++        /* The nearest reference in display order is LAST, the next one GOLDEN. */
++        FFHWBaseEncodePicture *near0 = pic->refs[0][0], *near1 = NULL;
++        for (int i = 1; i < pic->nb_refs[0]; i++) {
++            if (pic->refs[0][i]->display_order > near0->display_order) {
++                near1 = near0;
++                near0 = pic->refs[0][i];
++            } else if (!near1 || pic->refs[0][i]->display_order > near1->display_order) {
++                near1 = pic->refs[0][i];
++            }
++        }
++        ref = near0;
+         ap_ref = ref->codec_priv;
+ 
+         ap->av1pic_info.frame_type = STD_VIDEO_AV1_FRAME_TYPE_INTER;
+         quantization->base_q_idx = enc->q_idx_p;
+ 
+         ap->last_idr_frame = ap_ref->last_idr_frame;
+-        ap->slot = !ap_ref->slot;
++        ap->slot = pick_ref_slot(enc, pic);
+ 
+         ap->av1pic_info.refresh_frame_flags = 1 << ap->slot;
+ 
+@@ -398,7 +460,7 @@
+                 pred_mode = VK_VIDEO_ENCODE_AV1_PREDICTION_MODE_UNIDIRECTIONAL_COMPOUND_KHR;
+                 ref_name_mask = enc->caps.unidirectionalCompoundReferenceNameMask;
+             }
+-            ref = pic->refs[0][pic->nb_refs[0] - 2];
++            ref = near1;
+             ap_ref = ref->codec_priv;
+             ap->av1pic_info.ref_frame_idx[3] = ap_ref->slot;
+             ap->av1pic_info.ref_order_hint[ap_ref->slot] = ref->display_order - ap_ref->last_idr_frame;
+@@ -406,10 +468,17 @@
+             set_name_slot(ap_ref->av1pic_info.current_frame_id, name_slots, ref_name_mask, 0);
+         }
+         break;
++    }
+     case FF_HW_PICTURE_TYPE_B:
+         ap->av1pic_info.frame_type = STD_VIDEO_AV1_FRAME_TYPE_INTER;
+         quantization->base_q_idx = enc->q_idx_b;
+-        ap->av1pic_info.refresh_frame_flags = 0x0;
++        /* A B-picture referenced by others (B-pyramid) refreshes a slot of its own. */
++        if (pic->is_reference) {
++            ap->slot = pick_ref_slot(enc, pic);
++            ap->av1pic_info.refresh_frame_flags = 1 << ap->slot;
++        } else {
++            ap->av1pic_info.refresh_frame_flags = 0x0;
++        }
+ 
+         rc_group = VK_VIDEO_ENCODE_AV1_RATE_CONTROL_GROUP_BIPREDICTIVE_KHR;
+         pred_mode = VK_VIDEO_ENCODE_AV1_PREDICTION_MODE_BIDIRECTIONAL_COMPOUND_KHR;
+@@ -444,6 +513,22 @@
+     ap->av1pic_info.flags.showable_frame = ap->av1pic_info.frame_type != STD_VIDEO_AV1_FRAME_TYPE_KEY;
+     ap->av1pic_info.order_hint = pic->display_order - ap->last_idr_frame;
+ 
++    /* Track the slots this picture refreshes; every slot's order hint is
++     * the one of the frame it holds. */
++    if (ap->av1pic_info.frame_type != STD_VIDEO_AV1_FRAME_TYPE_KEY) {
++        for (int i = 0; i < AV1_NUM_REF_FRAMES; i++) {
++            if (enc->vbi_pic[i])
++                ap->av1pic_info.ref_order_hint[i] = enc->vbi_hint[i];
++        }
++    }
++    for (int i = 0; i < AV1_NUM_REF_FRAMES; i++) {
++        if (ap->av1pic_info.refresh_frame_flags & (1 << i)) {
++            enc->vbi_pic[i] = pic;
++            enc->vbi_display[i] = pic->display_order;
++            enc->vbi_hint[i] = ap->av1pic_info.order_hint;
++        }
++    }
++
+     ap->vkav1pic_info = (VkVideoEncodeAV1PictureInfoKHR) {
+         .sType = VK_STRUCTURE_TYPE_VIDEO_ENCODE_AV1_PICTURE_INFO_KHR,
+         .pNext = NULL,
+@@ -549,7 +634,7 @@
+ 
+     FFVulkanEncodePicture *vp = pic->priv;
+     vp->tail_size = 0;
+-    vp->non_independent_frame = pic->encode_order < pic->display_order;
++    vp->non_independent_frame = !ap->av1pic_info.flags.show_frame;
+     if (vp->non_independent_frame) {
+         AV1RawOBU *obu = &enc->hidden_obu;
+         AV1RawFrameHeader *fh = &obu->obu.frame_header;
+@@ -578,7 +663,7 @@
+         obu->header.obu_has_size_field = 1;
+ 
+         fh->show_existing_frame   = 1;
+-        fh->frame_to_show_map_idx = ap->slot != 0;
++        fh->frame_to_show_map_idx = ap->slot;
+         fh->frame_type            = AV1_FRAME_INTER;
+         fh->frame_width_minus_1   = base_ctx->surface_width - 1;
+         fh->frame_height_minus_1  = base_ctx->surface_height - 1;

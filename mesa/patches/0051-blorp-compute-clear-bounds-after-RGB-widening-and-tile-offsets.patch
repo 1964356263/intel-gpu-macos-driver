@@ -1,0 +1,54 @@
+blorp: a compute clear's bounds rectangle is the one the walker covers (after the RGB-as-red widening and tile offsets)
+
+blorp_clear() wrote params.wm_inputs.clear.bounds_rect from the caller's rectangle before the slice's tile offsets were
+added to params.x0..y1 and before a 24/48/96-bpb format's x range was multiplied by 3 (clear_rgb_as_red). The walker
+(blorp_exec_compute) covers params.x0..x1 x y0..y1 and the BLORP-gpgpu-clear kernel discards invocations outside
+bounds_rect, so on a compute queue an RGB clear wrote only the first third of each row (and a slice with a tile offset
+lost its last tile_x/tile_y columns/rows). The rectangle is now set after both adjustments (and per piece of a clear wider than 16K). Render-engine clears do not
+use bounds_rect and are unchanged.
+--- a/src/intel/blorp/blorp_clear.c
++++ b/src/intel/blorp/blorp_clear.c
+@@ -916,13 +916,6 @@
+       params.x1 = x1;
+       params.y1 = y1;
+ 
+-      if (compute) {
+-         params.wm_inputs.clear.bounds_rect.x0 = x0;
+-         params.wm_inputs.clear.bounds_rect.y0 = y0;
+-         params.wm_inputs.clear.bounds_rect.x1 = x1;
+-         params.wm_inputs.clear.bounds_rect.y1 = y1;
+-      }
+-
+       if (params.dst.tile_x_sa || params.dst.tile_y_sa) {
+          assert(params.dst.surf.samples == 1);
+          assert(num_layers == 1);
+@@ -966,6 +959,18 @@
+ 
+       params.num_samples = params.dst.surf.samples;
+ 
++      /* The compute kernel discards invocations outside bounds_rect. It has
++       * to be the rectangle the walker covers, i.e. after the tile offsets
++       * and the RGB-as-red widening above; set from the caller's rectangle,
++       * an RGB clear only wrote the first third of each row.
++       */
++      if (compute) {
++         params.wm_inputs.clear.bounds_rect.x0 = params.x0;
++         params.wm_inputs.clear.bounds_rect.y0 = params.y0;
++         params.wm_inputs.clear.bounds_rect.x1 = params.x1;
++         params.wm_inputs.clear.bounds_rect.y1 = params.y1;
++      }
++
+       /* We may be restricted on the number of layers we can bind at any one
+        * time.  In particular, Sandy Bridge has a maximum number of layers of
+        * 512 but a maximum 3D texture size is much larger.
+@@ -1005,6 +1010,10 @@
+ 
+             params.x0 = 0;
+             params.x1 = MIN2(orig_x1 - x, max_image_width);
++            if (compute) {
++               params.wm_inputs.clear.bounds_rect.x0 = params.x0;
++               params.wm_inputs.clear.bounds_rect.x1 = params.x1;
++            }
+ 
+             batch->blorp->exec(batch, &params);
+          }

@@ -1,0 +1,30 @@
+--- a/libavcodec/vulkan_encode_h265.c
++++ b/libavcodec/vulkan_encode_h265.c
+@@ -118,7 +118,11 @@
+ 
+     hp->vkrc_info = (VkVideoEncodeH265RateControlInfoKHR) {
+         .sType = VK_STRUCTURE_TYPE_VIDEO_ENCODE_H265_RATE_CONTROL_INFO_KHR,
+-        .flags = VK_VIDEO_ENCODE_H265_RATE_CONTROL_REFERENCE_PATTERN_FLAT_BIT_KHR |
++        /* B frames that reference each other (b_depth > 1) form a dyadic pyramid (hw_base_encode_set_b_pictures
++         * splits each mini-GOP in the middle), which the rate control may model per level */
++        .flags = (ctx->base.max_b_depth > 1 ?
++                  VK_VIDEO_ENCODE_H265_RATE_CONTROL_REFERENCE_PATTERN_DYADIC_BIT_KHR :
++                  VK_VIDEO_ENCODE_H265_RATE_CONTROL_REFERENCE_PATTERN_FLAT_BIT_KHR) |
+                  VK_VIDEO_ENCODE_H265_RATE_CONTROL_REGULAR_GOP_BIT_KHR,
+         .idrPeriod = ctx->base.gop_size,
+         .gopFrameCount = ctx->base.gop_size,
+--- a/libavcodec/vulkan_encode_av1.c
++++ b/libavcodec/vulkan_encode_av1.c
+@@ -124,7 +124,11 @@
+ 
+     ap->vkrc_info = (VkVideoEncodeAV1RateControlInfoKHR) {
+         .sType = VK_STRUCTURE_TYPE_VIDEO_ENCODE_AV1_RATE_CONTROL_INFO_KHR,
+-        .flags = VK_VIDEO_ENCODE_AV1_RATE_CONTROL_REFERENCE_PATTERN_FLAT_BIT_KHR |
++        /* B frames that reference each other (b_depth > 1) form a dyadic pyramid (hw_base_encode_set_b_pictures),
++         * which the rate control may model per level */
++        .flags = (ctx->base.max_b_depth > 1 ?
++                  VK_VIDEO_ENCODE_AV1_RATE_CONTROL_REFERENCE_PATTERN_DYADIC_BIT_KHR :
++                  VK_VIDEO_ENCODE_AV1_RATE_CONTROL_REFERENCE_PATTERN_FLAT_BIT_KHR) |
+                  VK_VIDEO_ENCODE_AV1_RATE_CONTROL_REGULAR_GOP_BIT_KHR,
+         .gopFrameCount = ctx->base.gop_size,
+         .keyFramePeriod = ctx->base.gop_size,

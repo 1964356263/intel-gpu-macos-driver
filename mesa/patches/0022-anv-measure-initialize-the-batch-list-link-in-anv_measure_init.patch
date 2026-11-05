@@ -1,0 +1,32 @@
+anv/measure: initialize the batch's list link in anv_measure_init()
+
+anv_measure_reset() calls anv_measure_init() for a command buffer that has no measure batch yet (capture was off when it
+was allocated, e.g. INTEL_MEASURE=...,start=N) and returns right away, so the batch keeps the zeroed link vk_alloc +
+memset left. Its first submission with snapshots then dereferences measure->base.link.next (NULL) in
+_anv_measure_submit()'s "reused command buffer without reset" check (0eed818588a): Minecraft 26.3 (Vulkan) died with
+SIGSEGV in _anv_measure_submit+0x50 from xe_queue_exec_locked the moment capture started at frame 20000. Platform
+independent; upstream main has the same code. Also leave cmd_buffer->measure NULL when the allocation fails instead of
+writing through a NULL pointer.
+
+--- a/src/intel/vulkan/anv_measure.c
++++ b/src/intel/vulkan/anv_measure.c
+@@ -85,8 +85,19 @@
+       vk_alloc(&cmd_buffer->vk.pool->alloc,
+                batch_bytes, 8,
+                VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
++   if (measure == NULL) {
++      cmd_buffer->measure = NULL;
++      return;
++   }
+ 
+    memset(measure, 0, batch_bytes);
++   /* _anv_measure_submit() looks at the link to spot a command buffer
++    * submitted again without a reset. anv_measure_reset() sets it up, but a
++    * command buffer allocated while capture was off (INTEL_MEASURE start=N)
++    * gets here from anv_measure_reset(), which returns before doing so: a
++    * zeroed link made the first submission with snapshots dereference NULL.
++    */
++   list_inithead(&measure->base.link);
+    cmd_buffer->measure = measure;
+    if(config->cpu_measure)
+       return;

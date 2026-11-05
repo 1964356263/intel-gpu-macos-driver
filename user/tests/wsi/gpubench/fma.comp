@@ -1,0 +1,15 @@
+// SPDX-License-Identifier: MIT
+#version 450
+layout(local_size_x = 256) in;
+layout(std430, binding = 0) buffer Out { vec4 o[]; };
+layout(push_constant) uniform P { uint iters; float k; } p;
+void main() {
+   uint i = gl_GlobalInvocationID.x;
+   vec4 a = vec4(float(i), float(i) * 0.5, float(i) * 0.25, 1.0) * 1e-6, b = a + 1.0, c = a + 2.0, d = a + 3.0;
+   vec4 m = vec4(p.k), n = vec4(1e-7);
+   for (uint j = 0; j < p.iters; j++) {
+      a = fma(a, m, n); b = fma(b, m, n); c = fma(c, m, n); d = fma(d, m, n);
+      a = fma(a, m, n); b = fma(b, m, n); c = fma(c, m, n); d = fma(d, m, n);
+   }
+   o[i] = a + b + c + d;
+}

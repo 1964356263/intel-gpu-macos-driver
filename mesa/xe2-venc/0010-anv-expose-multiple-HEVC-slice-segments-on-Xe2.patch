@@ -1,0 +1,26 @@
+From bf875ce6a8095abc37e3d011f2f6025c3cb380cb Mon Sep 17 00:00:00 2001
+From: "Emil J. Tywoniak" <emil@tywoniak.eu>
+Date: Thu, 15 Oct 2026 00:42:35 +0200
+Subject: [PATCH 10/18] anv: expose multiple HEVC slice segments on Xe2
+
+---
+ src/intel/vulkan/anv_video.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/src/intel/vulkan/anv_video.c b/src/intel/vulkan/anv_video.c
+index 75770bf7e06..e4de80fc502 100644
+--- a/src/intel/vulkan/anv_video.c
++++ b/src/intel/vulkan/anv_video.c
+@@ -508,6 +508,9 @@ anv_GetPhysicalDeviceVideoCapabilitiesKHR(VkPhysicalDevice physicalDevice,
+ 
+       if (ext) {
+          ext->flags = VK_VIDEO_ENCODE_H265_CAPABILITY_PER_PICTURE_TYPE_MIN_MAX_QP_BIT_KHR;
++         /* TODO: Only verified on Xe2 so far. */
++         if (pdevice->info.verx10 >= 200)
++            ext->flags |= VK_VIDEO_ENCODE_H265_CAPABILITY_MULTIPLE_SLICE_SEGMENTS_PER_TILE_BIT_KHR;
+          ext->maxLevelIdc = STD_VIDEO_H265_LEVEL_IDC_5_1;
+          ext->ctbSizes = VK_VIDEO_ENCODE_H265_CTB_SIZE_32_BIT_KHR |
+                          VK_VIDEO_ENCODE_H265_CTB_SIZE_64_BIT_KHR;
+-- 
+2.54.0 (Apple Git-157)
+

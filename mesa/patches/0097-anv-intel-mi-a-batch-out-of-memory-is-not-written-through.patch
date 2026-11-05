@@ -1,0 +1,954 @@
+From: Yusuf İhsan KILINÇ
+Subject: [PATCH 0097] anv, intel/mi: a batch out of memory is not written through
+
+On top of 0096 (src/mesa-oom1 = src/mesa-prod9 + this, build-oom1). NOT installed.
+
+When a command buffer batch cannot grow, anv_batch_emit_dwords() records the error in the batch
+(anv_batch_set_error) and returns NULL; vkEndCommandBuffer then returns it. The emit macros (anv_batch_emit,
+anv_batch_emitn, mi_builder_pack, blorp_emit) skip a NULL instruction, and upstream fixed the open-coded copies
+the same way (1c930a505e7 "anv: don't attempt to memcpy if allocation fails", MR 37534), but the code that writes
+dwords of an emitted instruction by hand did not check, nor did the code that reads batch.relocs, which stays
+NULL when the first batch BO of a command buffer cannot be allocated. Upstream main (6240b967, 2026-11-03) has all
+of these unchanged; this fixes them in the style of 37534: a NULL instruction is not written, nothing else changes.
+
+dEQP-VK.wsi.headless.swapchain.simulate_oom.* with MESA_VK_WSI_DEBUG=sw (CPU images, whose blit command
+buffers are recorded at swapchain creation): SIGSEGV in mi_builder (_mi_copy_no_unref from
+cmd_buffer_emit_bt_pool_base_address in vkBeginCommandBuffer) and, once that was fixed, in blorp_exec
+(anv_cmd_buffer_add_reloc_bo reading the NULL batch.relocs). Same on the installed prod8.
+
+intel/common/mi_builder.h:
+- mi_builder_flush_math: drop the math instead of copying it to NULL;
+- _mi_copy_no_unref: immediate -> REG64 / MEM64 writes the operand dwords only if emitted;
+- mi_store_relocated_imm: no token pointers into a failed instruction; mi_relocate_store_imm ignores them;
+- mi_resolve_relocated_address_token: skips the store whose instruction was not emitted;
+- mi_goto_if: a jump that could not be emitted is not memset nor recorded for mi_goto_target to patch.
+anv:
+- anv_cmd_buffer_ensure_batch_relocs(): the lazy first batch BO; anv_cmd_buffer_add_reloc_bo returns its error
+  instead of using a NULL batch.relocs; same for the shader / indirect set reloc appends (bind_shaders,
+  cmd_buffer_flush_gfx_state, DGC);
+- open-coded dword writes after anv_batch_emitn/emit_dwords: 3DSTATE_CONSTANT_ALL, 3DSTATE_VERTEX_BUFFERS,
+  3DMESH_3D, the anv_batch_emit_gfx copy in genX_cmd_draw.c (the copy of what 37534 fixed in genX_gfx_state.c),
+  clear color MI_STORE_DATA_IMM, TR-TT entry writes, SO memcpy, the dummy-draw WA, simple shader, the perf query
+  relocated address patching (khr_perf_query_resolve_reloc keeps begin/end paired), DGC return address, the
+  secondary return address, video encode (H.264/H.265/AV1 PAK insert objects, VDENC state);
+- anv_trtt_first_bind_init_queue does not submit a batch in error (as anv_sparse_bind_trtt already checks);
+- vkEndCommandBuffer returns the batch status after its own emissions (it returned VK_SUCCESS even when the
+  closing MI_BATCH_BUFFER_START/END or flushes could not be emitted);
+- vkCmdExecuteCommands with a secondary in error (its vkEndCommandBuffer failed; CTS conditional_rendering
+  ignores that result) fails the container with that error instead of executing it: exec_mode was never set
+  and anv_cmd_buffer_add_secondary jumped through its switch with mode 0 (upstream only asserts);
+- anv_queue_submit refuses a command buffer in error (same CTS pattern for primaries: its unterminated batch
+  was chained, NULL deref in anv_cmd_buffer_chain_command_buffers; on hardware it would run an unterminated
+  batch) and returns the recording error.
+
+Tested on the build Mac (x86_64 deqp-vk under Rosetta, xemac fake device; report
+docs/reports/b580-anv-oom-batch-20261104.md): wsi.headless *simulate_oom* with MESA_VK_WSI_DEBUG=sw 10 Crash ->
+14/14 Pass; api.* (267509) and wsi.headless.* (4028) identical to prod9 case by case on the default path (apart
+from present_id_wait.wait.* timing flakes, same in both). With a test-only injection failing ~1/50 command buffer
+emissions over 11248 cases from 17 groups, prod9 crashed in 976 cases and this patch in none (1/1000: >=77 vs 0).
+
+Generated-by: LLM
+
+diff --git a/src/intel/common/mi_builder.h b/src/intel/common/mi_builder.h
+index 527e649..978fbdf 100644
+--- a/src/intel/common/mi_builder.h
++++ b/src/intel/common/mi_builder.h
+@@ -200,6 +200,12 @@ mi_builder_flush_math(struct mi_builder *b)
+ 
+    uint32_t *dw = (uint32_t *)__gen_get_batch_dwords(b->user_data,
+                                                      1 + b->num_math_dwords);
++   /* The batch is in an error state (out of memory): drop the math. */
++   if (dw == NULL) {
++      b->num_math_dwords = 0;
++      return;
++   }
++
+    mi_builder_pack(b, GENX(MI_MATH), dw, math) {
+ #if GFX_VERx10 >= 125
+       math.MOCS = b->mocs;
+@@ -524,10 +530,12 @@ _mi_copy_no_unref(struct mi_builder *b,
+                lri.AddCSMMIOStartOffset = reg.cs;
+ #endif
+             }
+-            dw[1] = reg.num;
+-            dw[2] = src.imm;
+-            dw[3] = reg.num + 4;
+-            dw[4] = src.imm >> 32;
++            if (dw != NULL) {
++               dw[1] = reg.num;
++               dw[2] = src.imm;
++               dw[3] = reg.num + 4;
++               dw[4] = src.imm >> 32;
++            }
+          } else {
+ #if GFX_VER >= 8
+             assert(dst.type == MI_VALUE_TYPE_MEM64);
+@@ -542,8 +550,10 @@ _mi_copy_no_unref(struct mi_builder *b,
+                sdi.ForceWriteCompletionCheck = b->write_check;
+ #endif
+             }
+-            dw[3] = src.imm;
+-            dw[4] = src.imm >> 32;
++            if (dw != NULL) {
++               dw[3] = src.imm;
++               dw[4] = src.imm >> 32;
++            }
+ #else
+          _mi_copy_no_unref(b, mi_value_half(dst, false),
+                               mi_value_half(src, false));
+@@ -1357,6 +1367,9 @@ mi_store_relocated_imm(struct mi_builder *b, struct mi_value dst)
+       .dst_type = dst.type,
+    };
+ 
++   /* If the batch failed to allocate (out of memory), dw is NULL and the
++    * token keeps NULL pointers, which mi_relocate_store_imm() ignores.
++    */
+    uint32_t *dw;
+    switch (dst.type) {
+    case MI_VALUE_TYPE_MEM32:
+@@ -1367,7 +1380,8 @@ mi_store_relocated_imm(struct mi_builder *b, struct mi_value dst)
+                            GENX(MI_STORE_DATA_IMM_length_bias);
+          sdm.Address = dst.addr;
+       }
+-      token.ptr[0] = dw + GENX(MI_STORE_DATA_IMM_ImmediateData_start) / 32;
++      if (dw != NULL)
++         token.ptr[0] = dw + GENX(MI_STORE_DATA_IMM_ImmediateData_start) / 32;
+       mi_builder_set_write(b);
+       break;
+ 
+@@ -1379,8 +1393,10 @@ mi_store_relocated_imm(struct mi_builder *b, struct mi_value dst)
+                            GENX(MI_STORE_DATA_IMM_length_bias);
+          sdm.Address = dst.addr;
+       }
+-      token.ptr[0] = &dw[GENX(MI_STORE_DATA_IMM_ImmediateData_start) / 32];
+-      token.ptr[1] = &dw[GENX(MI_STORE_DATA_IMM_ImmediateData_start) / 32 + 1];
++      if (dw != NULL) {
++         token.ptr[0] = &dw[GENX(MI_STORE_DATA_IMM_ImmediateData_start) / 32];
++         token.ptr[1] = &dw[GENX(MI_STORE_DATA_IMM_ImmediateData_start) / 32 + 1];
++      }
+       mi_builder_set_write(b);
+       break;
+ 
+@@ -1396,7 +1412,8 @@ mi_store_relocated_imm(struct mi_builder *b, struct mi_value dst)
+ #endif
+          lri.RegisterOffset = reg.num;
+       }
+-      token.ptr[0] = &dw[2];
++      if (dw != NULL)
++         token.ptr[0] = &dw[2];
+       break;
+ 
+    case MI_VALUE_TYPE_REG64: {
+@@ -1410,10 +1427,12 @@ mi_store_relocated_imm(struct mi_builder *b, struct mi_value dst)
+          lri.AddCSMMIOStartOffset = reg.cs;
+ #endif
+       }
+-      dw[1] = reg.num;
+-      dw[3] = reg.num + 4;
+-      token.ptr[0] = &dw[2];
+-      token.ptr[1] = &dw[4];
++      if (dw != NULL) {
++         dw[1] = reg.num;
++         dw[3] = reg.num + 4;
++         token.ptr[0] = &dw[2];
++         token.ptr[1] = &dw[4];
++      }
+       break;
+    }
+ 
+@@ -1428,6 +1447,10 @@ mi_store_relocated_imm(struct mi_builder *b, struct mi_value dst)
+ static inline void
+ mi_relocate_store_imm(struct mi_reloc_imm_token token, uint64_t value)
+ {
++   /* The instruction was never emitted (batch out of memory). */
++   if (token.ptr[0] == NULL)
++      return;
++
+    switch (token.dst_type) {
+    case MI_VALUE_TYPE_MEM64:
+    case MI_VALUE_TYPE_REG64:
+@@ -1501,8 +1524,11 @@ mi_resolve_relocated_address_token(struct mi_builder *b,
+                                                     batch_location);
+    uint64_t addr_addr_u64 = __gen_combine_address(b->user_data, batch_location,
+                                                   addr, 0);
+-   *(token.ptrs[0]) = addr_addr_u64;
+-   *(token.ptrs[1]) = addr_addr_u64 + 4;
++   /* A store that was never emitted (batch out of memory) has no pointer. */
++   if (token.ptrs[0] != NULL)
++      *(token.ptrs[0]) = addr_addr_u64;
++   if (token.ptrs[1] != NULL)
++      *(token.ptrs[1]) = addr_addr_u64 + 4;
+ }
+ 
+ #endif /* MI_BUILDER_CAN_WRITE_BATCH */
+@@ -1671,8 +1697,11 @@ mi_goto_if(struct mi_builder *b, struct mi_value cond,
+          .mi_bbs = __gen_get_batch_dwords(b->user_data,
+                                           GENX(MI_BATCH_BUFFER_START_length)),
+       };
+-      memset(g.mi_bbs, 0, 4 * GENX(MI_BATCH_BUFFER_START_length));
+-      t->gotos[t->num_gotos++] = g;
++      /* No jump to patch if the batch ran out of memory. */
++      if (g.mi_bbs != NULL) {
++         memset(g.mi_bbs, 0, 4 * GENX(MI_BATCH_BUFFER_START_length));
++         t->gotos[t->num_gotos++] = g;
++      }
+    }
+    if (predicated) {
+ #if GFX_VERx10 >= 125
+diff --git a/src/intel/vulkan/anv_batch_chain.c b/src/intel/vulkan/anv_batch_chain.c
+index 1811485..f2f30f3 100644
+--- a/src/intel/vulkan/anv_batch_chain.c
++++ b/src/intel/vulkan/anv_batch_chain.c
+@@ -1065,10 +1065,13 @@ anv_cmd_buffer_end_batch_buffer(struct anv_cmd_buffer *cmd_buffer)
+       if (!ANV_DEBUG(NO_SECONDARY_CALL)) {
+          cmd_buffer->exec_mode = ANV_CMD_BUFFER_EXEC_MODE_CALL_AND_RETURN;
+ 
+-         void *jump_addr =
+-            anv_genX(devinfo, batch_emit_return)(&cmd_buffer->batch) +
+-            (GFX9_MI_BATCH_BUFFER_START_BatchBufferStartAddress_start / 8);
+-         cmd_buffer->return_addr = anv_batch_address(&cmd_buffer->batch, jump_addr);
++         void *bbs = anv_genX(devinfo, batch_emit_return)(&cmd_buffer->batch);
++         if (bbs != NULL) {
++            void *jump_addr = bbs +
++               (GFX9_MI_BATCH_BUFFER_START_BatchBufferStartAddress_start / 8);
++            cmd_buffer->return_addr =
++               anv_batch_address(&cmd_buffer->batch, jump_addr);
++         }
+ 
+          /* The emit above may have caused us to chain batch buffers which
+           * would mean that batch_bo is no longer valid.
+@@ -1636,6 +1639,17 @@ anv_queue_submit(struct vk_queue *vk_queue,
+ 
+    anv_queue_free_initial_submission(queue);
+ 
++   /* A command buffer whose recording ran out of memory (vkEndCommandBuffer
++    * returned the error) is invalid and its batch may not even be
++    * terminated: never chain or execute it.
++    */
++   for (uint32_t i = 0; i < submit->command_buffer_count; i++) {
++      struct anv_cmd_buffer *cmd_buffer =
++         container_of(submit->command_buffers[i], struct anv_cmd_buffer, vk);
++      if (anv_batch_has_error(&cmd_buffer->batch))
++         return cmd_buffer->batch.status;
++   }
++
+    if (u_trace_should_process(&device->ds.trace_context)) {
+       /* Refresh perfetto's knowledge of any easily accessible, long-lived
+        * object names referenced by this submit -- this helps provide better
+diff --git a/src/intel/vulkan/anv_cmd_buffer.c b/src/intel/vulkan/anv_cmd_buffer.c
+index 17f53d2..09c00b6 100644
+--- a/src/intel/vulkan/anv_cmd_buffer.c
++++ b/src/intel/vulkan/anv_cmd_buffer.c
+@@ -1799,15 +1799,15 @@ anv_cmd_buffer_bind_shaders(struct vk_command_buffer *vk_cmd_buffer,
+    struct anv_cmd_buffer *cmd_buffer =
+       container_of(vk_cmd_buffer, struct anv_cmd_buffer, vk);
+ 
+-   /* Make sure cmd_buffer->batch.relocs was intialized */
+-   if (list_is_empty(&cmd_buffer->batch_bos))
+-      anv_batch_emit_ensure_space(&cmd_buffer->batch, 4);
+-
+-   /* Append any scratch surface used by the shaders */
+-   for (uint32_t i = 0; i < stage_count; i++) {
+-      if (shaders[i] != NULL) {
+-         anv_reloc_list_append(cmd_buffer->batch.relocs,
+-                               &shaders[i]->relocs);
++   /* Append any scratch surface used by the shaders (needs
++    * cmd_buffer->batch.relocs, which a batch out of memory may not have).
++    */
++   if (anv_cmd_buffer_ensure_batch_relocs(cmd_buffer) == VK_SUCCESS) {
++      for (uint32_t i = 0; i < stage_count; i++) {
++         if (shaders[i] != NULL) {
++            anv_reloc_list_append(cmd_buffer->batch.relocs,
++                                  &shaders[i]->relocs);
++         }
+       }
+    }
+ 
+diff --git a/src/intel/vulkan/anv_private.h b/src/intel/vulkan/anv_private.h
+index c702ee8..0ac42bd 100644
+--- a/src/intel/vulkan/anv_private.h
++++ b/src/intel/vulkan/anv_private.h
+@@ -5376,11 +5376,25 @@ anv_cmd_buffer_has_gfx_stage(struct anv_cmd_buffer *cmd_buffer,
+       })
+ 
+ 
++/* The first batch BO, and with it cmd_buffer->batch.relocs, is allocated on
++ * first use. If that allocation fails, the error is recorded in the batch and
++ * batch.relocs stays NULL.
++ */
+ static inline VkResult
+-anv_cmd_buffer_add_reloc_bo(struct anv_cmd_buffer *cmd_buffer, struct anv_bo *bo)
++anv_cmd_buffer_ensure_batch_relocs(struct anv_cmd_buffer *cmd_buffer)
+ {
+    if (list_is_empty(&cmd_buffer->batch_bos))
+-      anv_batch_emit_ensure_space(&cmd_buffer->batch, 4);
++      return anv_batch_emit_ensure_space(&cmd_buffer->batch, 4);
++
++   return VK_SUCCESS;
++}
++
++static inline VkResult
++anv_cmd_buffer_add_reloc_bo(struct anv_cmd_buffer *cmd_buffer, struct anv_bo *bo)
++{
++   VkResult result = anv_cmd_buffer_ensure_batch_relocs(cmd_buffer);
++   if (result != VK_SUCCESS)
++      return result;
+ 
+    return anv_reloc_list_add_bo(cmd_buffer->batch.relocs, bo);
+ }
+diff --git a/src/intel/vulkan/anv_sparse.c b/src/intel/vulkan/anv_sparse.c
+index cbb0dbe..325ce2a 100644
+--- a/src/intel/vulkan/anv_sparse.c
++++ b/src/intel/vulkan/anv_sparse.c
+@@ -615,6 +615,11 @@ anv_trtt_first_bind_init_queue(struct anv_queue *queue,
+ 
+    anv_genX(device->info, async_submit_end)(submit);
+ 
++   if (submit->batch.status != VK_SUCCESS) {
++      result = submit->batch.status;
++      goto out_submit_fini;
++   }
++
+    result = device->kmd_backend->queue_exec_async(submit, 0, NULL, 1,
+                                                   &submit->signal);
+    if (result != VK_SUCCESS)
+diff --git a/src/intel/vulkan/genX_cmd_buffer.c b/src/intel/vulkan/genX_cmd_buffer.c
+index f59908a..831700a 100644
+--- a/src/intel/vulkan/genX_cmd_buffer.c
++++ b/src/intel/vulkan/genX_cmd_buffer.c
+@@ -988,6 +988,8 @@ set_image_clear_color(struct anv_cmd_buffer *cmd_buffer,
+       uint32_t *dw = anv_batch_emitn(&cmd_buffer->batch, 3 + 6,
+                                      GENX(MI_STORE_DATA_IMM),
+                                      .StoreQword = true, .Address = addr);
++      if (dw == NULL)
++         return;
+ 
+       bool is_depth = aspect & VK_IMAGE_ASPECT_DEPTH_BIT;
+       uint64_t sampler_offset =
+@@ -1007,6 +1009,9 @@ set_image_clear_color(struct anv_cmd_buffer *cmd_buffer,
+       uint32_t *dw = anv_batch_emitn(&cmd_buffer->batch, 3 + 8,
+                                      GENX(MI_STORE_DATA_IMM),
+                                      .StoreQword = true, .Address = addr);
++      if (dw == NULL)
++         return;
++
+       dw[3] = clear_color.u32[0];
+       dw[4] = clear_color.u32[1];
+       dw[5] = clear_color.u32[2];
+@@ -4334,7 +4339,8 @@ end_command_buffer(struct anv_cmd_buffer *cmd_buffer,
+                                  cmd_buffer->vk.level);
+       genX(cmd_buffer_apply_pipe_flushes)(cmd_buffer);
+       anv_cmd_buffer_end_batch_buffer(cmd_buffer);
+-      return VK_SUCCESS;
++      /* The emissions above may have run out of memory. */
++      return cmd_buffer->batch.status;
+    }
+ 
+    /* Flush L1/L2 caches before ending the command buffer. Some applications
+@@ -4434,7 +4440,8 @@ end_command_buffer(struct anv_cmd_buffer *cmd_buffer,
+ 
+    anv_cmd_buffer_end_batch_buffer(cmd_buffer);
+ 
+-   return VK_SUCCESS;
++   /* The emissions above may have run out of memory. */
++   return cmd_buffer->batch.status;
+ }
+ 
+ VkResult
+@@ -4474,6 +4481,18 @@ genX(CmdExecuteCommands)(
+    if (anv_batch_has_error(&container->batch))
+       return;
+ 
++   /* A secondary whose recording failed (vkEndCommandBuffer returned the
++    * error) is invalid and may not have been ended at all: fail the container
++    * with its error instead of executing it.
++    */
++   for (uint32_t i = 0; i < commandBufferCount; i++) {
++      ANV_FROM_HANDLE(anv_cmd_buffer, secondary, pCmdBuffers[i]);
++      if (anv_batch_has_error(&secondary->batch)) {
++         anv_batch_set_error(&container->batch, secondary->batch.status);
++         return;
++      }
++   }
++
+    /* The secondary command buffers will assume that the PMA fix is disabled
+     * when they begin executing.  Make sure this is true.
+     */
+@@ -7995,6 +8014,9 @@ genX(write_trtt_entries)(struct anv_async_submit *submit,
+          .StoreQword = true,
+          .Address = anv_address_from_u64(l3l2_binds[i].pte_addr),
+       );
++      if (dw == NULL)
++         return;
++
+       dw += 3;
+       for (uint32_t j = 0; j < extra_writes + 1; j++) {
+          uint64_t entry_addr_64b = l3l2_binds[i + j].entry_addr;
+@@ -8030,6 +8052,9 @@ genX(write_trtt_entries)(struct anv_async_submit *submit,
+          .ForceWriteCompletionCheck = is_last_write,
+          .Address = anv_address_from_u64(l1_binds[i].pte_addr),
+       );
++      if (dw == NULL)
++         return;
++
+       dw += 3;
+       for (uint32_t j = 0; j < extra_writes + 1; j++) {
+          *dw = (l1_binds[i + j].entry_addr >> 16) & 0xFFFFFFFF;
+diff --git a/src/intel/vulkan/genX_cmd_dgc.c b/src/intel/vulkan/genX_cmd_dgc.c
+index 884c400..a680113 100644
+--- a/src/intel/vulkan/genX_cmd_dgc.c
++++ b/src/intel/vulkan/genX_cmd_dgc.c
+@@ -824,10 +824,9 @@ void genX(CmdPreprocessGeneratedCommandsEXT)(
+    }
+ 
+    /* Add the indirect set to the relocation list. */
+-   if (indirect_set) {
+-      anv_cmd_buffer_add_reloc_bo(cmd_buffer, indirect_set->bo);
++   if (indirect_set &&
++       anv_cmd_buffer_add_reloc_bo(cmd_buffer, indirect_set->bo) == VK_SUCCESS)
+       anv_reloc_list_append(cmd_buffer->batch.relocs, &indirect_set->relocs);
+-   }
+ 
+    switch (layout->bind_point) {
+    case VK_PIPELINE_BIND_POINT_GRAPHICS:
+@@ -894,10 +893,9 @@ void genX(CmdExecuteGeneratedCommandsEXT)(
+     genX(cmd_buffer_apply_pipe_flushes)(cmd_buffer);
+ 
+    /* Add the indirect set to the relocation list. */
+-   if (indirect_set) {
+-      anv_cmd_buffer_add_reloc_bo(cmd_buffer, indirect_set->bo);
++   if (indirect_set &&
++       anv_cmd_buffer_add_reloc_bo(cmd_buffer, indirect_set->bo) == VK_SUCCESS)
+       anv_reloc_list_append(cmd_buffer->batch.relocs, &indirect_set->relocs);
+-   }
+ 
+    struct mi_builder b;
+    mi_builder_init(&b, devinfo, &cmd_buffer->batch);
+@@ -929,7 +927,7 @@ void genX(CmdExecuteGeneratedCommandsEXT)(
+       }
+ 
+       if (isPreprocessed) {
+-         return_addr_loc =
++         void *sdi =
+             anv_batch_emitn(&cmd_buffer->batch,
+                             GENX(MI_STORE_DATA_IMM_length) + 1 /* QWord write */,
+                             GENX(MI_STORE_DATA_IMM),
+@@ -938,8 +936,10 @@ void genX(CmdExecuteGeneratedCommandsEXT)(
+ #endif
+                             .Address = anv_address_add(
+                                anv_address_from_u64(pGeneratedCommandsInfo->preprocessAddress),
+-                               GENX(MI_STORE_DATA_IMM_ImmediateData_start) / 8)) +
+-            GENX(MI_STORE_DATA_IMM_ImmediateData_start) / 8;
++                               GENX(MI_STORE_DATA_IMM_ImmediateData_start) / 8));
++         if (sdi != NULL)
++            return_addr_loc =
++               sdi + GENX(MI_STORE_DATA_IMM_ImmediateData_start) / 8;
+       }
+ 
+       if (ANV_DEBUG(DGC_DUMP)) {
+@@ -1034,8 +1034,9 @@ void genX(CmdExecuteGeneratedCommandsEXT)(
+       if (params) {
+          params->return_addr = anv_address_physical(return_addr);
+       } else {
+-         assert(return_addr_loc);
+-         *return_addr_loc = anv_address_physical(return_addr);
++         assert(return_addr_loc || anv_batch_has_error(&cmd_buffer->batch));
++         if (return_addr_loc != NULL)
++            *return_addr_loc = anv_address_physical(return_addr);
+       }
+ 
+       if (pGeneratedCommandsInfo->sequenceCountAddress != 0)
+@@ -1115,7 +1116,7 @@ void genX(CmdExecuteGeneratedCommandsEXT)(
+          params = postprocess_cs_sequences(cmd_buffer, layout, indirect_set,
+                                            pGeneratedCommandsInfo);
+       } else {
+-         return_addr_loc =
++         void *sdi =
+             anv_batch_emitn(&cmd_buffer->batch,
+                             GENX(MI_STORE_DATA_IMM_length) + 1 /* QWord write */,
+                             GENX(MI_STORE_DATA_IMM),
+@@ -1124,8 +1125,10 @@ void genX(CmdExecuteGeneratedCommandsEXT)(
+ #endif
+                             .Address = anv_address_add(
+                                anv_address_from_u64(pGeneratedCommandsInfo->preprocessAddress),
+-                               GENX(MI_STORE_DATA_IMM_ImmediateData_start) / 8)) +
+-            GENX(MI_STORE_DATA_IMM_ImmediateData_start) / 8;
++                               GENX(MI_STORE_DATA_IMM_ImmediateData_start) / 8));
++         if (sdi != NULL)
++            return_addr_loc =
++               sdi + GENX(MI_STORE_DATA_IMM_ImmediateData_start) / 8;
+       }
+ 
+       /* If a shader runs, flush the data to make it visible to CS. */
+@@ -1179,8 +1182,9 @@ void genX(CmdExecuteGeneratedCommandsEXT)(
+       if (params) {
+          params->return_addr = anv_address_physical(return_addr);
+       } else {
+-         assert(return_addr_loc);
+-         *return_addr_loc = anv_address_physical(return_addr);
++         assert(return_addr_loc || anv_batch_has_error(&cmd_buffer->batch));
++         if (return_addr_loc != NULL)
++            *return_addr_loc = anv_address_physical(return_addr);
+       }
+ 
+       if (pGeneratedCommandsInfo->sequenceCountAddress != 0)
+@@ -1239,15 +1243,17 @@ void genX(CmdExecuteGeneratedCommandsEXT)(
+             ANV_INTERNAL_KERNEL_DGC_RT_COMPUTE);
+       } else {
+          genX(cmd_buffer_apply_pipe_flushes)(cmd_buffer);
+-         return_addr_loc =
++         void *sdi =
+             anv_batch_emitn(&cmd_buffer->batch,
+                             GENX(MI_STORE_DATA_IMM_length) + 1 /* QWord write */,
+                             GENX(MI_STORE_DATA_IMM),
+                             .ForceWriteCompletionCheck = true,
+                             .Address = anv_address_add(
+                                anv_address_from_u64(pGeneratedCommandsInfo->preprocessAddress),
+-                               GENX(MI_STORE_DATA_IMM_ImmediateData_start) / 8)) +
+-            GENX(MI_STORE_DATA_IMM_ImmediateData_start) / 8;
++                               GENX(MI_STORE_DATA_IMM_ImmediateData_start) / 8));
++         if (sdi != NULL)
++            return_addr_loc =
++               sdi + GENX(MI_STORE_DATA_IMM_ImmediateData_start) / 8;
+       }
+ 
+       /* If a shader runs, flush the data to make it visible to CS. */
+@@ -1294,8 +1300,9 @@ void genX(CmdExecuteGeneratedCommandsEXT)(
+       if (params) {
+          params->return_addr = anv_address_physical(return_addr);
+       } else {
+-         assert(return_addr_loc);
+-         *return_addr_loc = anv_address_physical(return_addr);
++         assert(return_addr_loc || anv_batch_has_error(&cmd_buffer->batch));
++         if (return_addr_loc != NULL)
++            *return_addr_loc = anv_address_physical(return_addr);
+       }
+ 
+       if (pGeneratedCommandsInfo->sequenceCountAddress != 0)
+diff --git a/src/intel/vulkan/genX_cmd_draw.c b/src/intel/vulkan/genX_cmd_draw.c
+index 21a7d51..aa04449 100644
+--- a/src/intel/vulkan/genX_cmd_draw.c
++++ b/src/intel/vulkan/genX_cmd_draw.c
+@@ -430,6 +430,8 @@ cmd_buffer_emit_push_constant_all(struct anv_cmd_buffer *cmd_buffer,
+                         .ShaderUpdateEnable = shader_mask,
+                         .PointerBufferMask = buffer_mask,
+                         .MOCS = isl_mocs(&cmd_buffer->device->isl_dev, 0, false));
++   if (dw == NULL)
++      return;
+ 
+    for (int i = 0; i < buffer_count; i++) {
+       const struct anv_push_range *range = &bind_map->push_ranges[i];
+@@ -760,6 +762,9 @@ cmd_buffer_flush_vertex_buffers(struct anv_cmd_buffer *cmd_buffer,
+    const uint32_t num_dwords = 1 + num_buffers * 4;
+    uint32_t *p = anv_batch_emitn(&cmd_buffer->batch, num_dwords,
+                                  GENX(3DSTATE_VERTEX_BUFFERS));
++   if (p == NULL)
++      return;
++
+    uint32_t i = 0;
+    u_foreach_bit(vb, vb_emit) {
+       const struct anv_vertex_binding *binding =
+@@ -966,8 +971,11 @@ cmd_buffer_flush_gfx_state(struct anv_cmd_buffer *cmd_buffer)
+             continue;
+ 
+          /* Also add the relocations (scratch buffers) */
+-         VkResult result = anv_reloc_list_append(cmd_buffer->batch.relocs,
+-                                                 &gfx->shaders[s]->relocs);
++         VkResult result = anv_cmd_buffer_ensure_batch_relocs(cmd_buffer);
++         if (result == VK_SUCCESS) {
++            result = anv_reloc_list_append(cmd_buffer->batch.relocs,
++                                           &gfx->shaders[s]->relocs);
++         }
+          if (result != VK_SUCCESS) {
+             anv_batch_set_error(&cmd_buffer->batch, result);
+             return;
+@@ -1150,10 +1158,12 @@ cmd_buffer_pre_draw_wa(struct anv_cmd_buffer *cmd_buffer)
+ #define anv_batch_emit_gfx(batch, cmd, name) ({                         \
+       void *__dst = anv_batch_emit_dwords(                              \
+          batch, __anv_cmd_length(cmd));                                 \
+-      memcpy(__dst, hw_state->packed.name,                              \
+-             4 * __anv_cmd_length(cmd));                                \
+-      VG(VALGRIND_CHECK_MEM_IS_DEFINED(                                 \
+-            __dst, __anv_cmd_length(cmd) * 4));                         \
++      if (__dst != NULL) {                                              \
++         memcpy(__dst, hw_state->packed.name,                           \
++               4 * __anv_cmd_length(cmd));                              \
++         VG(VALGRIND_CHECK_MEM_IS_DEFINED(                              \
++               __dst, __anv_cmd_length(cmd) * 4));                      \
++      }                                                                 \
+       __dst;                                                            \
+    })
+ 
+@@ -2600,7 +2610,7 @@ emit_indirect_3dmesh_3d(struct anv_batch *batch,
+                    .PredicateEnable           = predicate_enable,
+                    .IndirectParameterEnable   = true,
+                    .ExtendedParameter0Present = uses_drawid);
+-   if (uses_drawid)
++   if (dw != NULL && uses_drawid)
+       dw[len - 1] = 0;
+ }
+ 
+diff --git a/src/intel/vulkan/genX_cmd_draw_helpers.h b/src/intel/vulkan/genX_cmd_draw_helpers.h
+index ea1a6da..46b63ec 100644
+--- a/src/intel/vulkan/genX_cmd_draw_helpers.h
++++ b/src/intel/vulkan/genX_cmd_draw_helpers.h
+@@ -37,6 +37,8 @@ emit_vertex_bo(struct anv_cmd_buffer *cmd_buffer,
+ {
+    uint32_t *p = anv_batch_emitn(&cmd_buffer->batch, 5,
+                                  GENX(3DSTATE_VERTEX_BUFFERS));
++   if (p == NULL)
++      return;
+ 
+    GENX(VERTEX_BUFFER_STATE_pack)(&cmd_buffer->batch, p + 1,
+       &(struct GENX(VERTEX_BUFFER_STATE)) {
+diff --git a/src/intel/vulkan/genX_cmd_video_enc.c b/src/intel/vulkan/genX_cmd_video_enc.c
+index 4bb5c79..0acce0f 100644
+--- a/src/intel/vulkan/genX_cmd_video_enc.c
++++ b/src/intel/vulkan/genX_cmd_video_enc.c
+@@ -876,6 +876,8 @@ anv_h264_emit_vdenc_pipe_mode_select(struct anv_cmd_buffer *cmd,
+ {
+ #if GFX_VER >= 20
+    uint32_t *dw = anv_batch_emitn(&cmd->batch, GENX(VDENC_PIPE_MODE_SELECT_length), GENX(VDENC_PIPE_MODE_SELECT));
++   if (!dw)
++      return;
+    struct GENX(VDENC_PIPE_MODE_SELECT) vdenc_pipe_mode = { GENX(VDENC_PIPE_MODE_SELECT_header) };
+    {
+ #else
+@@ -1292,6 +1294,8 @@ anv_h264_emit_vdenc_avc_img_state(struct anv_cmd_buffer *cmd,
+ 
+    uint32_t *dw = anv_batch_emitn(batch, GENX(VDENC_AVC_IMG_STATE_length),
+                                   GENX(VDENC_AVC_IMG_STATE));
++   if (!dw)
++      return;
+    GENX(VDENC_AVC_IMG_STATE_pack)(batch, dw, &img);
+    dw[1] |= h264_vdenc_avc_img_state_xe2_dw1;
+    dw[2] |= h264_vdenc_avc_img_state_xe2_dw2[type][tu][ref_pic][0];
+@@ -1317,6 +1321,8 @@ anv_h264_emit_vdenc_avc_img_state(struct anv_cmd_buffer *cmd,
+    const uint32_t *cost = h264_vdenc_avc_img_state[4 - 1][img_type][0][0][0][0];
+ 
+    uint32_t *dw = anv_batch_emitn(batch, 20, GENX(VDENC_AVC_IMG_STATE));
++   if (!dw)
++      return;
+    GENX(VDENC_AVC_IMG_STATE_pack)(batch, dw, &img);
+    for (unsigned i = 0; i < 19; i++)
+       dw[i + 1] |= cost[i];
+@@ -1853,6 +1859,8 @@ anv_h264_emit_slice_header(struct anv_cmd_buffer *cmd,
+    dw = anv_batch_emitn(&cmd->batch, length_in_dw + 2, GENX(MFX_PAK_INSERT_OBJECT),
+          .DataBitsInLastDW = data_bits_in_last_dw > 0 ? data_bits_in_last_dw : 32,
+          .HeaderLengthExcludedFromSize =  ACCUMULATE);
++   if (!dw)
++      return;
+ 
+    memcpy(dw + 2, insert_zero, length_in_dw * 4);
+ 
+@@ -1866,6 +1874,8 @@ anv_h264_emit_slice_header(struct anv_cmd_buffer *cmd,
+             .DataBitsInLastDW = data_bits_in_last_dw > 0 ? data_bits_in_last_dw : 32,
+             .SliceHeaderIndicator = true,
+             .HeaderLengthExcludedFromSize =  ACCUMULATE);
++   if (!dw)
++      return;
+ 
+    memcpy(dw + 2, slice_header_data + 1, length_in_dw * 4);
+ }
+@@ -3928,6 +3938,8 @@ anv_h265_emit_slice_header(struct anv_cmd_buffer *cmd,
+          .DataBitsInLastDW = data_bits_in_last_dw > 0 ? data_bits_in_last_dw : 32,
+          .SliceHeaderIndicator = true,
+          .HeaderLengthExcludedFromSize =  ACCUMULATE);
++   if (!dw)
++      return;
+ 
+    memcpy(dw + 2, slice_header_data, length_in_dw * 4);
+ }
+@@ -5691,7 +5703,8 @@ anv_av1_encode_video(struct anv_cmd_buffer *cmd, const VkVideoEncodeInfoKHR *enc
+          uint32_t *dw = anv_batch_emitn(&cmd->batch, num_dw + 2,
+                                         GENX(AVP_PAK_INSERT_OBJECT),
+                                         .DataBitsInLastDW = last_bits);
+-         memcpy(dw + 2, frame_hdr, num_dw * 4);
++         if (dw != NULL)
++            memcpy(dw + 2, frame_hdr, num_dw * 4);
+ #if GFX_VER >= 20
+          if (brc.enabled) {
+             brc.pak_insert_size = 4 * (num_dw + 2) + 4;
+@@ -5748,7 +5761,8 @@ anv_av1_encode_video(struct anv_cmd_buffer *cmd, const VkVideoEncodeInfoKHR *enc
+                dw = anv_batch_emitn(&cmd->batch, pad_dw + 2,
+                                     GENX(AVP_PAK_INSERT_OBJECT),
+                                     .DataBitsInLastDW = pad_last_bits);
+-               memcpy(dw + 2, pad_obu, pad_dw * 4);
++               if (dw != NULL)
++                  memcpy(dw + 2, pad_obu, pad_dw * 4);
+             }
+ 
+             /* Tile group OBU header with obu_has_size_field = 1 and a 4-byte
+@@ -5766,7 +5780,8 @@ anv_av1_encode_video(struct anv_cmd_buffer *cmd, const VkVideoEncodeInfoKHR *enc
+                                  GENX(AVP_PAK_INSERT_OBJECT),
+                                  .LastHeader = true,
+                                  .DataBitsInLastDW = num_tiles > 1 ? 16 : 8);
+-            memcpy(dw + 2, obu_tile_group, sizeof(obu_tile_group));
++            if (dw != NULL)
++               memcpy(dw + 2, obu_tile_group, sizeof(obu_tile_group));
+ 
+             tg_leb128_addr = anv_address_add(dst_buffer->address,
+                                              (enc_info->dstBufferOffset & ~4095) +
+diff --git a/src/intel/vulkan/genX_gfx_state.c b/src/intel/vulkan/genX_gfx_state.c
+index 97498f1..257f646 100644
+--- a/src/intel/vulkan/genX_gfx_state.c
++++ b/src/intel/vulkan/genX_gfx_state.c
+@@ -3675,6 +3675,9 @@ emit_wa_18020335297_dummy_draw(struct anv_cmd_buffer *cmd_buffer)
+ 
+    uint32_t *vertex_elements = anv_batch_emitn(&cmd_buffer->batch, 1 + 2 * 2,
+                                                GENX(3DSTATE_VERTEX_ELEMENTS));
++   if (vertex_elements == NULL)
++      return;
++
+    uint32_t *ve_pack_dest = &vertex_elements[1];
+ 
+    for (int i = 0; i < 2; i++) {
+diff --git a/src/intel/vulkan/genX_gpu_memcpy.c b/src/intel/vulkan/genX_gpu_memcpy.c
+index 493076d..8bc0cbb 100644
+--- a/src/intel/vulkan/genX_gpu_memcpy.c
++++ b/src/intel/vulkan/genX_gpu_memcpy.c
+@@ -173,6 +173,9 @@ emit_so_memcpy(struct anv_memcpy_state *state,
+ 
+    uint32_t *dw;
+    dw = anv_batch_emitn(batch, 5, GENX(3DSTATE_VERTEX_BUFFERS));
++   if (dw == NULL)
++      return;
++
+    GENX(VERTEX_BUFFER_STATE_pack)(batch, dw + 1,
+       &(struct GENX(VERTEX_BUFFER_STATE)) {
+          .VertexBufferIndex = 32, /* Reserved for this */
+@@ -187,6 +190,9 @@ emit_so_memcpy(struct anv_memcpy_state *state,
+       });
+ 
+    dw = anv_batch_emitn(batch, 3, GENX(3DSTATE_VERTEX_ELEMENTS));
++   if (dw == NULL)
++      return;
++
+    GENX(VERTEX_ELEMENT_STATE_pack)(batch, dw + 1,
+       &(struct GENX(VERTEX_ELEMENT_STATE)) {
+          .VertexBufferIndex = 32,
+@@ -244,6 +250,9 @@ emit_so_memcpy(struct anv_memcpy_state *state,
+    dw = anv_batch_emitn(batch, 5, GENX(3DSTATE_SO_DECL_LIST),
+                         .StreamtoBufferSelects0 = (1 << 0),
+                         .NumEntries0 = 1);
++   if (dw == NULL)
++      return;
++
+    GENX(SO_DECL_ENTRY_pack)(batch, dw + 3,
+       &(struct GENX(SO_DECL_ENTRY)) {
+          .Stream0Decl = {
+diff --git a/src/intel/vulkan/genX_query.c b/src/intel/vulkan/genX_query.c
+index 6c7d8f8..a2bdd63 100644
+--- a/src/intel/vulkan/genX_query.c
++++ b/src/intel/vulkan/genX_query.c
+@@ -1437,6 +1437,23 @@ static const struct {
+ /* Index in oag_boundary_stores[] the MMIO trigger is emitted in front of. */
+ #define OAG_TRIGGER_STORE_IDX 2
+ 
++/* Point a store emitted with a placeholder address at the relocated address
++ * recorded in the next self-modifying location. There is nothing to patch if
++ * the store could not be emitted (batch out of memory, dws == NULL), but the
++ * location is still consumed so the begin and end of the query stay paired.
++ */
++static void
++khr_perf_query_resolve_reloc(struct anv_cmd_buffer *cmd_buffer,
++                             struct mi_builder *b, void *dws,
++                             uint32_t addr_offset_B)
++{
++   struct mi_address_token token =
++      cmd_buffer->self_mod_locations[cmd_buffer->perf_reloc_idx++];
++
++   if (dws != NULL)
++      mi_resolve_relocated_address_token(b, token, dws + addr_offset_B);
++}
++
+ /* Emit the OAG boundary of a performance query: sample the OA tail and status,
+  * fire the trigger, then sample the tail again and record the OA buffer base.
+  * The two tails delimit the region of the OA buffer the triggered report must
+@@ -1463,9 +1480,9 @@ emit_perf_khr_oag_boundary(struct anv_cmd_buffer *cmd_buffer,
+                                   GENX(MI_STORE_REGISTER_MEM),
+                                   .RegisterAddress = oag_boundary_stores[i].reg,
+                                   .MemoryAddress = query_addr /* overwritten */);
+-      mi_resolve_relocated_address_token(
+-         b, cmd_buffer->self_mod_locations[cmd_buffer->perf_reloc_idx++],
+-         dws + GENX(MI_STORE_REGISTER_MEM_MemoryAddress_start) / 8);
++      khr_perf_query_resolve_reloc(
++         cmd_buffer, b, dws,
++         GENX(MI_STORE_REGISTER_MEM_MemoryAddress_start) / 8);
+    }
+ }
+ 
+@@ -1647,10 +1664,9 @@ void genX(CmdBeginQueryIndexedEXT)(
+                                      GENX(MI_REPORT_PERF_COUNT_length),
+                                      GENX(MI_REPORT_PERF_COUNT),
+                                      .MemoryAddress = query_addr /* Will be overwritten */);
+-               mi_resolve_relocated_address_token(
+-                  &b,
+-                  cmd_buffer->self_mod_locations[cmd_buffer->perf_reloc_idx++],
+-                  dws + GENX(MI_REPORT_PERF_COUNT_MemoryAddress_start) / 8);
++               khr_perf_query_resolve_reloc(
++                  cmd_buffer, &b, dws,
++                  GENX(MI_REPORT_PERF_COUNT_MemoryAddress_start) / 8);
+             }
+             break;
+ 
+@@ -1666,10 +1682,9 @@ void genX(CmdBeginQueryIndexedEXT)(
+                                GENX(MI_STORE_REGISTER_MEM),
+                                .RegisterAddress = field->mmio_offset,
+                                .MemoryAddress = query_addr /* Will be overwritten */ );
+-            mi_resolve_relocated_address_token(
+-               &b,
+-               cmd_buffer->self_mod_locations[cmd_buffer->perf_reloc_idx++],
+-               dws + GENX(MI_STORE_REGISTER_MEM_MemoryAddress_start) / 8);
++            khr_perf_query_resolve_reloc(
++               cmd_buffer, &b, dws,
++               GENX(MI_STORE_REGISTER_MEM_MemoryAddress_start) / 8);
+             if (field->size == 8) {
+                dws =
+                   anv_batch_emitn(&cmd_buffer->batch,
+@@ -1677,10 +1692,9 @@ void genX(CmdBeginQueryIndexedEXT)(
+                                   GENX(MI_STORE_REGISTER_MEM),
+                                   .RegisterAddress = field->mmio_offset + 4,
+                                   .MemoryAddress = query_addr /* Will be overwritten */ );
+-               mi_resolve_relocated_address_token(
+-                  &b,
+-                  cmd_buffer->self_mod_locations[cmd_buffer->perf_reloc_idx++],
+-                  dws + GENX(MI_STORE_REGISTER_MEM_MemoryAddress_start) / 8);
++               khr_perf_query_resolve_reloc(
++                  cmd_buffer, &b, dws,
++                  GENX(MI_STORE_REGISTER_MEM_MemoryAddress_start) / 8);
+             }
+             break;
+ 
+@@ -1879,10 +1893,9 @@ void genX(CmdEndQueryIndexedEXT)(
+                                      GENX(MI_REPORT_PERF_COUNT_length),
+                                      GENX(MI_REPORT_PERF_COUNT),
+                                      .MemoryAddress = query_addr /* Will be overwritten */);
+-               mi_resolve_relocated_address_token(
+-                  &b,
+-                  cmd_buffer->self_mod_locations[cmd_buffer->perf_reloc_idx++],
+-                  dws + GENX(MI_REPORT_PERF_COUNT_MemoryAddress_start) / 8);
++               khr_perf_query_resolve_reloc(
++                  cmd_buffer, &b, dws,
++                  GENX(MI_REPORT_PERF_COUNT_MemoryAddress_start) / 8);
+             }
+             break;
+ 
+@@ -1898,10 +1911,9 @@ void genX(CmdEndQueryIndexedEXT)(
+                                GENX(MI_STORE_REGISTER_MEM),
+                                .RegisterAddress = field->mmio_offset,
+                                .MemoryAddress = query_addr /* Will be overwritten */ );
+-            mi_resolve_relocated_address_token(
+-               &b,
+-               cmd_buffer->self_mod_locations[cmd_buffer->perf_reloc_idx++],
+-               dws + GENX(MI_STORE_REGISTER_MEM_MemoryAddress_start) / 8);
++            khr_perf_query_resolve_reloc(
++               cmd_buffer, &b, dws,
++               GENX(MI_STORE_REGISTER_MEM_MemoryAddress_start) / 8);
+             if (field->size == 8) {
+                dws =
+                   anv_batch_emitn(&cmd_buffer->batch,
+@@ -1909,10 +1921,9 @@ void genX(CmdEndQueryIndexedEXT)(
+                                   GENX(MI_STORE_REGISTER_MEM),
+                                   .RegisterAddress = field->mmio_offset + 4,
+                                   .MemoryAddress = query_addr /* Will be overwritten */ );
+-               mi_resolve_relocated_address_token(
+-                  &b,
+-                  cmd_buffer->self_mod_locations[cmd_buffer->perf_reloc_idx++],
+-                  dws + GENX(MI_STORE_REGISTER_MEM_MemoryAddress_start) / 8);
++               khr_perf_query_resolve_reloc(
++                  cmd_buffer, &b, dws,
++                  GENX(MI_STORE_REGISTER_MEM_MemoryAddress_start) / 8);
+             }
+             break;
+ 
+@@ -1927,10 +1938,9 @@ void genX(CmdEndQueryIndexedEXT)(
+                          GENX(MI_STORE_DATA_IMM_length),
+                          GENX(MI_STORE_DATA_IMM),
+                          .ImmediateData = true);
+-      mi_resolve_relocated_address_token(
+-         &b,
+-         cmd_buffer->self_mod_locations[cmd_buffer->perf_reloc_idx++],
+-         dws + GENX(MI_STORE_DATA_IMM_Address_start) / 8);
++      khr_perf_query_resolve_reloc(
++         cmd_buffer, &b, dws,
++         GENX(MI_STORE_DATA_IMM_Address_start) / 8);
+ 
+       assert(cmd_buffer->perf_reloc_idx == pdevice->n_perf_query_commands);
+       break;
+diff --git a/src/intel/vulkan/genX_simple_shader.c b/src/intel/vulkan/genX_simple_shader.c
+index ec762ba..1b055b9 100644
+--- a/src/intel/vulkan/genX_simple_shader.c
++++ b/src/intel/vulkan/genX_simple_shader.c
+@@ -59,28 +59,30 @@ genX(emit_simpler_shader_init_fragment)(struct anv_simple_shader *state)
+     * without a vertex shader in blorp_emit_vertex_elements() in
+     * blorp_genX_exec_brw.h.
+     */
+-   GENX(VERTEX_ELEMENT_STATE_pack)(
+-      batch, dw + 1, &(struct GENX(VERTEX_ELEMENT_STATE)) {
+-         .VertexBufferIndex = 1,
+-         .Valid = true,
+-         .SourceElementFormat = ISL_FORMAT_R32G32B32A32_FLOAT,
+-         .SourceElementOffset = 0,
+-         .Component0Control = VFCOMP_STORE_SRC,
+-         .Component1Control = VFCOMP_STORE_0,
+-         .Component2Control = VFCOMP_STORE_0,
+-         .Component3Control = VFCOMP_STORE_0,
+-      });
+-   GENX(VERTEX_ELEMENT_STATE_pack)(
+-      batch, dw + 3, &(struct GENX(VERTEX_ELEMENT_STATE)) {
+-         .VertexBufferIndex   = 0,
+-         .Valid               = true,
+-         .SourceElementFormat = ISL_FORMAT_R32G32B32_FLOAT,
+-         .SourceElementOffset = 0,
+-         .Component0Control   = VFCOMP_STORE_SRC,
+-         .Component1Control   = VFCOMP_STORE_SRC,
+-         .Component2Control   = VFCOMP_STORE_SRC,
+-         .Component3Control   = VFCOMP_STORE_1_FP,
+-      });
++   if (dw != NULL) {
++      GENX(VERTEX_ELEMENT_STATE_pack)(
++         batch, dw + 1, &(struct GENX(VERTEX_ELEMENT_STATE)) {
++            .VertexBufferIndex = 1,
++            .Valid = true,
++            .SourceElementFormat = ISL_FORMAT_R32G32B32A32_FLOAT,
++            .SourceElementOffset = 0,
++            .Component0Control = VFCOMP_STORE_SRC,
++            .Component1Control = VFCOMP_STORE_0,
++            .Component2Control = VFCOMP_STORE_0,
++            .Component3Control = VFCOMP_STORE_0,
++         });
++      GENX(VERTEX_ELEMENT_STATE_pack)(
++         batch, dw + 3, &(struct GENX(VERTEX_ELEMENT_STATE)) {
++            .VertexBufferIndex   = 0,
++            .Valid               = true,
++            .SourceElementFormat = ISL_FORMAT_R32G32B32_FLOAT,
++            .SourceElementOffset = 0,
++            .Component0Control   = VFCOMP_STORE_SRC,
++            .Component1Control   = VFCOMP_STORE_SRC,
++            .Component2Control   = VFCOMP_STORE_SRC,
++            .Component3Control   = VFCOMP_STORE_1_FP,
++         });
++   }
+ 
+    anv_batch_emit(batch, GENX(3DSTATE_VF_STATISTICS), vfs);
+    anv_batch_emit(batch, GENX(3DSTATE_VF), vf) {
+@@ -507,6 +509,9 @@ genX(emit_simple_shader_dispatch)(struct anv_simple_shader *state,
+       uint32_t *dw = anv_batch_emitn(batch,
+                                      1 + GENX(VERTEX_BUFFER_STATE_length),
+                                      GENX(3DSTATE_VERTEX_BUFFERS));
++      if (dw == NULL)
++         return;
++
+       GENX(VERTEX_BUFFER_STATE_pack)(batch, dw + 1,
+                                      &(struct GENX(VERTEX_BUFFER_STATE)) {
+                                         .VertexBufferIndex     = 0,
+@@ -529,6 +534,8 @@ genX(emit_simple_shader_dispatch)(struct anv_simple_shader *state,
+                          .ShaderUpdateEnable = BITFIELD_BIT(MESA_SHADER_FRAGMENT),
+                          .PointerBufferMask = 0x1,
+                          .MOCS = anv_mocs(device, NULL, 0));
++      if (dw == NULL)
++         return;
+ 
+       GENX(3DSTATE_CONSTANT_ALL_DATA_pack)(
+          batch, dw + GENX(3DSTATE_CONSTANT_ALL_length),

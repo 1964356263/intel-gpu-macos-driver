@@ -1,0 +1,319 @@
+anv: AV1 BRC loop filter back-annotation on Xe2 (on top of 0015)
+
+Under CBR/VBR the HuC update kernel now also picks the loop filter levels for the base_q_idx it chooses
+(UPD_EnableLFUpdate, as media-driver always does; off for intra block copy frames). The frame header then
+carries loop_filter_level[2..3] only when the chosen luma levels are not both zero, so its length is known
+only on the GPU: the padding OBU and tile group header are recorded for both lengths in second level batches,
+and the one matching the kernel's AVP_INLOOP_FILTER_STATE levels runs (MI_CONDITIONAL_BATCH_BUFFER_END); the
+tile group obu_size store after PAK picks its address the same way.
+vk_video: the header layout's size_in_bits now ends after trailing_one_bit (the HuC rewrites over that many
+bits and only zero-pads: without the one bit the header has no trailing_one_bit, byte aligned it grows a byte).
+CDEF stays as the application set it (ffmpeg's sequence header has enable_cdef = 0).
+
+--- a/src/intel/vulkan/genX_cmd_video_enc.c	2026-10-29 17:04:25
++++ b/src/intel/vulkan/genX_cmd_video_enc.c	2026-10-29 17:02:43
+@@ -4279,6 +4270,9 @@
+                  (!pic_info->pTileInfo || pic_info->pTileInfo->TileCols * pic_info->pTileInfo->TileRows == 1);
+    if (brc.enabled) {
+       brc.layout = anv_av1_brc_slb_layout();
++      /* media-driver: the kernel picks the loop filter levels for the base_q_idx it chooses, except for intra
++       * block copy frames, which have no loop filter (5.9.2) */
++      brc.lf_update = !pic_info->flags.allow_intrabc;
+       brc.slb_in = anv_cmd_buffer_alloc_temporary_state(cmd, 4096, 4096);
+       brc.pak_insert_in = anv_cmd_buffer_alloc_temporary_state(cmd, 4096, 4096);
+       brc.update_dmem = anv_cmd_buffer_alloc_temporary_state(cmd, sizeof(struct anv_huc_av1_brc_update_dmem), 64);
+@@ -4305,6 +4299,8 @@
+ 
+       /* the DMEM and the input batches are filled below while the commands are recorded */
+       anv_av1_brc_emit_huc_update(cmd, &brc);
++      if (brc.lf_update)
++         anv_av1_brc_capture_lf_levels(cmd, &brc);
+    }
+    struct anv_batch brc_parent;
+ #endif
+@@ -4483,6 +4479,9 @@
+     */
+    struct anv_address tg_leb128_addr;
+    uint32_t tg_payload_prefix = 0;
++#if GFX_VER >= 20
++   struct anv_address brc_tg_leb128_addr[2] = { 0 };
++#endif
+    const StdVideoAV1TileInfo *ti = pic_info->pTileInfo;
+    uint32_t num_tile_cols = ti ? ti->TileCols : 1;
+    uint32_t num_tile_rows = ti ? ti->TileRows : 1;
+@@ -5226,6 +5225,29 @@
+          uint32_t num_dw = DIV_ROUND_UP(hdr_size, 4);
+          uint32_t last_bits = (hdr_size & 3) ? (hdr_size & 3) * 8 : 32;
+ #if GFX_VER >= 20
++         /* With the kernel's loop filter back-annotation the header carries loop_filter_level[2..3] only when
++          * the levels it picks for luma are not both zero (5.9.11), so it comes out in one of two lengths: pack
++          * both to know them. */
++         size_t brc_hdr_size[2] = { hdr_size, hdr_size };
++         if (brc.enabled && brc.lf_update) {
++            for (uint32_t v = 0; v < 2; v++) {
++               StdVideoEncodeAV1PictureInfo pi = *pic_info;
++               StdVideoAV1LoopFilter lf = pic_info->pLoopFilter ? *pic_info->pLoopFilter :
++                                          (StdVideoAV1LoopFilter) { 0 };
++               lf.loop_filter_level[0] = lf.loop_filter_level[1] = v;
++               pi.pLoopFilter = &lf;
++               struct vk_video_av1_frame_hdr_layout l = { .obu_size_bytes = ANV_AV1_BRC_OBU_SIZE_BYTES };
++               uint32_t tmp[128];
++               brc_hdr_size[v] = 0;
++               ASSERTED VkResult r =
++                  vk_video_encode_av1_frame_hdr_layout(params, &pi, base_q_idx, reference_select, false,
++                                                       frame_info->generateObuExtensionHeader,
++                                                       frame_width, frame_height, sizeof(tmp),
++                                                       &brc_hdr_size[v], tmp, &l);
++               assert(r == VK_SUCCESS);
++            }
++         }
++
+          /* BRC: the frame header goes to the kernel as an AVP_PAK_INSERT_OBJECT batch and the encode runs
+           * its back-annotated copy (Av1BrcUpdatePkt::ConstructPakInsertHucBRC) */
+          if (brc.enabled)
+@@ -5247,45 +5269,74 @@
+           * MI_STORE_REGISTER_MEM of one dword (the fixed 4-byte leb128), so it
+           * must land dword aligned in the bitstream buffer: pad with a PADDING
+           * OBU (minimum 2 bytes) so that hdr_size + pad_len + 1 is a multiple
+-          * of 4. */
+-         uint32_t pad_len = (4 - ((hdr_size + 1) & 3)) & 3;
+-         if (pad_len == 1)
+-            pad_len = 5;
+-         if (pad_len) {
+-            /* The padding OBU payload must begin with AV1 trailing bits */
+-            uint32_t pad_obu[2] = { 0x7a | (pad_len - 2) << 8, 0 };
+-            if (pad_len > 2)
+-               pad_obu[0] |= 0x80u << 16;
+-            uint32_t pad_dw = DIV_ROUND_UP(pad_len, 4);
+-            uint32_t pad_last_bits = (pad_len & 3) ? (pad_len & 3) * 8 : 32;
+-            dw = anv_batch_emitn(&cmd->batch, pad_dw + 2,
+-                                 GENX(AVP_PAK_INSERT_OBJECT),
+-                                 .DataBitsInLastDW = pad_last_bits);
+-            memcpy(dw + 2, pad_obu, pad_dw * 4);
+-         }
++          * of 4.
++          *
++          * With the BRC loop filter back-annotation the frame header length is
++          * only known on the GPU: record the padding and tile group header for
++          * both lengths in second level batches and run the one matching the
++          * loop filter levels the kernel wrote (AVP_INLOOP_FILTER_STATE DW1).
++          */
++         uint32_t num_variants = 1;
++#if GFX_VER >= 20
++         if (brc.enabled && brc.lf_update)
++            num_variants = 2;
++#endif
++         for (uint32_t v = 0; v < num_variants; v++) {
++            size_t vhdr_size = hdr_size;
++#if GFX_VER >= 20
++            struct anv_video_sub_batch lf_variant;
++            if (num_variants > 1) {
++               vhdr_size = brc_hdr_size[v];
++               if (!anv_video_begin_sub_batch(cmd, 256, &lf_variant))
++                  return;
++               anv_av1_brc_emit_lf_variant_check(cmd, v);
++            }
++#endif
++            uint32_t pad_len = (4 - ((vhdr_size + 1) & 3)) & 3;
++            if (pad_len == 1)
++               pad_len = 5;
++            if (pad_len) {
++               /* The padding OBU payload must begin with AV1 trailing bits */
++               uint32_t pad_obu[2] = { 0x7a | (pad_len - 2) << 8, 0 };
++               if (pad_len > 2)
++                  pad_obu[0] |= 0x80u << 16;
++               uint32_t pad_dw = DIV_ROUND_UP(pad_len, 4);
++               uint32_t pad_last_bits = (pad_len & 3) ? (pad_len & 3) * 8 : 32;
++               dw = anv_batch_emitn(&cmd->batch, pad_dw + 2,
++                                    GENX(AVP_PAK_INSERT_OBJECT),
++                                    .DataBitsInLastDW = pad_last_bits);
++               memcpy(dw + 2, pad_obu, pad_dw * 4);
++            }
+ 
+-         /* Tile group OBU header with obu_has_size_field = 1 and a 4-byte
+-          * non-minimal leb128 placeholder. It will be done below with MI_MATH
+-          * from the tile bytecount register once PAK completes.
+-          * A single tile group has no tile start/end bits,
+-          * so the tile data follows directly. */
+-         static const uint32_t obu_tile_group[2] = {
+-            0x80808022, 0x00000000,
+-         };
+-         /* NumTiles > 1: append tile_start_and_end_present_flag
+-          * (0, single tile group) + byte_alignment as one extra
+-          * 0x00 byte after obu_size. */
+-         dw = anv_batch_emitn(&cmd->batch, ARRAY_SIZE(obu_tile_group) + 2,
+-                              GENX(AVP_PAK_INSERT_OBJECT),
+-                              .LastHeader = true,
+-                              .DataBitsInLastDW = num_tiles > 1 ? 16 : 8);
+-         memcpy(dw + 2, obu_tile_group, sizeof(obu_tile_group));
++            /* Tile group OBU header with obu_has_size_field = 1 and a 4-byte
++             * non-minimal leb128 placeholder. It will be done below with MI_MATH
++             * from the tile bytecount register once PAK completes.
++             * A single tile group has no tile start/end bits,
++             * so the tile data follows directly. */
++            static const uint32_t obu_tile_group[2] = {
++               0x80808022, 0x00000000,
++            };
++            /* NumTiles > 1: append tile_start_and_end_present_flag
++             * (0, single tile group) + byte_alignment as one extra
++             * 0x00 byte after obu_size. */
++            dw = anv_batch_emitn(&cmd->batch, ARRAY_SIZE(obu_tile_group) + 2,
++                                 GENX(AVP_PAK_INSERT_OBJECT),
++                                 .LastHeader = true,
++                                 .DataBitsInLastDW = num_tiles > 1 ? 16 : 8);
++            memcpy(dw + 2, obu_tile_group, sizeof(obu_tile_group));
+ 
+-         tg_leb128_addr = anv_address_add(dst_buffer->address,
+-                                          (enc_info->dstBufferOffset & ~4095) +
+-                                          hdr_size + pad_len + 1);
+-         assert((tg_leb128_addr.offset & 3) == 0);
+-         tg_payload_prefix = hdr_size + pad_len + 5;
++            tg_leb128_addr = anv_address_add(dst_buffer->address,
++                                             (enc_info->dstBufferOffset & ~4095) +
++                                             vhdr_size + pad_len + 1);
++            assert((tg_leb128_addr.offset & 3) == 0);
++            tg_payload_prefix = vhdr_size + pad_len + 5;
++#if GFX_VER >= 20
++            if (num_variants > 1) {
++               anv_video_end_sub_batch(cmd, &lf_variant);
++               brc_tg_leb128_addr[v] = tg_leb128_addr;
++            }
++#endif
++         }
+       }
+ 
+       anv_batch_emit(&cmd->batch, GENX(VDENC_WEIGHTSOFFSETS_STATE), wo) {
+@@ -5886,6 +5937,24 @@
+ 
+    struct mi_value leb128 =
+       mi_ior(&b, mi_ior(&b, leb0, leb1), mi_ior(&b, leb2, leb3));
++#if GFX_VER >= 20
++   if (brc.enabled && brc.lf_update) {
++      /* the leb128 goes to whichever header length the kernel produced, see the padding above */
++      struct anv_address leb_tmp = anv_av1_brc_scratch_addr(vid, ANV_AV1_BRC_SCRATCH_LEB128);
++      mi_store(&b, mi_mem32(leb_tmp), leb128);
++      for (uint32_t v = 0; v < 2; v++) {
++         struct anv_video_sub_batch lf_variant;
++         if (!anv_video_begin_sub_batch(cmd, 256, &lf_variant))
++            return;
++         anv_av1_brc_emit_lf_variant_check(cmd, v);
++         struct mi_builder vb;
++         mi_builder_init(&vb, cmd->device->info, &cmd->batch);
++         mi_builder_set_mocs(&vb, anv_mocs_for_address(cmd->device, &brc_tg_leb128_addr[v]));
++         mi_store(&vb, mi_mem32(brc_tg_leb128_addr[v]), mi_mem32(leb_tmp));
++         anv_video_end_sub_batch(cmd, &lf_variant);
++      }
++   } else
++#endif
+    mi_store(&b, mi_mem32(tg_leb128_addr), leb128);
+ 
+ #endif // GFX_VERx10 == 125 || GFX_VERx10 == 200
+--- a/src/intel/vulkan/genX_huc_brc_av1.h	2026-10-29 17:04:25
++++ b/src/intel/vulkan/genX_huc_brc_av1.h	2026-10-29 16:43:01
+@@ -247,9 +247,15 @@
+    return l;
+ }
+ 
++/* Driver scratch dwords in ANV_VID_MEM_AV1_ENCODE_BRC_DATA, past the 64 bytes the kernel writes there */
++#define ANV_AV1_BRC_SCRATCH_LF_LEVELS  2048 /* AVP_INLOOP_FILTER_STATE DW1 as the kernel wrote it, then a mask */
++#define ANV_AV1_BRC_SCRATCH_LEB128     2064 /* the tile group obu_size leb128 */
++
+ /* Per-frame BRC state the AV1 encode records against. */
+ struct anv_av1_brc_frame {
+    bool enabled;
++   /* the kernel back-annotates the loop filter levels (header length then known only on the GPU) */
++   bool lf_update;
+    struct anv_av1_brc_slb_layout layout;
+    struct anv_state slb_in;
+    struct anv_state pak_insert_in;
+@@ -303,8 +309,45 @@
+ anv_av1_brc_slb_out_addr(struct anv_video_session *vid, uint32_t offset)
+ {
+    return anv_address_add(anv_brc_mem_addr(vid, ANV_VID_MEM_AV1_ENCODE_BRC_SLB_OUT), offset);
++}
++
++static struct anv_address
++anv_av1_brc_scratch_addr(struct anv_video_session *vid, uint32_t offset)
++{
++   return anv_address_add(anv_brc_mem_addr(vid, ANV_VID_MEM_AV1_ENCODE_BRC_DATA), offset);
+ }
+ 
++/* After the update kernel ran: keep the luma loop filter levels it put in the output AVP_INLOOP_FILTER_STATE
++ * (DW1 bits 5:0 and 11:6, media-driver readBRCMetaDataFromSLBB) with a 0xfff compare mask behind them. */
++static void
++anv_av1_brc_capture_lf_levels(struct anv_cmd_buffer *cmd, const struct anv_av1_brc_frame *brc)
++{
++   struct anv_video_session *vid = cmd->video.vid;
++   struct anv_address dst = anv_av1_brc_scratch_addr(vid, ANV_AV1_BRC_SCRATCH_LF_LEVELS);
++   struct mi_builder b;
++
++   mi_builder_init(&b, cmd->device->info, &cmd->batch);
++   mi_builder_set_mocs(&b, anv_mocs_for_address(cmd->device, &dst));
++   mi_store(&b, mi_mem32(dst), mi_mem32(anv_av1_brc_slb_out_addr(vid, brc->layout.inloop_filter_offset + 4)));
++   mi_store(&b, mi_mem32(anv_address_add(dst, 4)), mi_imm(0xfff));
++}
++
++/* First command of a second level batch that only applies when the kernel's luma loop filter levels are both
++ * zero (@with_chroma_levels false) or not (true): loop_filter_level[2..3] are coded only in the latter case. */
++static void
++anv_av1_brc_emit_lf_variant_check(struct anv_cmd_buffer *cmd, bool with_chroma_levels)
++{
++   anv_batch_emit(&cmd->batch, GENX(MI_CONDITIONAL_BATCH_BUFFER_END), cbbe) {
++      /* the batch ends unless (levels & mask) <op> 0 holds */
++      cbbe.CompareOperation = with_chroma_levels ? MADGreaterThanIDD : MADEqualIDD;
++      cbbe.EndCurrentBatchBufferLevel = true;
++      cbbe.CompareSemaphore = 1;
++      cbbe.CompareMaskMode = CompareMaskModeEnabled;
++      cbbe.CompareDataDword = 0;
++      cbbe.CompareAddress = anv_av1_brc_scratch_addr(cmd->video.vid, ANV_AV1_BRC_SCRATCH_LF_LEVELS);
++   }
++}
++
+ struct anv_av1_brc_rates {
+    uint32_t target_bps;
+    uint32_t max_bps;
+@@ -538,7 +581,7 @@
+    dmem->UPD_EnableCDEFUpdate = 0;
+    dmem->UPD_CDEFParamsBitOffset = brc->hdr.cdef_bit_offset;
+    dmem->UPD_CDEFParamsSizeInBits = brc->hdr.cdef_size_in_bits;
+-   dmem->UPD_EnableLFUpdate = 0;
++   dmem->UPD_EnableLFUpdate = brc->lf_update;
+    dmem->UPD_DisableCdfUpdate = disable_cdf_update;
+    dmem->UPD_EnableDMAForCdf = 1;
+    dmem->UPD_AdditionalHrdSizeByteCount = 0;
+--- a/src/vulkan/runtime/vk_video.c	2026-10-29 17:04:25
++++ b/src/vulkan/runtime/vk_video.c	2026-10-29 16:54:00
+@@ -3894,6 +3894,13 @@
+        (show_frame || pic_info->flags.showable_frame))
+       vl_bitstream_put_bits(&enc, 1, 0); /* apply_grain */
+ 
++   /* Up to and including trailing_one_bit, without the zero bits that byte-align the OBU: the Intel HuC BRC
++    * rewrites the header over this many bits and only zero-pads its result to a byte, so the one bit has to
++    * be inside (a size without it yields a header with no trailing_one_bit, a byte aligned one gains a byte
++    * whenever the rewrite shifts the tail). */
++   if (layout)
++      layout->size_in_bits = av1_hdr_bit_pos(&enc, start_bits) + 1;
++
+    /* trailing_one_bit */
+    vl_bitstream_rbsp_trailing(&enc);
+ 
+@@ -3910,8 +3917,6 @@
+       *(size_offset++) = obu_size_bin[i];
+    }
+ 
+-   if (layout)
+-      layout->size_in_bits = av1_hdr_bit_pos(&enc, start_bits);
+    vl_bitstream_flush(&enc);
+    *data_size_ptr += vl_bitstream_get_byte_count(&enc);
+ 
+--- a/src/vulkan/runtime/vk_video.h	2026-10-29 17:04:25
++++ b/src/vulkan/runtime/vk_video.h	2026-10-29 16:54:00
+@@ -400,7 +400,7 @@
+    uint32_t loop_filter_bit_offset;
+    uint32_t cdef_bit_offset;
+    uint32_t cdef_size_in_bits;
+-   uint32_t size_in_bits;
++   uint32_t size_in_bits; /* up to and including trailing_one_bit, without the byte alignment zeros */
+ };
+ 
+ VkResult

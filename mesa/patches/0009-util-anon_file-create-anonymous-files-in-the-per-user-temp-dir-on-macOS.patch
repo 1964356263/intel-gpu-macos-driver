@@ -1,0 +1,150 @@
+From: =?UTF-8?q?Yusuf=20=C4=B0hsan=20KILIN=C3=87?= <78423442+yusufklncc@users.noreply.github.com>
+Date: Thu, 29 Oct 2026 12:45:00 +0300
+Subject: [PATCH] util/anon_file: create anonymous files in the per-user temp
+ dir on macOS
+
+macOS has neither memfd_create() nor SHM_ANON, so os_create_anonymous_file()
+falls back to a file in get_or_create_user_temp_dir(), which without
+XDG_RUNTIME_DIR (never set on macOS) is /tmp/xdg-runtime-mesa-<uid>. A
+sandboxed process may not create files there: in QuickTime Player (App
+Sandbox) and VTDecoderXPCService (VTDecoderSandboxProfile, which allows
+writes only under /private/var/folders) anv_state_table_init() got -1, so
+vkCreateDevice() returned VK_ERROR_INITIALIZATION_FAILED and Vulkan Video
+(the B580 AV1 VideoToolbox decoder) and Metal could not come up there.
+POSIX shm is no way out: sandboxed apps may only use their application
+group's shm names.
+
+The platform's counterpart of XDG_RUNTIME_DIR is the per-user temporary
+directory, confstr(_CS_DARWIN_USER_TEMP_DIR): owned by the user, mode 0700,
+emptied at boot, and redirected by the App Sandbox into the app's container.
+Unless XDG_RUNTIME_DIR is set, create the file there first; the file is
+still unlinked right after mkostemp(), and its only use stays the same
+(ftruncate() + MAP_SHARED mappings of the one fd in this process). When the
+file cannot be created there (a process whose effective uid differs from
+the uid the directory belongs to, such as WindowServer, uid 0 / euid 88),
+the /tmp fallback is tried as before.
+
+Generated-by: LLM
+
+diff --git a/src/util/anon_file.c b/src/util/anon_file.c
+index b0409d1503f..ec62c3bd73b 100644
+--- a/src/util/anon_file.c
++++ b/src/util/anon_file.c
+@@ -101,7 +101,63 @@ create_tmpfile_cloexec(char *tmpname)
+ }
+ #endif
+ 
++#if DETECT_OS_APPLE
++#include <string.h>
++
++/*
++ * macOS has neither memfd nor SHM_ANON, and a sandboxed process may create
++ * neither files in /tmp nor POSIX shm objects outside its application group.
++ * The per-user temporary directory, confstr(_CS_DARWIN_USER_TEMP_DIR), is the
++ * platform's counterpart of XDG_RUNTIME_DIR: owned by the user, mode 0700,
++ * emptied at boot, and inside an App Sandbox redirected to a directory of the
++ * app's own, so it is where a sandboxed process (QuickTime Player,
++ * VTDecoderXPCService, ...) may create a temporary file.
++ * Returns a pointer to the path buffer, which the caller must free(), or NULL.
++ */
++static char*
++get_darwin_user_temp_dir(void)
++{
++   size_t n = confstr(_CS_DARWIN_USER_TEMP_DIR, NULL, 0);
++   char *buf = n ? malloc(n) : NULL;
++
++   if (!buf)
++      return NULL;
++   if (confstr(_CS_DARWIN_USER_TEMP_DIR, buf, n) == 0 || buf[0] == '\0') {
++      free(buf);
++      return NULL;
++   }
++
++   /* it comes with a trailing slash */
++   n = strlen(buf);
++   while (n > 1 && buf[n - 1] == '/')
++      buf[--n] = '\0';
++   return buf;
++}
++#endif
++
+ #if !(defined(__FreeBSD__) || DETECT_OS_ANDROID)
++/*
++ * Creates, opens and unlinks a uniquely named file in the directory path.
++ */
++static int
++create_tmpfile_in_dir(const char *path, const char *debug_name)
++{
++   char *name;
++   int fd, k;
++
++   if (debug_name)
++      k = asprintf(&name, "%s/mesa-shared-%s-XXXXXX", path, debug_name);
++   else
++      k = asprintf(&name, "%s/mesa-shared-XXXXXX", path);
++   if (k < 0 || !name)
++      return -1;
++
++   fd = create_tmpfile_cloexec(name);
++
++   free(name);
++   return fd;
++}
++
+ /*
+  * Gets the path to a suitable temporary directory for the current user.
+  * Prefers using the environment variable `XDG_RUNTIME_DIR` if set,
+@@ -211,10 +267,30 @@ os_create_anonymous_file(int64_t size, const char *debug_name)
+      * If preferred API failed (or not included in this build),
+      * fall back to using a file in a temporary dir
+      */
++#if DETECT_OS_APPLE
++    /*
++     * Unless XDG_RUNTIME_DIR names a directory, try the per-user temporary
++     * directory first. If the file cannot be created there (a process whose
++     * effective uid is not the one the directory was made for, such as
++     * WindowServer), the /tmp fallback below still applies.
++     */
++    if (fd == -1) {
++        const char *env = os_get_option("XDG_RUNTIME_DIR");
++
++        if (!env || env[0] == '\0') {
++            char *path = get_darwin_user_temp_dir();
++
++            if (path) {
++                fd = create_tmpfile_in_dir(path, debug_name);
++                free(path);
++            }
++        }
++    }
++#endif
++
+ #if !(defined(__FreeBSD__) || DETECT_OS_ANDROID)
+     if (fd == -1) {
+         char *path;
+-        char *name;
+ 
+         path = get_or_create_user_temp_dir();
+         if (!path) {
+@@ -222,20 +298,9 @@ os_create_anonymous_file(int64_t size, const char *debug_name)
+             return -1;
+         }
+ 
+-        int k;
+-        if (debug_name)
+-            k = asprintf(&name, "%s/mesa-shared-%s-XXXXXX", path, debug_name);
+-        else
+-            k = asprintf(&name, "%s/mesa-shared-XXXXXX", path);
+-        if (k < 0 || !name) {
+-             free(path);
+-            return -1;
+-        }
+-
+-        fd = create_tmpfile_cloexec(name);
++        fd = create_tmpfile_in_dir(path, debug_name);
+ 
+         free(path);
+-        free(name);
+     }
+ #endif
+ 

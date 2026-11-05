@@ -1,0 +1,87 @@
+anv: Xe2 decodes AV1 and HEVC up to 16384x16384 (media-driver Xe2 caps), AV1 frame-size buffers sized from the stream
+
+media-driver decodes AV1 and HEVC up to 16Kx16K on Xe2 (media_softlet/linux/xe2_hpm_r0/decode/{av1,hevc}/ddi/
+capstable_data_*_decode_xe2_hpm_r0_specific.h: VAConfigAttribMaxPictureWidth/Height = CODEC_16K_MAX_PIC_*; H.264 stays
+at CODEC_4K_MAX_PIC_WIDTH). anv reported 4096x4096 for every decode profile and sized the AV1 frame-size buffers
+(AVP tile line / tile column row stores, the per-image temporal MV buffer) for a fixed 4096x4096 frame. They now follow
+the session's max coded extent and the image's extent (media-driver mhw_vdbox_avp_impl.h CalculateBufferSize:
+sbPerFrmWid / sbPerFrmHgt / totalSbPerFrame), never smaller than before. The line row stores depend on the tile width,
+which AV1 caps at 4096, and stay in the internal row-store cache as media-driver keeps them (GetRowstoreCachingAddrs).
+A single VDBOX decodes 8K: media-driver uses virtual-tile scalability from 7680x4320 only when VE is enabled and
+there are two VDBOXes (decode_scalability_option.cpp), single pipe otherwise.
+Verified on the B580: 7680x4320 AV1 8-bit bit-exact (60/60 frames), 135 fps.
+
+diff --git a/src/intel/vulkan/anv_video.c b/src/intel/vulkan/anv_video.c
+index d60b5081b84..829c75dee9e 100644
+--- a/src/intel/vulkan/anv_video.c
++++ b/src/intel/vulkan/anv_video.c
+@@ -384,6 +384,15 @@ anv_GetPhysicalDeviceVideoCapabilitiesKHR(VkPhysicalDevice physicalDevice,
+ 
+       ext->maxLevel = STD_VIDEO_AV1_LEVEL_6_0;
+ 
++      /* media-driver decodes AV1 up to 16Kx16K on Xe2 (capstable_data_av1_decode_xe2_hpm_r0_specific.h:
++       * CODEC_16K_MAX_PIC_WIDTH/HEIGHT). The frame-size dependent AVP buffers follow the session's max coded
++       * extent (get_av1_sb_size), the line buffers the tile width, which AV1 caps at 4096.
++       */
++      if (pdevice->info.verx10 >= 200) {
++         pCapabilities->maxCodedExtent.width = 16384;
++         pCapabilities->maxCodedExtent.height = 16384;
++      }
++
+       pCapabilities->maxDpbSlots = ANV_VIDEO_AV1_MAX_DPB_SLOTS;
+       pCapabilities->maxActiveReferencePictures = STD_VIDEO_AV1_NUM_REF_FRAMES;
+ 
+@@ -404,6 +413,15 @@ anv_GetPhysicalDeviceVideoCapabilitiesKHR(VkPhysicalDevice physicalDevice,
+ 
+       ext->maxLevelIdc = STD_VIDEO_H265_LEVEL_IDC_6_2;
+ 
++      /* media-driver decodes HEVC up to 16Kx16K on Xe2 (capstable_data_hevc_decode_xe2_hpm_r0_specific.h:
++       * CODEC_16K_MAX_PIC_WIDTH/HEIGHT); the HCP session buffers are sized from the session's max coded extent.
++       * H.264 stays at 4096 (CODEC_4K_MAX_PIC_WIDTH there too).
++       */
++      if (pdevice->info.verx10 >= 200) {
++         pCapabilities->maxCodedExtent.width = 16384;
++         pCapabilities->maxCodedExtent.height = 16384;
++      }
++
+       strcpy(pCapabilities->stdHeaderVersion.extensionName, VK_STD_VULKAN_VIDEO_CODEC_H265_DECODE_EXTENSION_NAME);
+       pCapabilities->stdHeaderVersion.specVersion = VK_STD_VULKAN_VIDEO_CODEC_H265_DECODE_SPEC_VERSION;
+       break;
+@@ -1139,11 +1157,16 @@ static const uint8_t av1_buffer_size_ext[ANV_VID_MEM_AV1_MAX][4] = {
+ const uint32_t av1_mi_size_log2         = 2;
+ const uint32_t av1_max_mib_size_log2    = 5;
+ 
++/* The frame in the units the AVP frame-size buffers are counted in, for a frame of w x h: the tile line and tile
++ * column buffers, the temporal MV buffer (media-driver mhw_vdbox_avp_impl.h CalculateBufferSize: sbPerFrmWid,
++ * sbPerFrmHgt, totalSbPerFrame). Never smaller than for 4096x4096, what every size used before, so sessions and
++ * images up to 4K keep exactly their old layout.
++ */
+ static void
+-get_av1_sb_size(uint32_t *w_in_sb, uint32_t *h_in_sb)
++get_av1_sb_size(uint32_t w, uint32_t h, uint32_t *w_in_sb, uint32_t *h_in_sb)
+ {
+-   const uint32_t width = 4096;
+-   const uint32_t height = 4096;
++   const uint32_t width = MAX2(w, 4096);
++   const uint32_t height = MAX2(h, 4096);
+ 
+    uint32_t mi_cols = width  >> av1_mi_size_log2;
+    uint32_t mi_rows = height >> av1_mi_size_log2;
+@@ -1170,7 +1193,7 @@ get_av1_video_session_mem_reqs(struct anv_device *dev,
+                           pVideoSessionMemoryRequirementsCount);
+ 
+    uint32_t width_in_sb, height_in_sb;
+-   get_av1_sb_size(&width_in_sb, &height_in_sb);
++   get_av1_sb_size(vid->vk.max_coded.width, vid->vk.max_coded.height, &width_in_sb, &height_in_sb);
+ 
+    uint32_t max_tile_width_sb = DIV_ROUND_UP(4096, 1 << (av1_max_mib_size_log2 + av1_mi_size_log2));
+    uint32_t max_tile_cols = 16; /* TODO. get the profile to work this out */
+@@ -1980,7 +2003,7 @@ anv_video_get_image_mv_size(struct anv_device *device,
+       } else if (profile_list->pProfiles[i].videoCodecOperation == VK_VIDEO_CODEC_OPERATION_DECODE_AV1_BIT_KHR ||
+                  profile_list->pProfiles[i].videoCodecOperation == VK_VIDEO_CODEC_OPERATION_ENCODE_AV1_BIT_KHR) {
+          uint32_t width_in_sb, height_in_sb;
+-         get_av1_sb_size(&width_in_sb, &height_in_sb);
++         get_av1_sb_size(image->vk.extent.width, image->vk.extent.height, &width_in_sb, &height_in_sb);
+          uint32_t sb_total = width_in_sb * height_in_sb;
+ 
+          size = sb_total * 16;

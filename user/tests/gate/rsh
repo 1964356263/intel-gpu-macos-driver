@@ -1,0 +1,5 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# rsh SECONDS 'remote command' : time-boxed ssh to the hackintosh (INTELXE_HOST=user@machine)
+t=$1; shift
+exec perl -e 'alarm shift; exec @ARGV' "$t" ssh -o ConnectTimeout=5 -o BatchMode=yes -o ServerAliveInterval=5 -o ServerAliveCountMax=2 "${INTELXE_HOST:-<host>}" "$@"
