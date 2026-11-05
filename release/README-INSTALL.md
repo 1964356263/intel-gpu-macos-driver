@@ -190,6 +190,11 @@ Mount the EFI partition as in stage 2; on the PC itself, `sudo diskutil mount di
   is `true`; set it to `false` (stage 2, item 5).
 - **Undo everything:** `sudo ./install.sh --undo`, then reboot with `IntelXe.kext` and `SSDT-ARCOFF.aml` removed from
   the EFI.
+- **Other install.sh commands:** `./install.sh --status` compares what is installed with this package and changes
+  nothing. `sudo ./install.sh --repair` puts back installed files that differ from the package and leaves the last
+  backup alone. `sudo ./install.sh --uninstall` removes the kexts and the Metal driver from `/Library` and keeps the
+  backups; `--undo` instead goes back to what the last install replaced. After `--uninstall`, remove `IntelXe.kext`
+  from the EFI before you reboot.
 
 ## Upgrading from an earlier build
 

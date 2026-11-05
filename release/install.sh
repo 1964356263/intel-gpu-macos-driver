@@ -7,6 +7,10 @@
 #   sudo ./install.sh --apply  back up what it replaces, copy the kexts and the Metal driver into /Library, rebuild the
 #                              Auxiliary Kernel Collection. Reboot afterwards.
 #   sudo ./install.sh --undo   put the last backup back and rebuild the Auxiliary Kernel Collection. Reboot afterwards.
+#   ./install.sh --status      what is installed compared with this package, one "key=value" per line. Changes nothing.
+#   sudo ./install.sh --repair put back installed files that differ from this package; the last backup stays as it is.
+#   sudo ./install.sh --uninstall  remove the kexts and the Metal driver from /Library, rebuild the Auxiliary Kernel
+#                              Collection. Backups stay. Remove IntelXe.kext from your EFI before you reboot.
 #
 # Not done here, because they live in your OpenCore EFI (see README-INSTALL.md): EFI/OC/Kexts/IntelXe.kext and
 # EFI/OC/ACPI/SSDT-ARCOFF.aml with their config.plist entries, SIP and the AMFI boot-arg. The optional system-volume copy
@@ -136,6 +140,7 @@ apply() {
     fi
     for k in "${OLD_KEXTS[@]}"; do [ -e /Library/Extensions/$k.kext ] && { echo "  FAIL  /Library/Extensions/$k.kext is still there"; exit 1; }; done
     rebuild_auxkc
+    echo "$VER" > "$BK/installed-version"
     echo "== done. Reboot (if you are upgrading: with IntelXe.kext in your EFI in place of B580.kext). To go back: sudo $0 --undo"
 }
 
@@ -153,6 +158,7 @@ undo() {
         else rm -rf $GB/$g; echo "  ok    removed $GB/$g (there was none before)"; fi
     done
     if [ -e "$B/created-use-library" ]; then rm -f "$USELIB"; echo "  ok    removed $USELIB (--apply made it)"; fi
+    rm -f "$BK/installed-version"
     rebuild_auxkc
     for k in "${OLD_KEXTS[@]}"; do
         [ -e "$B/Extensions/$k.kext" ] && echo "== $k.kext is back: put B580.kext back into your EFI in place of IntelXe.kext before you reboot"
@@ -160,9 +166,83 @@ undo() {
     echo "== done. Reboot."
 }
 
+# the installed items that come from this package, as "package path|installed path"; nvmtl-allow.txt is left out because
+# it may be edited, and nvmtl/ssv-component.plist is excluded where they are compared because only an install writes it
+package_items() {
+    for k in "${KEXTS[@]}"; do echo "Library/Extensions/$k.kext|/Library/Extensions/$k.kext"; done
+    echo "Library/GPUBundles/NVMTLDriverLib.bundle|$GB/NVMTLDriverLib.bundle"
+    echo "Library/GPUBundles/nvmtl|$GB/nvmtl"
+}
+
+differs() { ! diff -rq -x ssv-component.plist "$1" "$2" >/dev/null 2>&1; }
+
+status() {
+    local installed=none state=absent present=0 changed=0 i p d
+    [ -f "$BK/installed-version" ] && installed=$(cat "$BK/installed-version")
+    while IFS='|' read -r p d; do
+        [ -e "$d" ] || continue
+        present=$((present + 1))
+        differs "$H/$p" "$d" && changed=$((changed + 1))
+    done < <(package_items)
+    i=$(package_items | wc -l | tr -d ' ')
+    if [ "$present" = 0 ]; then state=absent
+    elif [ "$present" != "$i" ]; then state=partial
+    elif [ "$changed" = 0 ]; then state=same
+    else state=different; fi
+    echo "package_version=$VER"
+    echo "package_macos=$MACOS_MAJOR"
+    echo "installed_version=$installed"
+    echo "installed_state=$state"
+    echo "items_present=$present/$i"
+    echo "items_different=$changed"
+    [ -s "$BK/last-backup" ] && [ -d "$(cat "$BK/last-backup")" ] && echo "backup=$(cat "$BK/last-backup")" || echo "backup=none"
+    [ -e "$USELIB" ] && echo "use_library=yes" || echo "use_library=no"
+    [ -f "$SSV/Contents/MacOS/NVMTLDriver" ] && echo "system_volume_copy=yes" || echo "system_volume_copy=no"
+}
+
+repair() {
+    [ "$(id -u)" = 0 ] || { echo "--repair needs root: sudo $0 --repair"; exit 1; }
+    check || { echo "checks failed: nothing changed"; exit 1; }
+    local p d keep kexts=0 n=0 mark=$GB/nvmtl/ssv-component.plist
+    mkdir -p $GB /Library/Extensions
+    while IFS='|' read -r p d; do
+        differs "$H/$p" "$d" || { echo "  same  $d"; continue; }
+        keep=""
+        [ "$d" = $GB/nvmtl ] && [ -f "$mark" ] && { keep=$(mktemp -t ssvmark); cp -p "$mark" "$keep"; }
+        put "$H/$p" "$d"; echo "  ok    $d"
+        [ -n "$keep" ] && { cp -p "$keep" "$mark"; rm -f "$keep"; }
+        n=$((n + 1))
+        case "$d" in /Library/Extensions/*) kexts=$((kexts + 1));; esac
+    done < <(package_items)
+    [ -e $GB/nvmtl-allow.txt ] || { install -o root -g wheel -m 644 "$H/Library/GPUBundles/nvmtl-allow.txt" $GB/nvmtl-allow.txt; echo "  ok    $GB/nvmtl-allow.txt"; n=$((n + 1)); }
+    [ "$kexts" = 0 ] || rebuild_auxkc
+    mkdir -p "$BK"; echo "$VER" > "$BK/installed-version"
+    if [ "$n" = 0 ]; then echo "== nothing to repair"; else echo "== done: $n item(s) put back. Reboot."; fi
+}
+
+uninstall() {
+    [ "$(id -u)" = 0 ] || { echo "--uninstall needs root: sudo $0 --uninstall"; exit 1; }
+    local k g
+    for k in "${KEXTS[@]}" "${OLD_KEXTS[@]}"; do
+        if [ -e /Library/Extensions/$k.kext ]; then rm -rf /Library/Extensions/$k.kext; echo "  ok    removed /Library/Extensions/$k.kext"; fi
+    done
+    for g in NVMTLDriverLib.bundle NVMTLDriver.bundle nvmtl nvmtl-allow.txt NVMTLDriver.use-library; do
+        if [ -e $GB/$g ]; then rm -rf $GB/$g; echo "  ok    removed $GB/$g"; fi
+    done
+    rm -f "$BK/installed-version"
+    rebuild_auxkc
+    echo "== done. Backups stay in $BK."
+    echo "== before you reboot: remove IntelXe.kext (and SSDT-ARCOFF.aml if you want macOS's display driver back) from your EFI and config.plist."
+    [ -f "$SSV/Contents/MacOS/NVMTLDriver" ] && echo "== the system-volume copy is still installed: sudo system-volume/ssv-install.sh --uninstall reverts to the last sealed snapshot (it removes EVERY root change, ours and any other)."
+    echo "== then reboot."
+}
+
 case "${1:-}" in
     ""|--check) check ;;
     --apply) apply ;;
     --undo) undo ;;
-    *) sed -n '3,9p' "$0"; exit 2 ;;
+    --status) status ;;
+    --repair) repair ;;
+    --uninstall) uninstall ;;
+    *) sed -n '3,13p' "$0"; exit 2 ;;
 esac

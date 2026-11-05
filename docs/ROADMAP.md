@@ -60,9 +60,11 @@ The order is roughly the intended one. Every item should follow the Linux xe/i91
   Zink), which is what "Zink by default for every OpenGL application" needs.
 
 ### A companion app
-- A small macOS app for users: system and GPU information, whether the installed driver is the latest release, and
-  settings that today need Terminal (Zink on or off, the boot guard, VRAM sharing, diagnostics for a bug report).
-  Not before the driver itself is easier to install.
+- `app/`: IntelXe Manager, a first version that is built and tested without the card and not in any release yet. It shows the
+  system and the GPU, compares the installed driver with the latest release, and runs `install.sh` (check, install, repair,
+  undo, uninstall) and Zink's script (install, on or off, remove). It never changes the EFI.
+- To do before a release: a run on the test machine; release signatures that are independent of GitHub; the boot guard
+  and VRAM sharing settings; diagnostics for a bug report.
 
 ## Other Xe2 (Battlemage) cards
 

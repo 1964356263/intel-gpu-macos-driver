@@ -194,6 +194,10 @@ Dosyaları `intel-gpu-macos-driver-@VER@-efi.zip`'ten alın (macOS paketinde de 
 - **Açılışın yaklaşık 20. saniyesinde panik, `watchdogd ... exited`** (`/Library/Logs/DiagnosticReports/Kernel-*.panic` içinde `watchdogd`
   geçiyorsa): `UEFI > Output > ReconnectGraphicsOnConnect` `true` kalmıştır; `false` yapın (2. aşama, 5. madde).
 - **Her şeyi geri almak:** `sudo ./install.sh --undo`, sonra `IntelXe.kext` ve `SSDT-ARCOFF.aml` EFI'den çıkarılmış olarak yeniden başlatın.
+- **`install.sh`'nin diğer komutları:** `./install.sh --status` kurulu olanı bu paketle karşılaştırır, hiçbir şeyi değiştirmez.
+  `sudo ./install.sh --repair` kurulu dosyalardan paketle uyuşmayanları yeniden kopyalar, son yedeğe dokunmaz. `sudo ./install.sh --uninstall`
+  kext'leri ve Metal sürücüsünü `/Library`'den siler, yedekleri bırakır; `--undo` ise son kurulumun değiştirdiklerini geri getirir.
+  `--uninstall`'dan sonra, yeniden başlatmadan önce `IntelXe.kext`'i EFI'den çıkarın.
 
 ## Yükseltme
 
