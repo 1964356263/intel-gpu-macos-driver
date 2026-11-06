@@ -1,0 +1,38 @@
+From: IntelXe (Claude Opus 5.5)
+Subject: util/disk_cache: keep the shader cache on macOS when the real user is root
+
+Mesa turns its disk cache off when the effective and real ids differ (__normal_user), because the environment that
+chooses the cache directory belongs to the real user. macOS runs its own system processes that way with a real uid of
+0: WindowServer (real 0, effective _windowserver) and loginwindow after login (real 0, effective the user). The cache
+was therefore off in exactly the compositor, which compiled every pipeline again after each boot and login (the
+stutter in the first seconds of a session). A real user of root is no less privileged than any effective user, so on
+macOS the cache stays on in that case; a setuid program started by another user still gets none.
+
+Measured on the B580 with a root process that drops its effective ids like loginwindow (24 render pipelines): with
+the released build no cache entries were written and every run took ~100 ms; with this patch 74 entries were written
+and warm runs took 53 ms (cold 145 ms).
+
+Applies on top of intelxe.diff (or patches/0101). Not in a release yet.
+---
+diff --git a/src/util/disk_cache_os.c b/src/util/disk_cache_os.c
+index 15b6a819b68..d14cda9ace2 100644
+--- a/src/util/disk_cache_os.c
++++ b/src/util/disk_cache_os.c
+@@ -1079,8 +1079,15 @@ disk_cache_generate_cache_dir(void *mem_ctx, const char *gpu_name,
+ bool
+ disk_cache_enabled()
+ {
+-   /* If running as a users other than the real user disable cache */
+-   if (!__normal_user())
++   /* If running as a users other than the real user disable cache: the environment that picks the cache directory
++    * belongs to the real user. On macOS a real user of root is kept: root is no less privileged than any effective
++    * user, and the system's own processes run that way (WindowServer: real uid 0, effective _windowserver; loginwindow
++    * after login: real uid 0, effective the user), so without this they compiled every shader again at each boot. */
++   if (!__normal_user()
++#if DETECT_OS_APPLE
++       && getuid() != 0
++#endif
++      )
+       return false;
+ 
+    /* At user request, disable shader cache entirely.
