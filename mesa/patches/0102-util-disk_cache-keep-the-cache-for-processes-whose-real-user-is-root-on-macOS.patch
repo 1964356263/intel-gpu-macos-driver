@@ -12,6 +12,12 @@ Measured on the B580 with a root process that drops its effective ids like login
 the released build no cache entries were written and every run took ~100 ms; with this patch 74 entries were written
 and warm runs took 53 ms (cold 145 ms).
 
+At login on the B580 (WindowServer, same mode, the user idle for 60 s after logging in), with the cache emptied (the
+behaviour before this patch) and then warm: WindowServer CPU time from boot to login 27.1 s -> 14.8 s, in the first 30 s
+after login 17.6 s -> 9.2 s, shader compiles in those 30 s 265 -> 6. The login window's transition also stopped timing
+out: WindowServer compiled while loginwindow waited for the display reconfiguration (8 s once), and when the
+transition gave up before a scaled HiDPI mode was set, the login screen stayed in a corner of the panel.
+
 Applies on top of intelxe.diff (or patches/0101). Not in a release yet.
 ---
 diff --git a/src/util/disk_cache_os.c b/src/util/disk_cache_os.c
