@@ -324,8 +324,9 @@ de modları kapatır (anahtar NVRAM değişkenidir).
 
 ## Yükseltme
 
-**0.1.2'den:** Yalnızca `IntelXeFB.kext` ve `NMXAGDC.kext` yeni (firmware'inkinden yüksek tazeleme hızları, varsayılan
-olarak açık Adaptive-Sync modları, isteğe bağlı HiDPI modları). Paketi kurun (uygulamada *v0.1.3 sürümünü indir*, sonra
+**0.1.2'den:** Yalnızca `IntelXeFB.kext`, `NMXAGDC.kext` ve video çözücü yeni (firmware'inkinden yüksek tazeleme
+hızları, varsayılan olarak açık Adaptive-Sync modları, isteğe bağlı HiDPI modları, tam aralıklı videonun tam aralıklı
+çözülmesi). Paketi kurun (uygulamada *v0.1.3 sürümünü indir*, sonra
 *Bu paketi kur*; ya da `sudo ./install.sh --apply`) ve yeniden başlatın. EFI'deki `IntelXe.kext`, Metal sürücüsü ve
 sistem diski kopyası 0.1.2'ninkiler; oldukları gibi kalırlar.
 

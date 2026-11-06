@@ -319,8 +319,8 @@ off as well (the switch is the NVRAM variable).
 
 ## Upgrading from an earlier build
 
-**From 0.1.2:** only `IntelXeFB.kext` and `NMXAGDC.kext` are new (refresh rates above the firmware's, Adaptive-Sync
-modes on by default, the optional HiDPI modes). Install the package (the app: *Download v@VER@*, then *Install this
+**From 0.1.2:** only `IntelXeFB.kext`, `NMXAGDC.kext` and the video decoder are new (refresh rates above the
+firmware's, Adaptive-Sync modes on by default, the optional HiDPI modes, full-range video decoded as full range). Install the package (the app: *Download v@VER@*, then *Install this
 package*; or `sudo ./install.sh --apply`) and restart. `IntelXe.kext` in the EFI, the Metal driver and the
 system-volume copy are those of 0.1.2 and stay as they are.
 
