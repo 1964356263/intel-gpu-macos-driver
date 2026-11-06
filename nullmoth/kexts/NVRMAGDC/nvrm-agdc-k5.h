@@ -101,6 +101,10 @@ static inline void nvk5_fill_link_port(struct NVAGDCLinkConfig *l, const uint32_
     nvk5_fill_link(l, t); l->port = port;
 }
 
+// The plane-scaler capability: the panel's size, and scale factors 1:1 (0x10001; WAS 0x70007, up to 7x). Nothing in
+// this stack implements a plane scaler for IOPresentment, and with 7x it left the scaling of a scaled (HiDPI) mode to
+// the pipe before login: the login window was drawn at the scaled size's ratio into a corner of the panel (IntelXeFB
+// HiDPI, 0.1.3). With 1:1 WindowServer scales on the GPU there too, as it does after login.
 static inline void nvk5_fill_planescaler(struct NVAGDCFBExtCap *c, const uint32_t *t)
 {
     uint32_t idx = c->fbIndex, type = c->type; nvk5_zero(c, sizeof *c); c->fbIndex = idx; c->type = type;
@@ -110,11 +114,11 @@ static inline void nvk5_fill_planescaler(struct NVAGDCFBExtCap *c, const uint32_
     nvk5_put32(e, 0x004, 0);
     nvk5_put32(e, 0x01c, 1);
     nvk5_put32(e, 0x024, h); nvk5_put32(e, 0x028, w); nvk5_put32(e, 0x02c, h); nvk5_put32(e, 0x030, w);
-    nvk5_put32(e, 0x034, 0x70007);
+    nvk5_put32(e, 0x034, 0x10001);   // scale factors 1:1 (see below)
     nvk5_put32(e, 0x038, 0);
     nvk5_put32(e, 0x1a4, 1);
     nvk5_put32(e, 0x1ac, h); nvk5_put32(e, 0x1b0, w); nvk5_put32(e, 0x1b4, h); nvk5_put32(e, 0x1b8, w);
-    nvk5_put32(e, 0x1bc, 0x70007);
+    nvk5_put32(e, 0x1bc, 0x10001);
     nvk5_put32(e, 0x1c0, 0);
 }
 

@@ -502,6 +502,9 @@ class IntelXeFramebuffer : public IOFramebuffer {
 	// line length with a longer vertical total (Linux's live LRR path, intel_set_transcoder_timings_lrr), so the link and
 	// the PLL stay as the GOP trained them. Without a usable EDID: v10l's 5 sizes x 5 rates (fallbackDriverModes).
 	uint32_t fModeW = 0, fModeH = 0, fModeRB = 0, fModeVT = 0;
+	// WindowServer's coordinate space for the cursor: the mode's size as reported (a HiDPI mode's scaled size, while the
+	// plane runs the panel's size; fModeW/H otherwise)
+	uint32_t fCurSpaceW = 0, fCurSpaceH = 0;
 	IODisplayModeID fMode = 1;
 	bool fScaling = true;             // -intelxefb_noscale offers the native size only
 	bool fRates = true;               // -intelxefb_norates offers the firmware's refresh only
@@ -567,7 +570,7 @@ class IntelXeFramebuffer : public IOFramebuffer {
 	// are taken: the firmware's active size, horizontal timing and syncs, any vertical total from the firmware's up (LRR),
 	// any pixel clock up to the firmware's (an M/N change on the trained link).
 	struct Prog { IODisplayModeID id; IODetailedTimingInformationV2 t; };
-	static constexpr int kMaxProg = 128;   // HiDPI adds CoreDisplay's scaled timings (and their variable twins) to these
+	static constexpr int kMaxProg = 512;   // HiDPI adds CoreDisplay's scaled timings (and their variable twins) to these
 	Prog fProg[kMaxProg];
 	int fNumProg = 0;
 	uint32_t fProgRejects = 0;
@@ -1136,6 +1139,8 @@ public:
 		info->flags = kDisplayModeValidFlag | kDisplayModeSafeFlag | (fw ? kDisplayModeDefaultFlag : 0);
 		// an EDID size of another aspect (1280x1024 on 16:9) fills the panel: say so, as Apple's drivers do
 		if (mode >= 1 && mode <= fNumModes && fModes[mode - 1].stretched) info->flags |= kDisplayModeStretchedFlag;
+		if (const Prog *pm = progFind(mode))
+			if (pm->t.horizontalScaled && pm->t.horizontalScaled != pm->t.horizontalActive) info->flags |= kDisplayModeAcceleratorBackedFlag;
 		return kIOReturnSuccess;
 	}
 	IOReturn validateDetailedTiming(void *description, IOByteCount size) override;
@@ -1187,6 +1192,9 @@ public:
 		uint32_t w, h, vt, ext; uint64_t pclk;
 		if (depth != 0 || !modeLookup(mode, &w, &h, &vt, &pclk, &ext)) return kIOReturnUnsupported;
 		if (mode == fMode) return kIOReturnSuccess;
+		// the cursor's coordinates come in the reported size (a HiDPI mode's scaled size); the plane runs the panel's
+		const uint32_t spaceW = w, spaceH = h;
+		if (progFind(mode)) { w = fWidth; h = fHeight; }   // accelerator backed: WindowServer scales on the GPU
 		const uint64_t need = (uint64_t)((w * 4 + 63) & ~63u) * h;
 		if (need > (uint64_t)fRowBytes * fHeight && (need > kHomeMax || !homeBigAlloc())) {
 			FBLOG("mode 0x%x: %ux%u needs the HiDPI home surface, which is not available", (unsigned)mode, w, h);
@@ -1198,6 +1206,10 @@ public:
 		if (pclk != fPclkCur) programPixelClock(pclk);
 		if (vt != fModeVT) programVTotalFixed(vt);
 		if (w != fModeW || h != fModeH) programMode(w, h);
+		if (spaceW != fCurSpaceW || spaceH != fCurSpaceH) {
+			fCurSpaceW = spaceW; fCurSpaceH = spaceH;
+			if (fCurReady) { IOLockLock(fCurImgLock); cursorRender(); IOLockUnlock(fCurImgLock); cursorRefresh(); }
+		}
 		fMode = mode;
 		fVrrModeExt = ext; fVrrModeWants = ext != 0;
 		applyVrrLocked("display mode");
@@ -2548,7 +2560,7 @@ void IntelXeFramebuffer::cursorRender()
 {
 	if (!fCurMap || !fCurSrc) return;
 	volatile uint32_t *dst = (volatile uint32_t *)fCurMap->getVirtualAddress();
-	const uint32_t mw = fModeW ? fModeW : fWidth, mh = fModeH ? fModeH : fHeight;
+	const uint32_t mw = fCurSpaceW ? fCurSpaceW : fWidth, mh = fCurSpaceH ? fCurSpaceH : fHeight;
 	const bool same = mw == fWidth && mh == fHeight;
 	uint32_t w = (uint32_t)(((uint64_t)fCurSrcW * fWidth + mw - 1) / mw), h = (uint32_t)(((uint64_t)fCurSrcH * fHeight + mh - 1) / mh);
 	if (w > kCurDim) w = kCurDim;
@@ -2603,8 +2615,8 @@ void IntelXeFramebuffer::cursorWriteLocked()
 	if (!fCurReady || fPipe < 0 || !fRegs) return;
 	const int p = fPipe;
 	int32_t x = fCurX, y = fCurY;
-	if (fModeW && fModeW != fWidth) x = (int32_t)((int64_t)x * (int64_t)fWidth / (int64_t)fModeW);
-	if (fModeH && fModeH != fHeight) y = (int32_t)((int64_t)y * (int64_t)fHeight / (int64_t)fModeH);
+	if (fCurSpaceW && fCurSpaceW != fWidth) x = (int32_t)((int64_t)x * (int64_t)fWidth / (int64_t)fCurSpaceW);
+	if (fCurSpaceH && fCurSpaceH != fHeight) y = (int32_t)((int64_t)y * (int64_t)fHeight / (int64_t)fCurSpaceH);
 	const bool show = gHwCursor && fCurHave && fCurVisible && !fCurParked && !fBlanked &&
 	                  x > -(int32_t)kCurDim && y > -(int32_t)kCurDim && x < (int32_t)fWidth && y < (int32_t)fHeight;
 	const uint32_t ctl = show ? MCURSOR_MODE_256_ARGB_AX : 0;
@@ -2633,7 +2645,7 @@ IOReturn IntelXeFramebuffer::setCursorImage(void *cursorImage)
 		return kIOReturnUnsupported;
 	}
 	// the largest image that still fits 256 panel pixels after a scaled mode's factor
-	const uint32_t mw = fModeW ? fModeW : fWidth, mh = fModeH ? fModeH : fHeight;
+	const uint32_t mw = fCurSpaceW ? fCurSpaceW : fWidth, mh = fCurSpaceH ? fCurSpaceH : fHeight;
 	IOHardwareCursorDescriptor d; bzero(&d, sizeof d);
 	d.majorVersion = kHardwareCursorDescriptorMajorVersion; d.minorVersion = kHardwareCursorDescriptorMinorVersion;
 	d.width = kCurDim * mw / fWidth; d.height = kCurDim * mh / fHeight;
@@ -2683,10 +2695,12 @@ const char *IntelXeFramebuffer::progCheck(const IODetailedTimingInformationV2 &t
 	const uint32_t vt = t.verticalActive + t.verticalBlanking;
 	if (vt < fVT || vt > 8192) return "vertical total";
 	if (t.horizontalBorderLeft || t.horizontalBorderRight || t.verticalBorderTop || t.verticalBorderBottom) return "borders";
-	// HiDPI: a scaled timing shrinks a larger image to the panel with the plane scaler (the driver's own modes do the
-	// upscaled sizes). Linux's limits for display 14 on scaler 0 (skl_scaler.c): source at most 4096 wide, a scale
-	// factor below 3; and icl_plane_min_cdclk: the pixel rate times the horizontal factor (its fraction doubled, 2 pixels
-	// per clock, intel_plane.c hscale_cdclk) times the vertical one, halved, may not exceed the display clock.
+	// HiDPI: a scaled timing (horizontalScaled above the active width) is reported accelerator backed
+	// (validateDetailedTiming): WindowServer renders the larger image and scales it to the panel on the GPU, and the pipe
+	// runs the panel's size at this timing (setDisplayMode). The display engine's scaler is not used, so its display
+	// clock limit (icl_plane_min_cdclk) does not apply; the sizes stay within what was tested: at most 4096x2304, the
+	// plane scaler's source limit on display 14 (skl_scaler.c), and a factor below 3. WAS (first 0.1.3 builds): the plane
+	// scaler downscaled them, which the display clock held to about 100 Hz.
 	if (t.horizontalScaled || t.verticalScaled) {
 		const uint32_t sw = t.horizontalScaled, sh = t.verticalScaled;
 		if (sw != t.horizontalActive || sh != t.verticalActive) {
@@ -2698,7 +2712,7 @@ const char *IntelXeFramebuffer::progCheck(const IODetailedTimingInformationV2 &t
 			if (hs >= 0x30000 || vs >= 0x30000) return "downscale of 3 or more";
 			const uint64_t hsc = (hs & ~0xFFFFu) + 2ull * (hs & 0xFFFFu);
 			const uint64_t rateK = ((t.pixelClock / 1000) * hsc * vs + (1ull << 32) - 1) >> 32;
-			if (!fCdclkKhz || (rateK + 1) / 2 > fCdclkKhz) return "display clock (pixel rate after the downscale)";
+			(void)rateK;   // not the display engine's scaling (see above): its clock limit does not apply
 		}
 	}
 	if (t.signalConfig & kIOInterlacedCEATiming) return "interlaced";
@@ -2796,6 +2810,8 @@ IOReturn IntelXeFramebuffer::validateDetailedTiming(void *description, IOByteCou
 		info.nominalWidth = scaled ? t->horizontalScaled : t->horizontalActive;
 		info.nominalHeight = scaled ? t->verticalScaled : t->verticalActive;
 		info.maxDepthIndex = 0;   // one depth: 32-bit direct (getPixelInformation)
+		if (scaled && (t->horizontalScaled != t->horizontalActive || t->verticalScaled != t->verticalActive))
+			info.flags |= kDisplayModeAcceleratorBackedFlag;
 		info.refreshRate = (uint32_t)((t->pixelClock << 16) / ((uint64_t)(t->horizontalActive + t->horizontalBlanking) * vt));
 	}
 	static uint32_t okLogged;
@@ -3412,7 +3428,7 @@ bool IntelXeFramebuffer::adoptFirmwareMode(IOPhysicalAddress barBase, IOPhysical
 		uint32_t size = rd(PLANE_SIZE(p)), stride = rd(PLANE_STRIDE(p)) & 0xFFF;   // PLANE_STRIDE__MASK 11:0
 		fWidth = (size & 0xFFFF) + 1; fHeight = ((size >> 16) & 0xFFFF) + 1;
 		fRowBytes = stride * 64;                     // linear planes count the stride in 64-byte units
-		fModeW = fWidth; fModeH = fHeight; fModeRB = fRowBytes;
+		fModeW = fWidth; fModeH = fHeight; fModeRB = fRowBytes; fCurSpaceW = fWidth; fCurSpaceH = fHeight;
 		fSurf = rd(PLANE_SURF(p)) & ~0xFFFu;         // GGTT address of the surface
 		if (fWidth < 320 || fHeight < 200 || fRowBytes < fWidth * 4) {
 			FBLOG("pipe %c: plane %ux%u stride %u is not a usable surface", 'A' + p, fWidth, fHeight, fRowBytes); return false;
