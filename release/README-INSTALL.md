@@ -10,7 +10,8 @@ rate, up to 180 Hz tested), desktop widgets, Metal apps and games, Safari on the
 system-volume copy, 3.3), VideoToolbox decode (H.264, HEVC, AV1, VP9) and encode (H.264, HEVC, AV1) on the GPU,
 one DisplayPort monitor with VRR, sleep and wake. Optional: OpenGL through Mesa's zink for LWJGL games such as
 Minecraft Java (the `-zink-gl.zip`, [below](#optional-opengl-through-zink)).
-Known issues: the first seconds after the first login stutter while shaders are translated; a light grey band on the
+Known issues: the first seconds after login are still less smooth than later (less so from 0.1.3, when WindowServer keeps
+its compiled shaders; the first login after an install compiles them once); a light grey band on the
 login screen after a restart; ffmpeg-style tools that bring Metal up through a VideoToolbox encode miss our encoders in
 their first session. Only 1 GB of the card's 12 GB can be mapped by the CPU (a macOS limit, stage 2 item 1): the
 driver keeps that window for what needs it and puts background processes' buffers in system memory, but many open
@@ -319,10 +320,13 @@ off as well (the switch is the NVRAM variable).
 
 ## Upgrading from an earlier build
 
-**From 0.1.2:** only `IntelXeFB.kext`, `NMXAGDC.kext` and the video decoder are new (refresh rates above the
-firmware's, Adaptive-Sync modes on by default, the optional HiDPI modes, full-range video decoded as full range). Install the package (the app: *Download v0.1.3*, then *Install this
-package*; or `sudo ./install.sh --apply`) and restart. `IntelXe.kext` in the EFI, the Metal driver and the
-system-volume copy are those of 0.1.2 and stay as they are.
+**From 0.1.2:** `IntelXeFB.kext`, `NMXAGDC.kext`, the video decoder and Mesa's Vulkan driver are new (refresh rates
+above the firmware's, Adaptive-Sync modes on by default, the optional HiDPI modes, full-range video decoded as full
+range, WindowServer keeping its compiled shaders). Install the package (the app: *Download v0.1.3*, then *Install this
+package*; or `sudo ./install.sh --apply`) and restart. `IntelXe.kext` in the EFI and the Metal plugin are those of
+0.1.2 and stay as they are. If you installed the system-volume copy (3.3), install this package's too
+(`sudo ./system-volume/ssv-install.sh --apply`) and then `sudo rm /Library/GPUBundles/NVMTLDriver.use-library`, which
+`install.sh --apply` creates because the copy holds the older Mesa; then restart.
 
 **From 0.1.0 or 0.1.1:** every kext, the Metal driver and the video libraries are new, **`IntelXe.kext` in the EFI
 too** (it closes a security hole: an unprivileged process could get writable GPU mappings of pages it may only read).
