@@ -6,7 +6,7 @@ patches in `ffmpeg/` (Vulkan decode and encode fixes) is used as shared librarie
 
 - **Decoders** (`intelxeav1.c`, `libintelxeav1dec.dylib`; the file name is historical): AV1 (`av01`) and VP9, and H.264
   (High and below, 8-bit) and HEVC (Main, Main10) as the hardware decoder of last resort when the system has none for
-  them; NV12/P010 IOSurface pixel buffers.
+  them; NV12/P010 IOSurface pixel buffers, full or video range as the stream is ('420f'/'xf20' or '420v'/'x420').
 - **Encoders** (`encoder/intelxevenc.c`, `libintelxevenc.dylib`): HEVC (Main, Main10), H.264 (High) and AV1 (Main) on VDEnc,
   with libavcodec's `hevc_vulkan`, `h264_vulkan` and `av1_vulkan` (H.264 and AV1 encode on Xe2 need `mesa/patches/0010`,
   `0012`, `0015`).
@@ -27,6 +27,7 @@ files: `/Library/GPUBundles/nvmtl/libintelxeav1dec.dylib`, `libintelxevenc.dylib
 | `ffmpeg/apply-patches.sh`, `ffmpeg/*.patch` | our FFmpeg 9.0.2 patches and the eight of them the released libraries carry, in order (two files there are not applied: see the script) |
 | `ffmpeg/configure-shared.sh` | the FFmpeg 9.0.2 configuration: shared, LGPL only, AV1/H.264/HEVC/VP9 decoders + Vulkan hwaccels, Vulkan encoders |
 | `tests/vtdec.m`, `tests/vtq.m`, `tests/sbprobe.c` | decode through `VTDecompressionSession`; what VideoToolbox offers; what a sandboxed video service can reach |
+| `tests/vcbench.m` | decode throughput the way Video Codec Test measures it (parallel sessions, its pixel formats), and hardware vs software checksums |
 
 ## Building
 

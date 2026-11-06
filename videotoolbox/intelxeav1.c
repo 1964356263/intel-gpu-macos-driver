@@ -39,6 +39,10 @@
 //   Metal compatible. CoreVideo otherwise starts plane 0 of a 420v/x420 IOSurface 32 bytes in, and the copy engine
 //   writes every row as partial cache lines over PCIe: 2.7 instead of 0.95 ms per 4K 8-bit picture. (A client that
 //   asks for Metal compatibility already got such buffers: VideoToolbox merges its attributes into the pool's.)
+// - The range: full-range streams get '420f' / 'xf20' buffers, video-range ones '420v' / 'x420', like Apple's decoders
+//   (the format description's FullRangeVideo, else VP9's vpcC flag, else the first picture). With video-range buffers
+//   only, a client asking for the stream's own format ('420f' for a full-range 4K stream, Video Codec Test) made
+//   VideoToolbox convert every picture (45-59 fps instead of 270-720) and expand the range a second time.
 // - Streams larger than the device's video decode capabilities (vkGetPhysicalDeviceVideoCapabilitiesKHR) are refused at
 //   StartSession, as Apple's decoders refuse what their hardware cannot decode.
 // - The Vulkan driver: when the process already has a libvulkan_intel.dylib with the same LC_UUID as INTELXE_ANV loaded
@@ -307,6 +311,7 @@ typedef struct {
 	VTVideoDecoderSession session;
 	CMVideoFormatDescriptionRef fd;
 	int32_t w, h; int ten;
+	int full, range_known;            // full-range samples ('420f' / 'xf20' buffers); known from the format description
 	AVCodecContext *av; AVBufferRef *dev; AVFrame *hw, *sw; AVPacket *pkt;
 	AVFrame *last_alloc; uint64_t allocs;
 	AVFrame *first_alloc; uint64_t allocs_mark;   // the first allocation since allocs_mark (HEVC: the current picture,
@@ -648,6 +653,14 @@ static void output(Dec *s, VTVideoDecoderFrame frame, AVFrame *pic, int no_outpu
 			return;
 		}
 	}
+	if (!s->range_known) {   // neither the format description nor the codec configuration said: the stream's own
+		s->range_known = 1;
+		if ((pic->color_range == AVCOL_RANGE_JPEG) != s->full) {
+			flush_deferred(s, 'e');
+			s->full = pic->color_range == AVCOL_RANGE_JPEG;
+			if (set_output_size(s, s->w, s->h)) { emit_later(s, frame, kVTVideoDecoderMalfunctionErr, 0, NULL, 0, 0); return; }
+		}
+	}
 	CVPixelBufferPoolRef pool = VTDecoderSessionGetPixelBufferPool(s->session);
 	CVPixelBufferRef pb = NULL;
 	OSStatus r = pool ? CVPixelBufferPoolCreatePixelBuffer(NULL, pool, &pb) : kVTAllocationFailedErr;
@@ -774,7 +787,8 @@ static OSStatus set_output_size(Dec *s, int32_t width, int32_t height) {
 	VTVideoDecoderSession session = s->session;
 	const int high = s->ten;
 	CMVideoDimensions dim = { width, height };
-	const int32_t pf = high ? kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
+	const int32_t pf = high ? (s->full ? kCVPixelFormatType_420YpCbCr10BiPlanarFullRange : kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange)
+	                        : (s->full ? kCVPixelFormatType_420YpCbCr8BiPlanarFullRange : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange);
 	CFNumberRef w = CFNumberCreate(NULL, kCFNumberSInt32Type, &dim.width), h = CFNumberCreate(NULL, kCFNumberSInt32Type, &dim.height),
 	            f = CFNumberCreate(NULL, kCFNumberSInt32Type, &pf);
 	CFDictionaryRef io = CFDictionaryCreate(NULL, NULL, NULL, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
@@ -799,7 +813,7 @@ static OSStatus StartSession(VTVideoDecoderRef d, VTVideoDecoderSession session,
 	CFDataRef cfg = atom_of(fd, s->codec == 'av01' ? CFSTR("av1C") : s->codec == 'avc1' ? CFSTR("avcC") : s->codec == 'vp09' ? CFSTR("vpcC") : CFSTR("hvcC"));
 	CFIndex cn = cfg ? CFDataGetLength(cfg) : 0;
 	const uint8_t *c = cfg ? CFDataGetBytePtr(cfg) : NULL;
-	int high = 0, profile_idc = 0;
+	int high = 0, profile_idc = 0, vp9_full = -1;
 	enum AVCodecID cid = AV_CODEC_ID_AV1;
 	if (s->codec == 'av01') {
 		if (cn < 4) { os_log_error(lg(), "intelxeav1: av01 without an av1C atom - refused"); return kVTVideoDecoderBadDataErr; }
@@ -812,6 +826,7 @@ static OSStatus StartSession(VTVideoDecoderRef d, VTVideoDecoderSession session,
 		// Profile 2 (10-bit) 4:2:0; Profiles 1 and 3 (4:2:2, 4:4:0, 4:4:4) are refused.
 		if (cn < 8 || c[0] != 1) { os_log_error(lg(), "intelxeav1: vp09 without a vpcC atom - refused"); return kVTVideoDecoderBadDataErr; }
 		const int profile = c[4], depth = c[6] >> 4, chroma = (c[6] >> 1) & 7;
+		vp9_full = c[6] & 1;
 		if (!((profile == 0 && depth == 8) || (profile == 2 && depth == 10)) || chroma > 1) {
 			os_log(lg(), "intelxeav1: VP9 profile %d, %d-bit, chroma subsampling %d is not Profile 0 / 2 4:2:0 - refused", profile, depth, chroma);
 			return kVTVideoDecoderUnsupportedDataFormatErr;
@@ -854,6 +869,14 @@ static OSStatus StartSession(VTVideoDecoderRef d, VTVideoDecoderSession session,
 	if (s->slots) dispatch_release(s->slots);   // teardown above drained the emit queue: every slot is back
 	s->slots = dispatch_semaphore_create(inflight_limit(dim.width, dim.height, high));
 	s->session = session; s->w = dim.width; s->h = dim.height; s->ten = high; s->fd = (CMVideoFormatDescriptionRef)CFRetain(fd);
+	// the sample range, as Apple's decoders follow it: the format description's FullRangeVideo (CoreMedia sets it from the
+	// SPS/VPS VUI or the track's colr atom), else VP9's vpcC flag, else the first decoded picture (see output). Buffers of
+	// the other range made VideoToolbox convert every picture for a client that asks for the stream's own ('420f' for a
+	// full-range 4K stream: 45-59 fps instead of 270-720), and labelled full-range samples as video range.
+	CFTypeRef fr = CMFormatDescriptionGetExtension(fd, kCMFormatDescriptionExtension_FullRangeVideo);
+	s->range_known = fr && CFGetTypeID(fr) == CFBooleanGetTypeID();
+	s->full = s->range_known ? CFBooleanGetValue((CFBooleanRef)fr) : vp9_full == 1;
+	if (vp9_full >= 0) s->range_known = 1;
 	s->dev = dev;
 	s->t_start = now_ns();
 	// deferred copies (see the top): VP9 by default; INTELXEDEC_COPY_DEFER=0 none, =all every codec
@@ -901,8 +924,9 @@ static OSStatus StartSession(VTVideoDecoderRef d, VTVideoDecoderSession session,
 	pthread_mutex_unlock(&s->lock);
 	if (err < 0) { char e[128]; av_strerror(err, e, sizeof e); os_log_error(lg(), "intelxeav1: Vulkan %{public}s decoder in %{public}s: %{public}s", codec_name(s->codec), proc(), e); return kVTVideoDecoderNotAvailableNowErr; }
 	OSStatus r = set_output_size(s, dim.width, dim.height);
-	os_log(lg(), "intelxeav1: session in %{public}s: %dx%d %{public}s %d-bit on the B580 (Vulkan Video, %{public}s%{public}s) -> %d", proc(), dim.width, dim.height, codec_name(s->codec),
-	       high ? 10 : 8, s->zero_copy ? "copy engine into the IOSurface" : "CPU copy", s->defer ? ", copies deferred" : "", (int)r);
+	os_log(lg(), "intelxeav1: session in %{public}s: %dx%d %{public}s %d-bit %{public}s on the B580 (Vulkan Video, %{public}s%{public}s) -> %d", proc(), dim.width, dim.height, codec_name(s->codec),
+	       high ? 10 : 8, !s->range_known ? "range from the stream" : s->full ? "full range" : "video range",
+	       s->zero_copy ? "copy engine into the IOSurface" : "CPU copy", s->defer ? ", copies deferred" : "", (int)r);
 	return r;
 }
 
