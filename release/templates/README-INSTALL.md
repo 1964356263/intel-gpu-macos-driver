@@ -265,6 +265,26 @@ zink against 700–1000 on Windows. A launcher that macOS reopens by itself at l
 place and then runs on Apple's OpenGL: quit it and start it again (Java prints "Picked up JAVA_TOOL_OPTIONS" when zink
 is on).
 
+## Optional: HiDPI modes (display scaling)
+
+Like display scaling on Windows: System Settings > Displays then offers "looks like" sizes (Larger Text ... More Space)
+that draw text and windows sharp at a larger size. On a 2560x1440 monitor they are 2048x1152, 1920x1080, 1706x960,
+1600x900 and 1280x720. They run at the monitor's full refresh rate (180 Hz and Variable on the test monitor): macOS draws
+at twice the size and the GPU scales each frame down to the panel. They are off unless turned on. The IntelXe Manager
+app's **Display** page turns them on and off, or in Terminal, in the package folder:
+
+```sh
+./hidpi.sh               # what is set now
+sudo ./hidpi.sh --on     # NVRAM intelxefb-hidpi=1, a display override with the HiDPI sizes, DisplayResolutionEnabled
+sudo ./hidpi.sh --off    # takes back only what --on wrote
+```
+
+Restart after either, then choose a size in System Settings > Displays. The override goes where other HiDPI tools put
+theirs (`/Library/Displays/Contents/Resources/Overrides`); if your monitor already has one from another tool
+(one-key-hidpi and the like), `hidpi.sh` leaves it alone and stops: remove it first. If a size leaves the screen black,
+turn the modes off over SSH with `sudo ./hidpi.sh --off` and restart; **Reset NVRAM** in the OpenCore picker turns them
+off as well (the switch is the NVRAM variable).
+
 ## If it does not come up
 
 - **Black screen or a reboot loop:** boot from your USB stick with the working EFI, or press Shift with the OpenCore
@@ -353,6 +373,7 @@ NVRAM settings and sysctls have only the new names: the variable `b580fb-vrr-mod
 | (made by `install.sh`) | `/Library/LaunchDaemons/io.github.yusufklncc.intelxe.guard.plist`: clears the boot guard once a boot has run for a minute |
 | `system-volume/` | optional: the copy of the Metal driver on the system volume (Safari on the GPU, 3.3) |
 | `efi.sh` | optional, on macOS: stages 2 and 4 in the EFI OpenCore booted from, with a backup and an undo |
+| `hidpi.sh` | optional: HiDPI modes for the monitor (display scaling), on and off |
 | `SHA256SUMS`, `sigcheck` | the checks `install.sh` runs |
 | `SOURCES.md`, `LICENSES/` | which source and script built each binary; the licence texts |
 

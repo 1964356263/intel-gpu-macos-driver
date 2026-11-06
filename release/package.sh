@@ -67,6 +67,7 @@ for c in tahoe sequoia; do
     cp "$R/nvmtl-allow.txt" "$d/Library/GPUBundles/nvmtl-allow.txt"   # the allow-list is kept in the repository
     fill "$R/templates/install.sh" "$d/install.sh" $c; chmod 755 "$d/install.sh"
     install -m 755 "$R/templates/efi.sh" "$d/efi.sh"   # no placeholders: the app carries the same file
+    install -m 755 "$R/templates/hidpi.sh" "$d/hidpi.sh"   # the same: the app carries it too
     fill "$R/templates/README-INSTALL.md" "$d/README-INSTALL.md" $c
     fill "$R/templates/README-INSTALL.tr.md" "$d/README-INSTALL.tr.md" $c
     if [ $c = tahoe ]; then cp "$d/install.sh" "$R/install.sh"; cp "$d/README-INSTALL.md" "$R/README-INSTALL.md"; cp "$d/README-INSTALL.tr.md" "$R/README-INSTALL.tr.md"; fi

@@ -157,3 +157,18 @@
 "Use the EFI partition instead" = "Bunun yerine EFI bölümünü kullan";
 "Choose the EFI folder of an OpenCore EFI (the one that holds OC and BOOT), for example on a USB stick." = "Bir OpenCore EFI'nin EFI klasörünü seçin (içinde OC ve BOOT olan), örneğin bir USB bellekte.";
 "That folder is not an OpenCore EFI: choose the EFI folder, the one with OC inside." = "Bu klasör bir OpenCore EFI değil: içinde OC olan EFI klasörünü seçin.";
+
+/* Display page (HiDPI) */
+"Display" = "Ekran";
+"HiDPI modes" = "HiDPI modları";
+"Optional. Like display scaling on Windows: System Settings > Displays offers \"looks like\" sizes (Larger Text ... More Space) that draw text and windows sharp at a larger size, at the monitor's full refresh rate. They are scaled on the GPU." = "İsteğe bağlı. Windows'taki ekran ölçeklendirmesi gibi: Sistem Ayarları > Ekranlar, yazıyı ve pencereleri daha büyük ama keskin çizen \"gibi görünür\" boyutlar sunar (Daha Büyük Metin ... Daha Fazla Alan), monitörün tam yenileme hızında. Ölçekleme GPU'da yapılır.";
+"Monitor" = "Monitör";
+"Reading the display settings…" = "Ekran ayarları okunuyor…";
+"The installed driver has no HiDPI modes yet. Install release 0.1.3 or later first." = "Kurulu sürücüde henüz HiDPI modları yok. Önce 0.1.3 veya sonraki bir sürümü kurun.";
+"This monitor already has a display override from another tool (one-key-hidpi or similar). It is left as it is: remove it first to use this one." = "Bu monitör için başka bir aracın (one-key-hidpi vb.) yazdığı bir ekran ayarı zaten var. Ona dokunulmaz: bunu kullanmak için önce onu kaldırın.";
+"Turn HiDPI modes on" = "HiDPI modlarını aç";
+"Turn HiDPI modes off" = "HiDPI modlarını kapat";
+"It takes effect after a restart. Then choose a size in System Settings > Displays. Turning them off takes back only what was written here, and a chosen HiDPI size goes back to the monitor's own." = "Yeniden başlattıktan sonra geçerli olur. Sonra Sistem Ayarları > Ekranlar'dan bir boyut seçin. Kapatmak yalnızca burada yazılanları geri alır; seçili bir HiDPI boyutu monitörün kendi çözünürlüğüne döner.";
+"Not found" = "Bulunamadı";
+"On after a restart" = "Yeniden başlatınca açık";
+"Off after a restart" = "Yeniden başlatınca kapalı";

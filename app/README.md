@@ -14,6 +14,7 @@ fresh macOS.
 | System | macOS, processor, card, SIP, AMFI boot-arg, `IntelXe.kext`, Metal device, boot guard; installed version and latest release |
 | Driver | choose a package (download the latest release, or a folder you unpacked); check, install, repair, undo, uninstall |
 | EFI (OpenCore) | the EFI OpenCore booted from: mount it; `IntelXe.kext` and `SSDT-ARCOFF.aml` with their `config.plist` entries (stage 4); SIP, boot-args and quirks (stage 2, separate); undo the last change |
+| Display | HiDPI modes (display scaling) on or off through `hidpi.sh` (the package's, or the app's copy); needs IntelXeFB from 0.1.3, takes effect after a restart |
 | OpenGL (Zink) | the same for the optional Zink package; on or off for every LWJGL application |
 | Log | what the scripts print, while they run |
 

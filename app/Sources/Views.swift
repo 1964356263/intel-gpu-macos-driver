@@ -20,6 +20,7 @@ final class Manager: ObservableObject {
     @Published var efi = EFIStatus()
     @Published var efiTarget = EFITarget.recorded
     @Published var efiPlans: [EFIAction: EFIPlan] = [:]
+    @Published var hidpi = HiDPIStatus()
     @Published var efiChoice: String? = UserDefaults.standard.string(forKey: "efiPartition")
     /// A folder holding EFI/OC that the user chose instead of the partition (for this session only).
     @Published var efiFolder: String?
@@ -42,6 +43,7 @@ final class Manager: ObservableObject {
         facts = await Task.detached { SystemFacts.probe() }.value
         await refreshPackageStatus()
         await refreshEFI()
+        await refreshHiDPI()
         probing = false
     }
 
@@ -163,7 +165,7 @@ final class Manager: ObservableObject {
 
     private func appendLog(_ text: String) { log += text }
 
-    private func perform(title: String, command: String, needsRoot: Bool, then done: @escaping @MainActor (RunResult) -> Void,
+    func perform(title: String, command: String, needsRoot: Bool, then done: @escaping @MainActor (RunResult) -> Void,
                          afterRefresh: (@MainActor () -> Void)? = nil) {
         let logs = dataDirectory.appendingPathComponent("logs")
         try? FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
@@ -295,13 +297,14 @@ extension ZinkAction {
 }
 
 enum Section: String, CaseIterable, Identifiable {
-    case system, driver, efi, zink, log
+    case system, driver, efi, display, zink, log
     var id: String { rawValue }
     var title: LocalizedStringKey {
         switch self {
         case .system: return "System"
         case .driver: return "Driver"
         case .efi: return "EFI (OpenCore)"
+        case .display: return "Display"
         case .zink: return "OpenGL (Zink)"
         case .log: return "Log"
         }
@@ -311,6 +314,7 @@ enum Section: String, CaseIterable, Identifiable {
         case .system: return "cpu"
         case .driver: return "shippingbox"
         case .efi: return "externaldrive"
+        case .display: return "display"
         case .zink: return "cube.transparent"
         case .log: return "text.alignleft"
         }
@@ -340,6 +344,7 @@ struct RootView: View {
                 case .system: SystemView()
                 case .driver: DriverView()
                 case .efi: EFIView()
+                case .display: DisplayView()
                 case .zink: ZinkView()
                 case .log: LogView()
                 }

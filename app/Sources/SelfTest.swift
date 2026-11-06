@@ -29,10 +29,15 @@ func renderSnapshots(into folder: String) {
         + "candidate=00000000-0000-4000-8000-000000000001|disk0s1|WD Blue SN550 1TB|1000 GB||unknown\n"
         + "candidate=00000000-0000-4000-8000-000000000002|disk5s1|SanDisk Ultra|31 GB|/Volumes/EFI|yes\n")
     choosing.efiNotice = .unchecked
+    // the Display page as on the B580 test machine: supported and off, and on after --on before the restart
+    let hidpiOff = Manager(), hidpiPending = Manager()
+    hidpiOff.hidpi = HiDPIStatus(text: "hidpi_supported=1\nhidpi_nvram=0\nhidpi_override=none\nhidpi_windowserver=0\nhidpi_active=0\ndisplay=4c2d:750c\nnative=2560x1440\n")
+    hidpiPending.hidpi = HiDPIStatus(text: "hidpi_supported=1\nhidpi_nvram=1\nhidpi_override=ours\nhidpi_windowserver=1\nhidpi_active=0\ndisplay=4c2d:750c\nnative=2560x1440\n")
     let pages: [(String, AnyView, CGFloat)] = [
         ("system", AnyView(SystemView().environmentObject(manager)), 640), ("driver", AnyView(DriverView().environmentObject(manager)), 640),
         ("efi", AnyView(EFIView().environmentObject(manager)), 1500), ("efi-choose", AnyView(EFIView().environmentObject(choosing)), 640),
-        ("zink", AnyView(ZinkView().environmentObject(manager)), 640), ("banners", AnyView(Banners().environmentObject(choosing).background(Color(nsColor: .windowBackgroundColor))), 120),
+        ("zink", AnyView(ZinkView().environmentObject(manager)), 640),
+        ("display-off", AnyView(DisplayView().environmentObject(hidpiOff)), 480), ("display-pending", AnyView(DisplayView().environmentObject(hidpiPending)), 480), ("banners", AnyView(Banners().environmentObject(choosing).background(Color(nsColor: .windowBackgroundColor))), 120),
     ]
     for (name, page, height) in pages {
         let host = NSHostingView(rootView: page.frame(width: 640, height: height))
@@ -143,6 +148,18 @@ func selfTest() {
            && EFINotice.after(.uninstall, status: EFIStatus(text: "kext_file=same\nkext_entry=enabled")) == .removeKext, "EFI notice after each action")
     expect(EFIPlan(text: "EFI: x\nnothing to change\nnote     y\n").changes == false && EFIPlan(text: "EFI: x\ncopy     z\n").changes, "a plan with and without changes")
     expect(Bundle.main.url(forResource: "efi", withExtension: "sh") != nil, "the app carries efi.sh for packages made before it")
+    expect(Bundle.main.url(forResource: "hidpi", withExtension: "sh") != nil, "the app carries hidpi.sh for packages made before it")
+    let hOn = HiDPIStatus(text: "hidpi_supported=1\nhidpi_nvram=1\nhidpi_override=ours\nhidpi_active=1\ndisplay=4c2d:750c\n")
+    let hPending = HiDPIStatus(text: "hidpi_supported=1\nhidpi_nvram=1\nhidpi_override=ours\nhidpi_active=0\n")
+    let hOther = HiDPIStatus(text: "hidpi_supported=1\nhidpi_nvram=0\nhidpi_override=other\nhidpi_active=0\n")
+    let hOld = HiDPIStatus(text: "hidpi_supported=0\nhidpi_nvram=0\nhidpi_override=none\nhidpi_active=0\ndisplay=\n")
+    expect(hOn.on && hOn.active && !hOn.pending && hPending.on && hPending.pending && !hOther.on && hOther.foreignOverride
+           && !hOld.supported && hOld.known && !HiDPIStatus().known, "hidpi.sh --status: on, waiting for a restart, another tool's override, a driver before 0.1.3")
+    if let script = Bundle.main.url(forResource: "hidpi", withExtension: "sh") {
+        let here = hidpiStatus(script: script)
+        print("hidpi here: \(here.values.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " "))")
+        expect(here.known && here["hidpi_supported"] != "", "hidpi.sh --status runs and answers")
+    }
 
     let sample = #"{"tag_name":"v0.1.2","html_url":"https://example.invalid/r","body":"notes","prerelease":false,"unknown":1,"assets":[{"name":"intel-gpu-macos-driver-0.1.2-tahoe.zip","browser_download_url":"https://example.invalid/a.zip","size":5,"state":"uploaded"},{"name":"intel-gpu-macos-driver-0.1.2.sha256","browser_download_url":"https://example.invalid/s","size":1}]}"#
     let decoded = try? JSONDecoder().decode(Release.self, from: Data(sample.utf8))

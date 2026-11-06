@@ -273,6 +273,26 @@ Windows'ta Intel'in sürücüsüyle 214–218; shader paketi olmadan zink'te
 yeniden açtığı bir başlatıcı, ayar yerine oturmadan başlayıp Apple'ın OpenGL'inde kalabilir: kapatıp yeniden açın
 (zink açıkken Java "Picked up JAVA_TOOL_OPTIONS" yazar).
 
+## İsteğe bağlı: HiDPI modları (ekran ölçeklendirme)
+
+Windows'taki ekran ölçeklendirmesi gibi: Sistem Ayarları > Ekranlar, yazıyı ve pencereleri daha büyük ama keskin çizen
+"gibi görünür" boyutlar sunar (Daha Büyük Metin ... Daha Fazla Alan). 2560x1440 bir monitörde bunlar 2048x1152,
+1920x1080, 1706x960, 1600x900 ve 1280x720. Monitörün tam yenileme hızında çalışırlar (test monitöründe 180 Hz ve
+Değişken): macOS iki katı boyutta çizer, GPU her kareyi panelin boyutuna küçültür. Açılmadıkça kapalıdırlar. IntelXe
+Manager'ın **Ekran** sayfası açıp kapatır; ya da Terminal'de, paket klasöründe:
+
+```sh
+./hidpi.sh               # şu an ne ayarlı
+sudo ./hidpi.sh --on     # NVRAM intelxefb-hidpi=1, HiDPI boyutlarıyla bir ekran ayarı, DisplayResolutionEnabled
+sudo ./hidpi.sh --off    # yalnızca --on'un yazdıklarını geri alır
+```
+
+İkisinden sonra da yeniden başlatın, sonra Sistem Ayarları > Ekranlar'dan bir boyut seçin. Ekran ayarı, diğer HiDPI
+araçlarının kullandığı yere yazılır (`/Library/Displays/Contents/Resources/Overrides`); monitörünüz için başka bir
+aracın (one-key-hidpi vb.) yazdığı bir ayar zaten varsa `hidpi.sh` ona dokunmaz ve durur: önce onu kaldırın. Bir boyut
+ekranı siyah bırakırsa SSH'tan `sudo ./hidpi.sh --off` çalıştırıp yeniden başlatın; OpenCore menüsündeki **Reset NVRAM**
+de modları kapatır (anahtar NVRAM değişkenidir).
+
 ## Açılmazsa
 
 - **Siyah ekran ya da sürekli yeniden başlama:** Çalışan EFI'nin olduğu USB bellekten açın ya da OpenCore'da macOS seçiliyken Shift'e
@@ -332,6 +352,7 @@ kullandırır. `config.plist`'te `UEFI > Output > ReconnectGraphicsOnConnect = f
 | (`install.sh` oluşturur) | `/Library/LaunchDaemons/io.github.yusufklncc.intelxe.guard.plist`: bir açılış bir dakika çalışınca açılış korumasını temizler |
 | `system-volume/` | isteğe bağlı: Metal sürücüsünün sistem diskindeki kopyası (GPU'da Safari, 3.3) |
 | `efi.sh` | isteğe bağlı, macOS'ta: OpenCore'un açıldığı EFI'de 2. ve 4. aşamalar, yedek ve geri alma ile |
+| `hidpi.sh` | isteğe bağlı: monitör için HiDPI modları (ekran ölçeklendirme), açma ve kapama |
 | `SHA256SUMS`, `sigcheck` | `install.sh`'nin yaptığı kontroller |
 | `SOURCES.md`, `LICENSES/` | hangi kaynağın ve betiğin hangi dosyayı ürettiği; lisans metinleri |
 
