@@ -20,7 +20,7 @@ OpenCore).
 
 | | On the Arc B580 (macOS 26.7.1) |
 |---|---|
-| Desktop | composited on the GPU, 165 fps window dragging on a 180 Hz monitor, VRR |
+| Desktop | composited on the GPU, 165 fps window dragging on a 180 Hz monitor, VRR, optional HiDPI modes |
 | Geekbench 7 | Metal **92 898** · OpenCL **86 920** (80–84% of the same card's Vulkan / OpenCL scores on Windows) |
 | Video | H.264 / HEVC / AV1 / VP9 decode bit-exact and faster than Windows up to 4K; H.264 / HEVC / AV1 encode |
 | Vulkan CTS | 3.15 M cases, no hangs: 1.77 M pass, 84 fail |
@@ -64,7 +64,7 @@ To build everything yourself, see [Building from source](#building-from-source).
 ## What works
 
 - **Desktop:** WindowServer composites on the GPU with real page flips; transparency, blur and animations are
-  accelerated. One monitor over DisplayPort, all of its modes and refresh rates, VRR, hardware cursor, sleep and wake.
+  accelerated. One monitor over DisplayPort, all of its modes and refresh rates, VRR, optional HiDPI modes (display scaling at full refresh rate), hardware cursor, sleep and wake.
 - **Metal:** apps, Chrome and games; the Metal 3 feature set including ray tracing (acceleration structures, ray
   queries, curves) through Mesa's `intel-rt`. Translated shaders are cached on disk and survive reboots and driver
   updates.
@@ -174,7 +174,7 @@ Releases follow [Semantic Versioning](https://semver.org) in its 0.x form until 
 number (0.1.1). A change that needs manual steps when updating (an EFI change, renamed boot-args) comes with upgrade
 steps in the release notes. Packages, the GitHub tag and `install.sh` carry the release number; a kext or the Metal
 driver carries the number of the release that last rebuilt it (0.1.1 changed only the guide, the docs and the
-packaging; 0.1.2 rebuilt everything).
+packaging; 0.1.2 rebuilt everything; 0.1.3 rebuilt IntelXeFB and NMXAGDC).
 
 ## Philosophy
 

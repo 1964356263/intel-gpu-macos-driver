@@ -29,7 +29,12 @@ The order is roughly the intended one. Every item should follow the Linux xe/i91
 
 ### Variable refresh
 - **Done (2026-10-29):** Adaptive-Sync with an LFC pacer (monitor 48–180 Hz), and the "Variable" entry in System Settings.
+- **Done (2026-11-06, 0.1.3):** refresh rates above the firmware's mode (EDID timings on the firmware's raster at a higher pixel clock), so 180 Hz and Variable are listed from the first boot; Adaptive-Sync modes on by default.
 - Next: tests with games and video playback.
+
+### HiDPI modes
+- **Done (2026-11-06, 0.1.3, opt-in):** scaled "looks like" sizes in System Settings > Displays at the monitor's full refresh rate. The modes are accelerator backed: WindowServer renders at twice the size and scales on the GPU, the display engine scans out the native size (its own plane scaler would hold HiDPI to about 100 Hz at this display clock). `hidpi.sh` / the app's Display page turns them on (NVRAM flag, display override, DisplayResolutionEnabled).
+- Open: sizes for monitors other than 2560×1440 are computed but untested.
 
 ### GPU resets
 - **Done (2026-10-30):** register save/restore lists for engine resets, queue replacement on the same VM in Mesa and the plugin; WindowServer survives a GT reset.

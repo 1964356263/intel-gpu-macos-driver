@@ -20,7 +20,7 @@ masaüstü (WindowServer), Metal uygulamaları ve oyunlar, VideoToolbox video i�
 
 | | Arc B580'de (macOS 26.7.1) |
 |---|---|
-| Masaüstü | GPU'da çiziliyor; 180 Hz monitörde pencere sürüklerken 165 fps, VRR |
+| Masaüstü | GPU'da çiziliyor; 180 Hz monitörde pencere sürüklerken 165 fps, VRR, isteğe bağlı HiDPI modları |
 | Geekbench 7 | Metal **92 898** · OpenCL **86 920** (aynı kartın Windows'taki Vulkan / OpenCL skorlarının %80–84'ü) |
 | Video | H.264 / HEVC / AV1 / VP9 çözme bit bit doğru ve 4K'ya kadar Windows'tan hızlı; H.264 / HEVC / AV1 kodlama |
 | Vulkan uyumluluk testi | 3,15 milyon vaka, hiç takılmadan: 1,77 milyonu geçti, 84'ü başarısız |
@@ -66,7 +66,7 @@ Her şeyi kendiniz derlemek isterseniz: [Kaynaktan derleme](#kaynaktan-derleme).
 
 - **Masaüstü:** WindowServer GPU'da çiziyor ve kareler gerçekten ekrana çevriliyor. Saydamlık, bulanıklık ve
   animasyonlar hızlandırılmış. DisplayPort üzerinden tek monitör; bütün çözünürlük ve tazeleme seçenekleri, VRR,
-  donanım imleci, uyku ve uyanma.
+  isteğe bağlı HiDPI modları (tam yenileme hızında ekran ölçeklendirme), donanım imleci, uyku ve uyanma.
 - **Metal:** Uygulamalar, Chrome ve oyunlar. Mesa'nın `intel-rt` desteğiyle ışın izleme dahil Metal 3 özellikleri
   (hızlandırma yapıları, ışın sorguları, eğriler). Çevrilen shader'lar diske kaydediliyor; yeniden başlatmada ve sürücü
   güncellemesinde kaybolmuyor.
@@ -176,7 +176,7 @@ biçimini izliyor. Yeni bir özellik, yeni bir macOS sürümü ya da yeni bir ka
 hata düzeltmeleri üçüncüyü (0.1.1). Güncellerken elle adım gerektiren değişiklikler (EFI'de bir değişiklik, adı değişen
 boot-arg'lar) sürüm notlarında yükseltme adımlarıyla birlikte geliyor. Paketler, GitHub etiketi ve `install.sh`
 sürüm numarasını taşıyor. Kext'ler ve Metal sürücüsü ise kendilerini en son yeniden derleyen sürümün numarasını taşıyor:
-0.1.1'de yalnızca rehber, dokümanlar ve paketleme değişti; 0.1.2 her şeyi yeniden derledi.
+0.1.1'de yalnızca rehber, dokümanlar ve paketleme değişti; 0.1.2 her şeyi yeniden derledi; 0.1.3 IntelXeFB ile NMXAGDC'yi.
 
 ## Yaklaşımımız
 

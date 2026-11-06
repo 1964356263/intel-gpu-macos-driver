@@ -319,6 +319,11 @@ off as well (the switch is the NVRAM variable).
 
 ## Upgrading from an earlier build
 
+**From 0.1.2:** only `IntelXeFB.kext` and `NMXAGDC.kext` are new (refresh rates above the firmware's, Adaptive-Sync
+modes on by default, the optional HiDPI modes). Install the package (the app: *Download v@VER@*, then *Install this
+package*; or `sudo ./install.sh --apply`) and restart. `IntelXe.kext` in the EFI, the Metal driver and the
+system-volume copy are those of 0.1.2 and stay as they are.
+
 **From 0.1.0 or 0.1.1:** every kext, the Metal driver and the video libraries are new, **`IntelXe.kext` in the EFI
 too** (it closes a security hole: an unprivileged process could get writable GPU mappings of pages it may only read).
 Install the package (the app: *Download v@VER@*, then *Install this package*; or `sudo ./install.sh --apply`), then
