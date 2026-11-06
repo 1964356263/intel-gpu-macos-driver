@@ -1184,6 +1184,99 @@ static void nvmtl_surfcensus(NVMTLTexture *r, int out) {
 static inline void nvmtl_surfcensus(NVMTLTexture *r, int out) { (void)r, (void)out; }
 #endif
 static BOOL nvmtl_surface_pending_write(NVMTLCommandBuffer *cb, NVMTLTexture *t);
+// The GPU reads t's surface into another resource (a sampled or read-only binding, a texture-to-texture copy source):
+// see nvmtl_ws_note_captures. Not for render-target loads or copy destinations (writes) or copies into a buffer (read back
+// for the CPU).
+// Kept per IOSurface, not per texture: WindowServer writes a surface through one MTLTexture and samples it through
+// another. A small table; a collision only costs a surface its trust (it waits, as before).
+enum { kWsSurfSlots = 64 };
+// per surface: GPU reads and writes counted in 500 ms windows (the last full window and the current one), and the
+// accelerator resource made for it (kres, below)
+static struct { uint32_t id; uint32_t reads, writes, prevReads, prevWrites; uint64_t t0, lastWrite; CFTypeRef kres; } g_ws_surf[kWsSurfSlots];
+static os_unfair_lock g_ws_surf_lk = OS_UNFAIR_LOCK_INIT;
+#define NVMTL_WS_WINDOW (500 * NSEC_PER_MSEC)
+static __typeof__(g_ws_surf[0]) *nvmtl_ws_slot(uint32_t id, uint64_t now, CFTypeRef *drop) {   // g_ws_surf_lk held
+    __typeof__(g_ws_surf[0]) *e = &g_ws_surf[id % kWsSurfSlots];
+    if (e->id != id) { if (e->kres && drop) *drop = e->kres; memset(e, 0, sizeof *e); e->id = id; e->t0 = now; }
+    if (now - e->t0 >= NVMTL_WS_WINDOW) {
+        const BOOL stale = now - e->t0 >= 2 * NVMTL_WS_WINDOW;   // a whole window without use: nothing carries over
+        e->prevReads = stale ? 0 : e->reads; e->prevWrites = stale ? 0 : e->writes;
+        e->reads = e->writes = 0; e->t0 = now;
+    }
+    return e;
+}
+static inline void nvmtl_ws_sampled(__unsafe_unretained NVMTLTexture *t) {
+    if (!t) return;
+    __unsafe_unretained NVMTLTexture *r = t->_parent ? t->_parent : t;
+    if (!r->_surf) return;
+    const uint32_t id = (uint32_t)IOSurfaceGetID(r->_surf);
+    CFTypeRef drop = NULL;
+    os_unfair_lock_lock(&g_ws_surf_lk);
+    __typeof__(g_ws_surf[0]) *e = nvmtl_ws_slot(id, clock_gettime_nsec_np(CLOCK_UPTIME_RAW), &drop);
+    e->reads++;
+    os_unfair_lock_unlock(&g_ws_surf_lk);
+    if (drop) CFRelease(drop);
+}
+// A write of surface id (counted); whether the GPU writes and samples it at display rate: at least `n` of each within
+// one 500 ms window (this one or the last)
+static BOOL nvmtl_ws_written_streaming(uint32_t id, uint32_t n) {
+    CFTypeRef drop = NULL;
+    const uint64_t now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+    os_unfair_lock_lock(&g_ws_surf_lk);
+    __typeof__(g_ws_surf[0]) *e = nvmtl_ws_slot(id, now, &drop);
+    e->writes++; e->lastWrite = now;
+    const BOOL ok = (e->reads >= n && e->writes >= n) || (e->prevReads >= n && e->prevWrites >= n);
+    os_unfair_lock_unlock(&g_ws_surf_lk);
+    if (drop) CFRelease(drop);
+    return ok;
+}
+// The same test without counting a write, and whether its accelerator resource exists (nvmtl_scanout_get)
+static BOOL nvmtl_ws_is_streaming_with_resource(uint32_t id, uint32_t n) {
+    os_unfair_lock_lock(&g_ws_surf_lk);
+    const __typeof__(g_ws_surf[0]) e = g_ws_surf[id % kWsSurfSlots];
+    os_unfair_lock_unlock(&g_ws_surf_lk);
+    return e.id == id && e.kres && ((e.reads >= n && e.writes >= n) || (e.prevReads >= n && e.prevWrites >= n));
+}
+// The accelerator resource of t's surface, made once (Metal's own MTLIOAccelTexture, as Apple's drivers make one for
+// every IOSurface texture). With it a CPU lock of the surface - a screenshot of a scaled mode reads the composite itself -
+// reaches NVResource::pageoff, which waits for the pending mark this plugin keeps on the surface while the GPU writes it
+// (NMXSurfaceWaitAll), so the flush need not wait. Without one (it could not be made) the flush keeps waiting. The
+// resource holds the surface, so one not written for 2 s is released.
+static BOOL nvmtl_ws_kernel_resource(__unsafe_unretained NVMTLTexture *t) {
+    __unsafe_unretained NVMTLTexture *r = t->_parent ? t->_parent : t;
+    if (!r->_surf) return NO;
+    const uint32_t sid = (uint32_t)IOSurfaceGetID(r->_surf);
+    const uint64_t now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+    CFTypeRef idle[kWsSurfSlots]; unsigned nIdle = 0; BOOL have;
+    os_unfair_lock_lock(&g_ws_surf_lk);
+    have = g_ws_surf[sid % kWsSurfSlots].id == sid && g_ws_surf[sid % kWsSurfSlots].kres;
+    if (!have)   // a new one is about to be made: let the idle ones go
+        for (unsigned k = 0; k < kWsSurfSlots; k++)
+            if (g_ws_surf[k].kres && g_ws_surf[k].id != sid && now - g_ws_surf[k].lastWrite > 2 * NSEC_PER_SEC) { idle[nIdle++] = g_ws_surf[k].kres; g_ws_surf[k].kres = NULL; }
+    os_unfair_lock_unlock(&g_ws_surf_lk);
+    for (unsigned k = 0; k < nIdle; k++) CFRelease(idle[k]);
+    if (have) return YES;
+    static Class T; static SEL sel; static dispatch_once_t once;
+    dispatch_once(&once, ^{ T = objc_getClass("MTLIOAccelTexture"); sel = NSSelectorFromString(@"initWithDevice:descriptor:iosurface:plane:field:args:argsSize:"); });
+    id dev = gNVMTLMainDevice;
+    if (!T || !dev || ![T instancesRespondToSelector:sel]) return NO;
+    MTLTextureDescriptor *d = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:r.pixelFormat width:IOSurfaceGetWidthOfPlane(r->_surf, r->_plane)
+                                                                                height:IOSurfaceGetHeightOfPlane(r->_surf, r->_plane) mipmapped:NO];
+    d.usage = MTLTextureUsageShaderRead | MTLTextureUsageRenderTarget;
+    static uint8_t args[2440];   // zero: no vendor data (the IOSurface is the resource's whole description)
+    id (*mk)(id, SEL, id, id, IOSurfaceRef, unsigned, unsigned, void *, unsigned) = (void *)objc_msgSend;
+    id k = mk([T alloc], sel, dev, d, r->_surf, (unsigned)r->_plane, 0, args, (unsigned)sizeof args);
+    static _Atomic unsigned said;
+    if (atomic_fetch_add(&said, 1) < 6) nvlog("captures: surface %u %zux%zu: accelerator resource %s", sid, IOSurfaceGetWidth(r->_surf), IOSurfaceGetHeight(r->_surf), k ? "made (a CPU lock waits for its GPU writes)" : "could NOT be made - its flushes keep waiting");
+    if (!k) return NO;
+    CFTypeRef keep = CFBridgingRetain(k), drop = NULL;
+    os_unfair_lock_lock(&g_ws_surf_lk);
+    __typeof__(g_ws_surf[0]) *e = nvmtl_ws_slot(sid, now, &drop);
+    if (e->kres) { if (!drop) drop = keep; else CFRelease(keep); } else e->kres = keep;
+    os_unfair_lock_unlock(&g_ws_surf_lk);
+    if (drop) CFRelease(drop);
+    return YES;
+}
 static void nvmtl_surface_in_for_cb(__unsafe_unretained NVMTLCommandBuffer *cb, __unsafe_unretained NVMTLTexture *t) {
     if (!t) return;
     __unsafe_unretained NVMTLTexture *r = t->_parent ? t->_parent : t;
@@ -1629,7 +1722,7 @@ static bool nvmtl_surfout_direct(void) {
 // The buffer is counted: a copy folded into a part (nvmtl_fold_surface_out) holds it until the part has finished on the GPU,
 // so an entry dropped meanwhile (another size, no longer shown, idle) frees it only after that copy. refs: g_scanout_mx.
 typedef struct { nvk_buffer buf; unsigned refs; } nvmtl_scanbuf;
-typedef struct { IOSurfaceRef surf; uint32_t sid, w, h, pitch; nvmtl_scanbuf *sb; uint64_t va, tried, used, checked; int state; } nvmtl_scanout;   // state 1 bound, -1 refused
+typedef struct { IOSurfaceRef surf; uint32_t sid, w, h, pitch; nvmtl_scanbuf *sb; uint64_t va, tried, used, checked; int state, readback; } nvmtl_scanout;   // state 1 bound, -1 refused; readback: op 3, not displayed
 static nvmtl_scanout g_scanout[NVMTL_SCANOUT_SLOTS];
 static pthread_mutex_t g_scanout_mx = PTHREAD_MUTEX_INITIALIZER;
 static void nvmtl_scanbuf_unref_locked(nvmtl_scanbuf *b) {
@@ -1666,8 +1759,11 @@ static nvmtl_scanout *nvmtl_scanout_get(NVMTLTexture *r) {
     if (!nvmtl_scanout_on() || !r->_surf || r->_plane || r->_i.bpp != 4 || r->_i.samples > 1 || r->_i.layers > 1 || r->_i.mips > 1 ||
         r->_i.mtl_type != 2 || (r->_fmt != MTLPixelFormatBGRA8Unorm && r->_fmt != MTLPixelFormatBGRA8Unorm_sRGB) ||
         IOSurfaceGetPixelFormat(r->_surf) != 0x42475241u || r->_i.w < 640 || r->_i.h < 480) return NULL;
-    const uint32_t sid = (uint32_t)IOSurfaceGetID(r->_surf), w = r->_i.w, h = r->_i.h, pitch = (w * 4 + 63) & ~63u;
-    const size_t bytes = (size_t)pitch * h;
+    const uint32_t sid = (uint32_t)IOSurfaceGetID(r->_surf), w = r->_i.w, h = r->_i.h;
+    uint32_t pitch = (w * 4 + 63) & ~63u;
+    size_t bytes = (size_t)pitch * h;
+    // a readback binding (NMXAccel op 3) keeps the surface's own row, so the kernel's page-off copies it 1:1 into the pages
+    const uint32_t srow = (uint32_t)IOSurfaceGetBytesPerRowOfPlane(r->_surf, 0);
     const uint64_t now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
     pthread_mutex_lock(&g_scanout_mx);
     nvmtl_scanout *e = NULL;
@@ -1677,8 +1773,13 @@ static nvmtl_scanout *nvmtl_scanout_get(NVMTLTexture *r) {
         else if (x->state == 1 && now - x->used > 10 * NSEC_PER_SEC) (void)nvmtl_scanout_drop(x);
     }
     if (e && e->state == 1 && e->surf == r->_surf && e->w == w && e->h == h) {
-        if (now - e->checked < NSEC_PER_SEC || !nvmtl_vk_scanout_op(0, sid, 0, bytes, w, h, pitch, NULL)) {
-            if (now - e->checked >= NSEC_PER_SEC) e->checked = now;
+        // a readback binding stays while the surface is not presented (op 0 answers 2) and still streams; presented now
+        // (a mode change), it goes and the surface is bound for the display below
+        const int recheck = now - e->checked >= NSEC_PER_SEC;
+        const int st0 = recheck ? nvmtl_vk_scanout_op(0, sid, 0, e->readback ? (size_t)((w * 4 + 63) & ~63u) * h : bytes, w, h,
+                                                      e->readback ? ((w * 4 + 63) & ~63u) : pitch, NULL) : 0;
+        if (!recheck || (e->readback ? st0 == 2 && nvmtl_ws_is_streaming_with_resource(sid, 20) : !st0)) {
+            if (recheck) e->checked = now;
             e->used = now;
             return e;
         }
@@ -1694,8 +1795,11 @@ static nvmtl_scanout *nvmtl_scanout_get(NVMTLTexture *r) {
         if (e) memset(e, 0, sizeof *e);
     }
     if (!e) { pthread_mutex_unlock(&g_scanout_mx); return NULL; }
-    e->sid = sid; e->w = w; e->h = h; e->pitch = pitch; e->state = -1; e->tried = now;
-    if (ask) { pthread_mutex_unlock(&g_scanout_mx); return NULL; }   // not presented yet, another size, flips off: asked again later
+    // not presented, but a composite the GPU streams and that has an accelerator resource: a readback binding (op 3)
+    const int readback = ask == 2 && srow >= w * 4 && !(srow & 3) && nvmtl_ws_is_streaming_with_resource(sid, 20);
+    if (readback) { pitch = srow; bytes = (size_t)pitch * h; }
+    e->sid = sid; e->w = w; e->h = h; e->pitch = pitch; e->state = -1; e->tried = now; e->readback = readback;
+    if (ask && !readback) { pthread_mutex_unlock(&g_scanout_mx); return NULL; }   // not presented yet, another size, flips off: asked again later
     nvk_buffer b; uint64_t va = 0; uint32_t ggtt = 0;
     // outside the BAR window first (nvmtl_vk_scanout_buffer); a kernel that cannot pin such a buffer (5, kNmxScPin: not
     // one physical run) gets window memory from then on. NVMTL_SCANOUT_VISIBLE=1: window memory always.
@@ -1704,12 +1808,13 @@ static nvmtl_scanout *nvmtl_scanout_get(NVMTLTexture *r) {
     int vis = !nonvis;
     if (nvmtl_vk_scanout_buffer(bytes, &b, &va, vis) && (vis || (vis = 1, nvmtl_vk_scanout_buffer(bytes, &b, &va, 1)))) {
         nvlog("scan-out: no buffer for surface %u (%ux%u)", sid, w, h); pthread_mutex_unlock(&g_scanout_mx); return NULL; }
-    int st = nvmtl_vk_scanout_op(1, sid, va, bytes, w, h, pitch, &ggtt);
+    const unsigned bindOp = readback ? 3u : 1u;
+    int st = nvmtl_vk_scanout_op(bindOp, sid, va, bytes, w, h, pitch, &ggtt);
     if (st == 5 && !vis) {
         nvmtl_vk_buffer_destroy(&b); nonvis = 0;
         nvlog("scan-out: the kernel cannot pin a scan-out buffer outside the BAR window - inside it from now on");
         if (nvmtl_vk_scanout_buffer(bytes, &b, &va, 1)) { nvlog("scan-out: no buffer for surface %u (%ux%u)", sid, w, h); pthread_mutex_unlock(&g_scanout_mx); return NULL; }
-        vis = 1; st = nvmtl_vk_scanout_op(1, sid, va, bytes, w, h, pitch, &ggtt);
+        vis = 1; st = nvmtl_vk_scanout_op(bindOp, sid, va, bytes, w, h, pitch, &ggtt);
     }
     if (!st) { static int said; if (!said++) nvlog("scan-out: buffers in %s", vis ? "the CPU-visible BAR window" : "VRAM outside the BAR window (scan-out BOs)"); }
     if (st) {
@@ -1722,7 +1827,8 @@ static nvmtl_scanout *nvmtl_scanout_get(NVMTLTexture *r) {
     sb->buf = b; sb->refs = 1;
     e->surf = (IOSurfaceRef)CFRetain(r->_surf); e->sb = sb; e->va = va; e->state = 1; e->used = e->checked = now;
     g_scanout_binds++;
-    nvlog("scan-out: surface %u %ux%u pitch %u: VRAM buffer at GPU 0x%llx is GGTT 0x%x (%llu bound)", sid, w, h, pitch, (unsigned long long)va, ggtt, g_scanout_binds);
+    if (readback) nvlog("scan-out: surface %u %ux%u pitch %u: readback buffer at GPU 0x%llx (not displayed; a CPU lock pages it off) (%llu bound)", sid, w, h, pitch, (unsigned long long)va, g_scanout_binds);
+    else nvlog("scan-out: surface %u %ux%u pitch %u: VRAM buffer at GPU 0x%llx is GGTT 0x%x (%llu bound)", sid, w, h, pitch, (unsigned long long)va, ggtt, g_scanout_binds);
     return e;
 }
 static void nvmtl_scanout_put(nvmtl_scanout *e) { if (e) pthread_mutex_unlock(&g_scanout_mx); }
@@ -4036,7 +4142,7 @@ static BOOL nvmtl_bytes_ring_at(__unsafe_unretained NVMTLCommandBuffer *cb, NSUI
     __unsafe_unretained NVMTLTexture *nt = (NVMTLTexture *)t;   // the caller holds it; the command buffer's set from here on
     if (!nt) { nvlog("setVertexTexture: nil at index %lu", (unsigned long)i); return; }
     nvmtl_retain_resource(_cb, nt);
-    nvmtl_surface_in_for_cb(_cb, nt);
+    nvmtl_surface_in_for_cb(_cb, nt); nvmtl_ws_sampled(nt);
     if (nt->_tbView) nvmtl_vk_bind_texel_view(&_cb->_c, NVMTL_SET_VERTEX, (uint32_t)i, nt->_tbView, nt->_tbStorage);
     else {
     if (nvmtl_vk_bind_texture_view(&_cb->_c, NVMTL_SET_VERTEX, (uint32_t)i, nvmtl_tex_sampleview(nt))) nvlog("setVertexTexture: bind FAILED");
@@ -4088,7 +4194,7 @@ static BOOL nvmtl_bytes_ring_at(__unsafe_unretained NVMTLCommandBuffer *cb, NSUI
         nvmtl_mip_dump(nt);
         if (i == 3 && !nt->_parent && !nt->_surf && nt->_i.mips > 1 && nt->_i.w == 128 && nt->_i.h == 128) t_pso_dump = 1;
     }
-    nvmtl_surface_in_for_cb(_cb, nt);
+    nvmtl_surface_in_for_cb(_cb, nt); nvmtl_ws_sampled(nt);
     if (__builtin_expect(nvmtl_trace_on(), 0)) { __unsafe_unretained NVMTLTexture *rt = nt->_parent ? nt->_parent : nt; nvtrace("FTEX[%lu] %ux%u surf %u view %d | %p fmt %lu levels %lu (image %u, base %u) mipsWritten %d buf %d", (unsigned long)i, [nt nvi]->w, [nt nvi]->h,
         rt->_surf ? (unsigned)IOSurfaceGetID(rt->_surf) : 0u, nt->_parent != nil, (__bridge void *)nt, (unsigned long)nt->_fmt, (unsigned long)nt.mipmapLevelCount,
         [nt nvi]->mips, nt->_baseLevel, (int)rt->_mipsWritten, nt->_backBuf != nil || nt->_tbView != NULL); }
@@ -5534,7 +5640,7 @@ static void nvmtl_zprobe_drain(void) {
     if (nt->_parent && nt->_baseLevel) nt->_parent->_mipsWritten = YES;
     nvmtl_zprobe_record(nt, _ps && _ps->_function ? _ps->_function->_fname.UTF8String : NULL, (unsigned)i, nt->_stex ? 1u : 0u);
     nvmtl_retain_resource(_cb, nt);
-    nvmtl_surface_in_for_cb(_cb, nt);
+    nvmtl_surface_in_for_cb(_cb, nt); if (!(nt->_usage & MTLTextureUsageShaderWrite)) nvmtl_ws_sampled(nt);
     // Storage-image capability is also needed for read-only imageLoad. Private IOSurface images are made storage
     // capable regardless of their descriptor usage; that must not turn a ShaderRead input into a producer. In a
     // VTMTS capture, doing so copied the BGRA input back and moved its seed, forcing WindowServer to upload it again.
@@ -5766,7 +5872,7 @@ static void nvmtl_tg_reshape(NVMTLComputePipelineState *ps, const uint32_t l[3],
         NSArray *entry = _indirectImages[key]; NVMTLTexture *t = entry[0];
         MTLResourceUsage usage = [entry[1] unsignedLongLongValue];
         nvmtl_surface_in_for_cb(_cb, t);
-        if (usage & MTLResourceUsageWrite) nvmtl_surf_dirty(_cb, t);
+        if (usage & MTLResourceUsageWrite) nvmtl_surf_dirty(_cb, t); else nvmtl_ws_sampled(t);
         if (nvmtl_vk_cmd_prepare_sampled_image(&_cb->_c, [t nvi], (usage & MTLResourceUsageWrite) && t->_stex)) {
             [_cb nvmtlRecordEncodingError:[NSError errorWithDomain:MTLCommandBufferErrorDomain code:MTLCommandBufferErrorInternal
                 userInfo:@{NSLocalizedDescriptionKey:@"Cannot prepare a declared indirect texture for dispatch"}]];
@@ -5857,7 +5963,7 @@ static NSUInteger nvmtl_texture_slice_count(NVMTLTexture *t) {
       nvtrace("BLIT tex %ux%u surf %u (%lu,%lu %lux%lu) -> tex %ux%u surf %u (%lu,%lu)", [s nvi]->w, [s nvi]->h, nvmtl_surf_id(s), (unsigned long)so.x,
           (unsigned long)so.y, (unsigned long)size.width, (unsigned long)size.height, [d nvi]->w, [d nvi]->h, nvmtl_surf_id(d), (unsigned long)dof.x, (unsigned long)dof.y);
       g_trace_mute = was; }
-    nvmtl_surface_in_for_cb(_cb, s);
+    nvmtl_surface_in_for_cb(_cb, s); nvmtl_ws_sampled(s);
     const BOOL overwrite = [s nvi] != [d nvi] && (!s->_surf || !d->_surf || IOSurfaceGetID(s->_surf) != IOSurfaceGetID(d->_surf))
         && nvmtl_surface_full_overwrite(d, (MTLRegion){dof, size}, dl, ds);
     if (!overwrite) nvmtl_surface_in_for_cb(_cb, d);

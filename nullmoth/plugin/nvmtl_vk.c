@@ -10711,7 +10711,9 @@ static int nvmtl_vk_image_create_buffer_alias_lifetime_body(uint32_t w, uint32_t
         nvlog("buffer texture: bytesPerRow %zu cannot hold %u texels of %u B", row_pitch, w, bpp); return -1; }
     if (tiled && (row_pitch % 128 || (size_t)row_pitch * ((h + 31) & ~31u) > b->size)) {
         nvlog("buffer texture: Tile4 pitch %zu for %ux%u does not fit the %zu-byte backing", row_pitch, w, h, b->size); return -1; }
-    if (!tiled && g_linmod && row_pitch % 32) {
+    // NVK's texture header counts a linear pitch in 32-byte units; Intel's surface state takes any multiple of the texel
+    // size for a linear render target or texture (isl_calc_row_pitch_alignment), which the check above already asks
+    if (!tiled && g_linmod && row_pitch % 32 && nvmtl_vk_vendor() != 0x8086) {
         nvlog("buffer texture: bytesPerRow %zu is not a multiple of 32 B (the texture header's linear pitch unit)", row_pitch); return -1; }
     if (offset > b->size || (size_t)row_pitch * (h - 1) + (size_t)w * bpp > b->size - offset) {
         nvlog("buffer texture: %ux%u at offset %zu pitch %zu overruns the %zu-byte buffer", w, h, offset, row_pitch, b->size); return -1; }

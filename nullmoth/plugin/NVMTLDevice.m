@@ -1342,7 +1342,11 @@ static int nvmtl_surface_image_create(NVMTLTexture *t, IOSurfaceRef surf, NSUInt
 {
     if (surf && plane == 0 && IOSurfaceGetPlaneCount(surf) <= 1 && nvmtl_vk_surface_share_on()) {
         size_t row = IOSurfaceGetBytesPerRow(surf), sh = IOSurfaceGetHeight(surf);
-        if ((size_t)w * (bpp ? bpp : 4) <= row && h <= sh && row % 32 == 0) {
+        // the row: NVK needs 32-byte units; on Intel a multiple of the texel size will do. WindowServer's composite of a
+        // scaled mode whose width is not a multiple of 8 (1706x960 looks like: 3412 pixels, 13648 bytes a row) took the
+        // private image with copies in and out of every frame: 2.8 instead of 0.56 ms per render-and-sample at that size.
+        const size_t rowUnit = nvmtl_vk_vendor() == 0x8086 ? (bpp ? bpp : 4) : 32;
+        if ((size_t)w * (bpp ? bpp : 4) <= row && h <= sh && row % rowUnit == 0) {
             nvk_buffer vb;
             nvmtl_vram_layout lay;
             if (!nvmtl_vk_surface_vram_layout(IOSurfaceGetID(surf), 0, row * h, writer, &vb, &lay)) {
@@ -1384,7 +1388,7 @@ static int nvmtl_surface_image_create(NVMTLTexture *t, IOSurfaceRef surf, NSUInt
         nvlog("item 7: surface %u %ux%u plane %lu -> a private image, copied in and out (%s; row %zu bytes, %zu plane(s))",
               (unsigned)IOSurfaceGetID(surf), w, h, (unsigned long)plane,
               (plane != 0 || pplanes > 1) ? "more than one plane" : ((size_t)w * (bpp ? bpp : 4) > prow || h > IOSurfaceGetHeight(surf)) ? "image larger than the surface"
-              : (prow % 32) ? "the row is not a multiple of 32 bytes" : "the family VRAM could not be used", prow, pplanes);
+              : (prow % (nvmtl_vk_vendor() == 0x8086 ? (bpp ? bpp : 4) : 32)) ? "the row is not a multiple of the pitch unit" : "the family VRAM could not be used", prow, pplanes);
     }
     return nvmtl_vk_image_create_typed(w, h, vkf, bpp, a8, 1, stex, 2u, 1u, &t->_i);
 }

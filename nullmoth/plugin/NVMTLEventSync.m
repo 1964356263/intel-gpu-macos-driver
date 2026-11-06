@@ -319,6 +319,20 @@ static BOOL nvmtl_ws_presented(NVMTLTexture *t) {
     return shown;
 }
 // At commit, before cb is pending (its parts are stable): does it write a capture? commitAndWaitUntilSubmitted reads it.
+// Not a surface the GPU itself streams: in a scaled (HiDPI) mode WindowServer composites into a
+// surface of the mode's size, which the display pipe does not present, and a second pass samples it to scale it to the
+// panel. Waiting for that composite at every flush held the compositor to every other refresh (90 of 180 Hz in every
+// scaled mode; 180 with the wait off). The composite is written and sampled at display rate; a capture is written once
+// per capture and read by the CPU. So a surface written and sampled at least 20 times each within 500 ms is an
+// intermediate and its flushes do not wait; any other keeps waiting. (Two looser rules were measured first: "sampled
+// after every write" missed composites written by several command buffers per frame; "sampled 8 times within 250 ms"
+// also let pooled screenshot surfaces through after their preview animation sampled them, and screenshots tore.)
+// A screenshot of a scaled mode reads the composite itself with the CPU: that is safe only once the surface has an
+// accelerator resource, whose page-off makes the CPU lock wait for the GPU (nvmtl_ws_kernel_resource).
+static BOOL nvmtl_ws_gpu_intermediate(NVMTLTexture *t) {
+    NVMTLTexture *r = t->_parent ? t->_parent : t;
+    return r->_surf && nvmtl_ws_written_streaming((uint32_t)IOSurfaceGetID(r->_surf), 20) && nvmtl_ws_kernel_resource(r);
+}
 static void nvmtl_ws_note_captures(NVMTLCommandBuffer *cb) {
     cb->_wsCaptureWait = NO;
     const int mode = nvmtl_capture_wait_mode();
@@ -327,6 +341,12 @@ static void nvmtl_ws_note_captures(NVMTLCommandBuffer *cb) {
         if (![part isKindOfClass:[NVMTLSubmissionPart class]]) continue;
         if (part->waitEvent) return;   // waiting here for an event a later commit signals would deadlock
         for (NVMTLTexture *t in part->surfaces) if (t->_surf && !t->_vramOn && !nvmtl_ws_presented(t)) {
+            if (nvmtl_ws_gpu_intermediate(t)) {
+                static _Atomic unsigned told; if (atomic_fetch_add(&told, 1) < 4)
+                    nvlog("captures: surface %u %zux%zu is written and sampled by the GPU at display rate - an intermediate, its flush does not wait",
+                          IOSurfaceGetID(t->_surf), IOSurfaceGetWidth(t->_surf), IOSurfaceGetHeight(t->_surf));
+                continue;
+            }
             cb->_wsCaptureWait = YES;
             static _Atomic unsigned said; const unsigned n = atomic_fetch_add(&said, 1);
             if (n < 6 || (n & 1023) == 0) nvlog("captures: surface %u %zux%zu is not on the display - its flush waits for the pixels (%u so far)",

@@ -3658,7 +3658,7 @@ static IOReturn nmxIntelXeCall(const char *fn, void *p1)
 // ─── scan-out bindings: surface ID -> GGTT slot (stage 3) ──────────────────────────────────────────────────────────
 enum { kNmxScOk = 0, kNmxScOff = 1, kNmxScNotPresented = 2, kNmxScGeometry = 3, kNmxScBusy = 4, kNmxScPin = 5,
        kNmxScNoSlot = 6, kNmxScNotFound = 7, kNmxScBad = 8, kNmxScNotWS = 9 };
-struct NMXScanBind { unsigned sid; uint32_t ggtt, gen, w, h, pitch; void *pin; void *owner; bool newer; };   // newer: phase 4 (no readback)
+struct NMXScanBind { unsigned sid; uint32_t ggtt, gen, w, h, pitch; void *pin; void *owner; bool newer, readback; };   // newer: phase 4 (no readback); readback: op 3, never on the display
 static NMXScanBind gNmxScan[8];
 static volatile SInt32 gNmxPinV1;   // IntelXe.kext answered that it has no pin version 2
 static SInt64 gCntNmxPinRuns;      // binds whose VRAM came in more than one DPA run
@@ -3749,7 +3749,8 @@ static unsigned nmxScanDropLocked(unsigned i, bool force)
     NVAccel *a = NVAccel::gAccel;
     NMXScanout r; bzero(&r, sizeof r);
     r.op = 1; r.ggtt = b.ggtt; r.gen = b.gen; r.force = force;
-    IOReturn rr = a ? nmxFbScanout(a->fFB, &r) : kIOReturnNotAttached;
+    // a readback binding (op 3) was never given to the framebuffer: nothing to unmap
+    IOReturn rr = b.readback ? kIOReturnSuccess : a ? nmxFbScanout(a->fFB, &r) : kIOReturnNotAttached;
     if (rr == kIOReturnBusy) return kNmxScBusy;
     // unmapped (or the framebuffer is gone, or never knew the slot): the VRAM can go
     if (rr != kIOReturnSuccess && rr != kIOReturnNotFound) NMXLOG("scan-out slot 0x%x of surface 0x%x: unmap answered 0x%x -- released anyway", b.ggtt, b.sid, (unsigned)rr);
@@ -3766,7 +3767,12 @@ static void nmxScanUnbindOwner(void *owner)
     for (unsigned i = 0; i < 8; i++) if (gNmxScan[i].sid && gNmxScan[i].owner == owner) nmxScanDropLocked(i, true);
     IOLockUnlock(l);
 }
-// op 0 query (va 0: may this surface be bound?), 1 bind, 2 unbind
+// op 0 query (va 0: may this surface be bound?), 1 bind, 2 unbind, 3 bind for readback only.
+// op 3 (scaled HiDPI modes): WindowServer's composite of a scaled mode is not on the display - a second pass scales it to
+// the panel - so it cannot have a scan-out binding, and every frame of it went back to its system-memory pages over PCIe
+// (two 23-37 MB copies per frame: 90-145 frames/s where drawing took 0.2 ms). A readback binding pins the plugin's VRAM
+// copy of the frame like a scan-out buffer, at the surface's own pitch, but never maps it for the display: phase 4 then
+// skips the copy into the pages, and a CPU lock (a screenshot) pages the frame off from the pin (nmxScanPageoff).
 static unsigned nmxScanOp(void *owner, task_t task, unsigned op, unsigned sid, uint64_t va, uint64_t size, unsigned w, unsigned h,
                           unsigned pitch, uint32_t *ggttOut)
 {
@@ -3780,6 +3786,11 @@ static unsigned nmxScanOp(void *owner, task_t task, unsigned op, unsigned sid, u
         IOLockUnlock(l);
         return st;
     }
+    const bool readback = op == 3;
+    if (readback) {
+        if (!gSurfGpuOn) return kNmxScOff;
+        if (!w || !h || w > 16384 || h > 16384 || pitch < w * 4 || (pitch & 3) || size < (uint64_t)pitch * h) return kNmxScGeometry;
+    } else {
     if (!gNmxFlip || !gSurfGpuOn) return kNmxScOff;
     if (!nmxWasPresented(sid)) return kNmxScNotPresented;
     struct NVRMVramRequest q;
@@ -3788,13 +3799,14 @@ static unsigned nmxScanOp(void *owner, task_t task, unsigned op, unsigned sid, u
     if (a->askFramebufferForScanout(&q, a->fFB) != kIOReturnSuccess || w != q.width || h != q.height || pitch != q.pitch ||
         size < (uint64_t)pitch * h)
         return kNmxScGeometry;
+    }
     if (op == 0) {   // the answer names the slot when the surface is bound already
         IOLockLock(l);
         for (unsigned i = 0; i < 8; i++) if (gNmxScan[i].sid == sid && ggttOut) *ggttOut = gNmxScan[i].ggtt;
         IOLockUnlock(l);
         return kNmxScOk;
     }
-    if (op != 1 || !va) return kNmxScBad;
+    if ((op != 1 && op != 3) || !va) return kNmxScBad;
     IOLockLock(l);
     unsigned slot = 8;
     for (unsigned i = 0; i < 8; i++) {
@@ -3842,7 +3854,7 @@ static unsigned nmxScanOp(void *owner, task_t task, unsigned op, unsigned sid, u
     NMXScanout r; bzero(&r, sizeof r);
     r.op = 0; r.dpa = runs && pin.nRuns ? runs[0].dpa : pin.dpa; r.size = size; r.width = w; r.height = h; r.pitch = pitch;
     if (runs && pin.nRuns) { r.runs = runs; r.nRuns = pin.nRuns; }
-    IOReturn mr = nmxFbScanout(a->fFB, &r);   // IntelXeFB copies the runs it keeps
+    IOReturn mr = readback ? kIOReturnSuccess : nmxFbScanout(a->fFB, &r);   // IntelXeFB copies the runs it keeps
     if (runs) { if (pin.nRuns > 1) OSAddAtomic64(1, &gCntNmxPinRuns); IOFree(runs, runsCap * sizeof(IntelXeDpaRun)); runs = nullptr; }
     if (mr != kIOReturnSuccess) {
         nmxIntelXeCall("intelxeScanoutUnpin", pin.pin);
@@ -3852,10 +3864,11 @@ static unsigned nmxScanOp(void *owner, task_t task, unsigned op, unsigned sid, u
         return mr == kIOReturnNoResources ? kNmxScNoSlot : kNmxScGeometry;
     }
     NMXScanBind &b = gNmxScan[slot];
-    b.sid = sid; b.ggtt = r.ggtt; b.gen = r.gen; b.w = w; b.h = h; b.pitch = pitch; b.pin = pin.pin; b.owner = owner;
+    b.sid = sid; b.ggtt = readback ? 0 : r.ggtt; b.gen = readback ? 0 : r.gen; b.w = w; b.h = h; b.pitch = pitch; b.pin = pin.pin; b.owner = owner;
+    b.readback = readback;
     IOLockUnlock(l);
     const SInt64 n = OSAddAtomic64(1, &gCntNmxBinds);
-    if (n < 16) ALOG("nmx: surface 0x%x %ux%u pitch %u: scan-out buffer at VRAM 0x%llx, GGTT 0x%x", sid, w, h, pitch, pin.dpa, r.ggtt);
+    if (n < 16) ALOG("nmx: surface 0x%x %ux%u pitch %u: %s at VRAM 0x%llx, GGTT 0x%x", sid, w, h, pitch, readback ? "readback buffer (not displayed)" : "scan-out buffer", pin.dpa, b.ggtt);
     if (ggttOut) *ggttOut = r.ggtt;
     return kNmxScOk;
 }
@@ -3885,7 +3898,7 @@ static bool nmxCallerIsWS()
     return !strcmp(nm, "WindowServer");
 }
 // selector 0: in {surfaceID, pending} -> out {status}: 0 taken (surface 0 is the plugin's probe), NVRM_SS_OFF otherwise
-// selector 1: in {op, surfaceID, va, size, width | height << 32, pitch} -> out {status (kNmxSc*), ggtt}
+// selector 1: in {op, surfaceID, va, size, width | height << 32, pitch} -> out {status (kNmxSc*), ggtt}; op 3: readback only
 IOReturn IOAccelNMXPresent::externalMethod(uint32_t selector, IOExternalMethodArguments *args, IOExternalMethodDispatch *, OSObject *, void *)
 {
     if (selector == 0) {
@@ -4122,7 +4135,7 @@ static bool nmxPresent(NMXIopAsync *e, IOSurface *s)
     if (!a) return false;
     if (gNmxFlip) {
         NMXScanBind b;
-        if (nmxScanLookup(sid, &b) && b.w == s->getWidth() && b.h == s->getHeight()) {
+        if (nmxScanLookup(sid, &b) && !b.readback && b.w == s->getWidth() && b.h == s->getHeight()) {
             if (nmxIntelXeCall("intelxeL2Flush", nullptr) != kIOReturnSuccess) {
                 // the slot may still be partly in the GPU's L2: never scan it out unflushed
                 OSAddAtomic64(1, &gCntNmxL2Fail);
@@ -4423,9 +4436,13 @@ static void nmxAutoArm(NVAccel *a)
     const bool safe = gfb && gfb->getProperty("IntelXeFBAccelSafe") == kOSBooleanTrue;
     gSurfGpuOn = !safe && nmxSetting("nmxasync", "nmx-async", 1) ? 1 : 0;
     gNmxFlip = gSurfGpuOn && nmxSetting("nmxflip", "nmx-flip", 1) ? 1 : 0;
-    // nmx-tahoe2: two frames per head by default (measured 4 Nov: window drag at 180 Hz 122 -> 165 fps, no drops,
-    // no late flips, no visible artefacts); boot-arg nmxdepth=0 or NVRAM nmx-depth=0 goes back to one at a time
-    gNmxDepth = gSurfGpuOn && gNmxFlip ? nmxSetting("nmxdepth", "nmx-depth", 2) : 0;
+    // One frame per head by default again (boot-arg nmxdepth=2 or NVRAM nmx-depth=2: one more queued). With two, a frame
+    // queued behind one in flight counts as complete early, WindowServer gets the previous surface back while its scan-out
+    // buffer is still on the panel, and the next frame is copied into the buffer being scanned: tearing on moving edges,
+    // most at the cheapest frames (6 Nov, seen in every mode, gone at depth 0). Measured 6 Nov at 180 Hz: a moving window
+    // and a moving layer both 180 frames/s at depth 0 and 2 (the 4 Nov gain, 122 -> 165 for a window drag, was with
+    // slower frames).
+    gNmxDepth = gSurfGpuOn && gNmxFlip ? nmxSetting("nmxdepth", "nmx-depth", 0) : 0;
     if (!gNvAccelArmed || !gNvIop) {
         gNmxAutoState = -3;
         char m[128];
