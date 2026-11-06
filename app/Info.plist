@@ -5,6 +5,7 @@
 	<key>CFBundleIdentifier</key><string>io.github.yusufklncc.IntelXeManager</string>
 	<key>CFBundleName</key><string>IntelXe Manager</string>
 	<key>CFBundleDisplayName</key><string>IntelXe Manager</string>
+	<key>CFBundleIconFile</key><string>AppIcon</string>
 	<key>CFBundlePackageType</key><string>APPL</string>
 	<key>CFBundleShortVersionString</key><string>@VER@</string>
 	<key>CFBundleVersion</key><string>@VER@</string>

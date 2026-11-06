@@ -325,11 +325,11 @@ de modları kapatır (anahtar NVRAM değişkenidir).
 
 ## Yükseltme
 
-**0.1.2'den:** `IntelXeFB.kext`, `NMXAGDC.kext`, video çözücü ve Mesa'nın Vulkan sürücüsü yeni (firmware'inkinden
-yüksek tazeleme hızları, varsayılan olarak açık Adaptive-Sync modları, isteğe bağlı HiDPI modları, tam aralıklı videonun
-tam aralıklı çözülmesi, WindowServer'ın derlenmiş shader'larını saklaması). Paketi kurun (uygulamada *v@VER@ sürümünü
-indir*, sonra *Bu paketi kur*; ya da `sudo ./install.sh --apply`) ve yeniden başlatın. EFI'deki `IntelXe.kext` ve Metal
-eklentisi 0.1.2'ninkiler; oldukları gibi kalırlar. Sistem diski kopyasını kurduysanız (3.3) bu paketinkini de kurun
+**0.1.2'den:** `IntelXeFB.kext`, `NMXAGDC.kext`, `NMXAccel.kext`, Metal eklentisi, video çözücü ve Mesa'nın Vulkan
+sürücüsü yeni (firmware'inkinden yüksek tazeleme hızları, varsayılan olarak açık Adaptive-Sync modları, monitörün tam
+tazeleme hızında isteğe bağlı HiDPI modları, tam aralıklı videonun tam aralıklı çözülmesi, WindowServer'ın derlenmiş
+shader'larını saklaması). Paketi kurun (uygulamada *v@VER@ sürümünü indir*, sonra *Bu paketi kur*; ya da
+`sudo ./install.sh --apply`) ve yeniden başlatın. EFI'deki `IntelXe.kext` 0.1.2'ninki; olduğu gibi kalır. Sistem diski kopyasını kurduysanız (3.3) bu paketinkini de kurun
 (`sudo ./system-volume/ssv-install.sh --apply`), sonra `install.sh --apply`'ın, kopya eski Mesa'yı taşıdığı için
 oluşturduğu `/Library/GPUBundles/NVMTLDriver.use-library` dosyasını silin (`sudo rm ...`) ve yeniden başlatın.
 

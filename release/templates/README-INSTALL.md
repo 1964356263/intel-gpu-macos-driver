@@ -320,11 +320,11 @@ off as well (the switch is the NVRAM variable).
 
 ## Upgrading from an earlier build
 
-**From 0.1.2:** `IntelXeFB.kext`, `NMXAGDC.kext`, the video decoder and Mesa's Vulkan driver are new (refresh rates
-above the firmware's, Adaptive-Sync modes on by default, the optional HiDPI modes, full-range video decoded as full
-range, WindowServer keeping its compiled shaders). Install the package (the app: *Download v@VER@*, then *Install this
-package*; or `sudo ./install.sh --apply`) and restart. `IntelXe.kext` in the EFI and the Metal plugin are those of
-0.1.2 and stay as they are. If you installed the system-volume copy (3.3), install this package's too
+**From 0.1.2:** `IntelXeFB.kext`, `NMXAGDC.kext`, `NMXAccel.kext`, the Metal plugin, the video decoder and Mesa's
+Vulkan driver are new (refresh rates above the firmware's, Adaptive-Sync modes on by default, the optional HiDPI modes
+at the full refresh rate, full-range video decoded as full range, WindowServer keeping its compiled shaders). Install
+the package (the app: *Download v@VER@*, then *Install this package*; or `sudo ./install.sh --apply`) and restart.
+`IntelXe.kext` in the EFI is that of 0.1.2 and stays as it is. If you installed the system-volume copy (3.3), install this package's too
 (`sudo ./system-volume/ssv-install.sh --apply`) and then `sudo rm /Library/GPUBundles/NVMTLDriver.use-library`, which
 `install.sh --apply` creates because the copy holds the older Mesa; then restart.
 
