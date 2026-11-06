@@ -1126,7 +1126,7 @@ int buildDriverModes(const Mode *valid, int n, const Panel &p, DriverMode *out, 
 			const uint32_t key = rateKey(mhz);
 			for (int i = 0; i < S.n; i++) if (S.r[i].vt == vt || rateKey(S.r[i].nominalMilliHz) == key) return;
 			DriverMode &d = S.r[S.n++];
-			d.w = S.w; d.h = S.h; d.vt = vt; d.milliHz = mhzFor(p, vt); d.nominalMilliHz = mhz; d.why = why;
+			d.w = S.w; d.h = S.h; d.vt = vt; d.milliHz = mhzFor(p, vt); d.nominalMilliHz = mhz; d.why = why; d.pclkKhz = 0;
 			// a size whose aspect differs from the panel's by more than 1 % is stretched to it (kDisplayModeStretchedFlag)
 			const uint64_t a = (uint64_t)S.w * p.height, b = (uint64_t)S.h * p.width;
 			d.stretched = (a > b ? a - b : b - a) * 100 > b;
@@ -1135,6 +1135,26 @@ int buildDriverModes(const Mode *valid, int n, const Panel &p, DriverMode *out, 
 		for (int i = 0; i < n; i++)
 			if (valid[i].hdisplay == S.w && valid[i].vdisplay == S.h && !(valid[i].flags & kInterlace)) add(refreshMilliHz(valid[i]), kWhyEdid);
 		for (int i = 0; i < np; i++) add(panelRates[i], kWhyPanel);
+		// Rates above the firmware's: the EDID's own panel-size timings on the firmware's horizontal raster with a
+		// higher clock (the link validated them above, intel_dp_mode_valid). Only the clock changes (M/N on the trained
+		// link) and the vertical total, never below the firmware's. The firmware may start the panel below its top rate
+		// (the B580's GOP picks the G5's 165 Hz timing when OpenCore does not reconnect it; 180 Hz is the same raster).
+		for (int i = 0; i < n; i++) {
+			const Mode &m = valid[i];
+			if (m.hdisplay != (int)p.width || m.vdisplay != (int)p.height || (m.flags & kInterlace) || m.htotal != (int)p.htotal ||
+			    m.vtotal < (int)p.vtotal || (uint32_t)m.vtotal > p.maxVtotal || (uint64_t)m.clock * 1000 * 200 <= p.pclkHz * 201)
+				continue;
+			if (S.n >= kMaxRatesPerSize) break;
+			const uint32_t mhz = refreshMilliHz(m), key = rateKey(mhz);
+			bool dup = false;
+			for (int j = 0; j < S.n; j++) if (rateKey(S.r[j].nominalMilliHz) == key) dup = true;
+			if (dup) continue;
+			DriverMode &d = S.r[S.n++];
+			d.w = S.w; d.h = S.h; d.vt = (uint32_t)m.vtotal; d.milliHz = d.nominalMilliHz = mhz; d.why = kWhyEdid;
+			d.pclkKhz = (uint32_t)m.clock;
+			const uint64_t a = (uint64_t)S.w * p.height, b = (uint64_t)S.h * p.width;
+			d.stretched = (a > b ? a - b : b - a) * 100 > b;
+		}
 		if (p.vrr && p.vrrMin > 0) add((uint32_t)p.vrrMin * 1000, kWhyVrrMin);
 		if (p.vrr && p.commonRates)
 			for (int r : kVrrCommonRates) if (r >= p.vrrMin && r <= p.vrrMax) add((uint32_t)r * 1000, kWhyCommon);
@@ -1170,7 +1190,7 @@ int fallbackDriverModes(const Panel &p, DriverMode *out, int max)
 				mhz = mhzFor(p, vt);
 			}
 			DriverMode &d = out[k++];
-			d.w = w; d.h = h; d.vt = vt; d.milliHz = d.nominalMilliHz = mhz; d.why = kWhyFirmware; d.stretched = false;
+			d.w = w; d.h = h; d.vt = vt; d.milliHz = d.nominalMilliHz = mhz; d.why = kWhyFirmware; d.stretched = false; d.pclkKhz = 0;
 		}
 	}
 	return k;

@@ -227,7 +227,8 @@ int gVrrLfc = 1;           // debug.intelxefb_vrr_lfc
 uint32_t gVrrPaceLo = 5;   // debug.intelxefb_vrr_pace_lo_pct: frames no shorter than the content cadence - this % (0 = pacing off)
 uint32_t gVrrPaceHi = 30;  // debug.intelxefb_vrr_pace_hi_pct: and no longer than the cadence + this %
 uint32_t gVrrFloorHz = 0;  // debug.intelxefb_vrr_floor_hz: lowest refresh VRR may drop to (0 = the panel's); applied at enable
-int gVrrModes = 0;         // macOS Adaptive-Sync modes: IOFBTimingRange + programmable timings (see vrrModesInit)
+int gVrrModes = 1;         // macOS Adaptive-Sync modes: IOFBTimingRange + programmable timings (see vrrModesInit); on by
+                           // default since 0.1.3, off with intelxefb_vrrmodes=0 or NVRAM intelxefb-vrr-modes=0
 int gHwCursor = 1;         // debug.intelxefb_hwcursor: 0 = decline the hardware cursor (WindowServer draws it)
 int gDpms = 0;             // debug.intelxefb_dpms: display sleep powers the output down (see blank)
 int gVblPrecise = 1;       // debug.intelxefb_vbl_precise: wake in two legs (see early())
@@ -472,7 +473,8 @@ class IntelXeFramebuffer : public IOFramebuffer {
 	uint32_t fWidth = 0, fHeight = 0, fRowBytes = 0, fSurf = 0, fRefresh16 = 60 << 16;
 	uint64_t fFrameNs = 16666667ull, fDpa = 0;
 	uint32_t fHT = 0, fVT = 0, fHSS = 0, fHSE = 0, fVSS = 0, fVSE = 0, fRefreshMilliHz = 60000;
-	uint64_t fPclk = 0;               // the firmware's pixel clock (driver modes run at it)
+	uint64_t fPclk = 0;               // the firmware's pixel clock (driver modes run at it unless they name a higher one)
+	uint64_t fPclkMax = 0;            // the highest pixel clock a mode may use: fPclk, or a higher EDID timing's (buildModes)
 	uint64_t fPclkCur = 0;            // the pixel clock now: a programmable mode may run another (M/N change)
 	uint32_t fDataMBoot = 0, fDataNBoot = 0, fLinkMBoot = 0, fLinkNBoot = 0, fLinetimeBoot = 0;
 	int fPipe = -1;
@@ -568,7 +570,9 @@ class IntelXeFramebuffer : public IOFramebuffer {
 			return true;
 		}
 		*pclk = fPclk; *ext = 0;
-		return modeSize(mode, w, h, vt);
+		if (!modeSize(mode, w, h, vt)) return false;
+		if (const uint32_t k = fModes[mode - 1].pclkKhz) *pclk = (uint64_t)k * 1000;   // a rate above the firmware's
+		return true;
 	}
 	void programPixelClock(uint64_t pclk);
 	void vrrModesInit();
@@ -1099,7 +1103,10 @@ public:
 		bzero(info, sizeof(*info));
 		info->nominalWidth = w; info->nominalHeight = h;
 		info->refreshRate = (pclk == fPclk && vt == fVT) ? fRefresh16 : (uint32_t)((pclk << 16) / ((uint64_t)fHT * vt));
-		info->flags = kDisplayModeValidFlag | kDisplayModeSafeFlag | (mode == 1 ? kDisplayModeDefaultFlag : 0);
+		// the default is the firmware's own timing (mode 1 unless an EDID rate above it sorted first)
+		const bool fw = mode >= 1 && mode <= fNumModes && fModes[mode - 1].why == intelxeedid::kWhyFirmware &&
+		                fModes[mode - 1].w == fWidth && fModes[mode - 1].h == fHeight;
+		info->flags = kDisplayModeValidFlag | kDisplayModeSafeFlag | (fw ? kDisplayModeDefaultFlag : 0);
 		// an EDID size of another aspect (1280x1024 on 16:9) fills the panel: say so, as Apple's drivers do
 		if (mode >= 1 && mode <= fNumModes && fModes[mode - 1].stretched) info->flags |= kDisplayModeStretchedFlag;
 		return kIOReturnSuccess;
@@ -1131,12 +1138,13 @@ public:
 			info->detailedInfo.v2 = pm->t;   // as installed (the mode id stays in __reservedA[0])
 			return kIOReturnSuccess;
 		}
-		if (!modeSize(mode, &w, &h, &vt)) return kIOReturnUnsupportedMode;
+		uint32_t ext; uint64_t pclk;
+		if (!modeLookup(mode, &w, &h, &vt, &pclk, &ext)) return kIOReturnUnsupportedMode;
 		bzero(info, sizeof(*info));
 		info->appleTimingID = kIOTimingIDInvalid;
-		if (!fPclk || fHT <= fWidth || fVT <= fHeight) return kIOReturnSuccess;
+		if (!pclk || fHT <= fWidth || fVT <= fHeight) return kIOReturnSuccess;
 		IODetailedTimingInformationV2 &d = info->detailedInfo.v2;
-		d.pixelClock = d.minPixelClock = d.maxPixelClock = fPclk;
+		d.pixelClock = d.minPixelClock = d.maxPixelClock = pclk;
 		d.horizontalActive = fWidth; d.horizontalBlanking = fHT - fWidth;
 		d.horizontalSyncOffset = fHSS > fWidth ? fHSS - fWidth : 0; d.horizontalSyncPulseWidth = fHSE > fHSS ? fHSE - fHSS : 0;
 		d.verticalActive = fHeight; d.verticalBlanking = vt - fHeight;
@@ -2645,7 +2653,7 @@ const char *IntelXeFramebuffer::progCheck(const IODetailedTimingInformationV2 &t
 	if (t.signalConfig & kIOInterlacedCEATiming) return "interlaced";
 	if (t.dynamicRange & ~(uint32_t)kIORangeDynamicRangeSDR) return "HDR";
 	// the link was trained for the firmware's pixel clock: anything up to it is an M/N change on the same link
-	if (!fPclk || t.pixelClock > fPclk + fPclk / 200 || t.pixelClock < fPclk / 8) return "pixel clock";
+	if (!fPclk || t.pixelClock > fPclkMax + fPclkMax / 200 || t.pixelClock < fPclk / 8) return "pixel clock";
 	const uint64_t hz = t.pixelClock / ((uint64_t)fHT * vt);
 	if (fVrrMaxHz && hz > fVrrMaxHz + 1) return "refresh above the panel's";
 	if (t.verticalBlankingExtension) {
@@ -2761,11 +2769,12 @@ void IntelXeFramebuffer::publishTimingRange(bool on)
 	r.version = kIOTimingRangeV2;
 	// EDID timings carry 10 kHz steps: 0.5 % headroom (as progCheck allows) so the firmware's own timing, rounded up to
 	// 706.25 MHz from the link's 706.249 MHz, is not above the range (CoreDisplay's CheckTimingWithRange)
-	const uint64_t top = fPclk + fPclk / 200;
+	const uint64_t top = fPclkMax + fPclkMax / 200;   // the highest mode's clock (buildModes), not only the firmware's
 	r.minPixelClock = fPclk / 8; r.maxPixelClock = top;
 	// bit 0x10: adaptive sync (CoreDisplay tests it; Apple's Intel framebuffer sets it when the port supports VRR)
 	r.supportedSyncFlags = kIORangeSupportsSeparateSyncs | ((fVrrCapable && fVrrAllowed) ? 0x10u : 0u);
-	r.minFrameRate = fVrrMinHz ? fVrrMinHz : 24; r.maxFrameRate = (fRefreshMilliHz + 999) / 1000;
+	r.minFrameRate = fVrrMinHz ? fVrrMinHz : 24;
+	r.maxFrameRate = (uint32_t)((fPclkMax * 1000 / ((uint64_t)fHT * fVT) + 999) / 1000);
 	r.minLineRate = 1000; r.maxLineRate = (uint32_t)(top / fHT) + 1;
 	r.maxHorizontalTotal = fHT; r.maxVerticalTotal = 8192;
 	r.charSizeHorizontalActive = r.charSizeHorizontalBlanking = r.charSizeHorizontalSyncOffset = r.charSizeHorizontalSyncPulse = 1;
@@ -2886,16 +2895,16 @@ void IntelXeFramebuffer::vrrModesInit()
 		for (int o = 54; o <= 108; o += 18) {
 			uint8_t *d = fEdidOut + o;
 			if (d[0] || d[1] || d[2] || d[3] != 0xFD) continue;
-			const uint32_t lineK = (uint32_t)(fPclk / fHT / 1000);   // kHz, rounded down
+			const uint32_t lineK = (uint32_t)(fPclk / fHT / 1000), lineTopK = (uint32_t)(fPclkMax / fHT / 1000);   // kHz, rounded down
 			uint32_t minH = d[7] + ((d[4] & 0x04) ? 255 : 0), maxH = d[8] + ((d[4] & 0x08) ? 255 : 0);
-			const uint32_t want0 = lineK > 1 ? lineK - 1 : lineK, want1 = lineK + 2;
+			const uint32_t want0 = lineK > 1 ? lineK - 1 : lineK, want1 = lineTopK + 2;
 			if (minH > want0 || maxH < want1) {
 				if (minH > want0) minH = want0;
 				if (maxH < want1) maxH = want1;
 				d[4] &= (uint8_t)~0x0C;
 				if (minH > 255) { d[4] |= 0x04; d[7] = (uint8_t)(minH - 255); } else d[7] = (uint8_t)minH;
 				if (maxH > 255) { d[4] |= 0x08; d[8] = (uint8_t)(maxH - 255); } else d[8] = (uint8_t)maxH;
-				if (d[9] * 10u < (uint32_t)(fPclk / 1000000) + 1) d[9] = (uint8_t)((fPclk / 1000000 + 10) / 10);
+				if (d[9] * 10u < (uint32_t)(fPclkMax / 1000000) + 1) d[9] = (uint8_t)((fPclkMax / 1000000 + 10) / 10);
 				changed = true;
 				FBLOG("edid: range limits widened to %u-%u kHz for the firmware's %u kHz line rate", minH, maxH, lineK);
 			}
@@ -3359,7 +3368,7 @@ bool IntelXeFramebuffer::start(IOService *provider)
 	if (fCurOwned < 0) fCurAllowed = false;
 	cursorInit();
 	{
-		// macOS Adaptive-Sync modes: boot-arg intelxefb_vrrmodes=1 or NVRAM intelxefb-vrr-modes (the EDID change needs it at start)
+		// macOS Adaptive-Sync modes, on unless boot-arg intelxefb_vrrmodes=0 or NVRAM intelxefb-vrr-modes=0 (the EDID change needs it at start)
 		int v = 0;
 		if (intelxeBootArg("IntelXeFB", "intelxefb_vrrmodes", &v, sizeof v)) gVrrModes = v;
 		if (IORegistryEntry *opt = IORegistryEntry::fromPath("/options", gIODTPlane)) {
@@ -3763,6 +3772,10 @@ void IntelXeFramebuffer::buildModes()
 		fNumModes = intelxeedid::fallbackDriverModes(pn, fModes, intelxeedid::kMaxDriverModes);
 		FBLOG("modes: no usable EDID modes, the fixed table: %d modes", fNumModes);
 	}
+	fPclkMax = fPclk;
+	for (int i = 0; i < fNumModes; i++)
+		if ((uint64_t)fModes[i].pclkKhz * 1000 > fPclkMax) fPclkMax = (uint64_t)fModes[i].pclkKhz * 1000;
+	if (fPclkMax > fPclk) FBLOG("modes: rates above the firmware's up to %llu kHz (M/N on the trained link)", fPclkMax / 1000);
 	// IntelXeFBModes: one line per size, "WxH: id=Hz ..." (the ids debug.intelxefb_mode takes)
 	const size_t cap = 6144;
 	char *b = (char *)IOMallocZero(cap);

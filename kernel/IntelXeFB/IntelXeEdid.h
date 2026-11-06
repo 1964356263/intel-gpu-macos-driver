@@ -122,7 +122,8 @@ struct Panel {
 };
 enum Why : uint8_t { kWhyFirmware = 1, kWhyEdid, kWhyPanel, kWhyVrrMin, kWhyCommon };
 const char *whyName(uint8_t w);
-struct DriverMode { uint16_t w, h; uint32_t vt, milliHz, nominalMilliHz; uint8_t why; bool stretched; };   // milliHz: as run (vt)
+// milliHz: as run (vt); pclkKhz: 0 = the firmware's pixel clock, else an EDID timing's higher one on the same raster
+struct DriverMode { uint16_t w, h; uint32_t vt, milliHz, nominalMilliHz; uint8_t why; bool stretched; uint32_t pclkKhz; };
 enum { kMaxDriverModes = 256, kMaxSizes = 24, kMaxRatesPerSize = 16 };
 // valid: the validated, deduplicated, sorted EDID modes (any may be passed; sizes above the panel's are skipped)
 int buildDriverModes(const Mode *valid, int n, const Panel &p, DriverMode *out, int max);

@@ -72,7 +72,7 @@ Rebuild the AuxKC after changing any of the AuxKC kexts (`kmutil create` with al
 | `-nvoff` | NMXAccel stays off |
 | `nmxgamma=`, `nmxearlyreg=` | NMXAccel gamma / early registration |
 
-NVRAM variables: `intelxefb-vrr-modes` (1 = publish Adaptive-Sync modes), `intelxe-guard` / `intelxe-accel-off` (panic-loop guard of the boot-time arming).
+NVRAM variables: `intelxefb-vrr-modes` (Adaptive-Sync modes, the "Variable" refresh in Displays: on by default from 0.1.3; `0` turns them off, as does the boot-arg `intelxefb_vrrmodes=0`), `intelxe-guard` / `intelxe-accel-off` (panic-loop guard of the boot-time arming).
 
 Before 0.1.0 (private builds) these boot-args started with `b580` (`-b580off`, `b580surfvram=`, `-b580fbnovrr`, ...; the full list is in <!-- intelxe-rename: keep -->
 `kernel/IntelXe/uapi/intelxe_bootargs.h`). Release 0.1.x still reads an earlier name when the new one is absent and
