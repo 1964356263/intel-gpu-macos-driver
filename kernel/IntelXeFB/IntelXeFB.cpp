@@ -227,6 +227,7 @@ int gVrrLfc = 1;           // debug.intelxefb_vrr_lfc
 uint32_t gVrrPaceLo = 5;   // debug.intelxefb_vrr_pace_lo_pct: frames no shorter than the content cadence - this % (0 = pacing off)
 uint32_t gVrrPaceHi = 30;  // debug.intelxefb_vrr_pace_hi_pct: and no longer than the cadence + this %
 uint32_t gVrrFloorHz = 0;  // debug.intelxefb_vrr_floor_hz: lowest refresh VRR may drop to (0 = the panel's); applied at enable
+int gHidpi = 0;            // HiDPI modes (opt-in): boot-arg intelxefb_hidpi=1 or NVRAM intelxefb-hidpi=1
 int gVrrModes = 1;         // macOS Adaptive-Sync modes: IOFBTimingRange + programmable timings (see vrrModesInit); on by
                            // default since 0.1.3, off with intelxefb_vrrmodes=0 or NVRAM intelxefb-vrr-modes=0
 int gHwCursor = 1;         // debug.intelxefb_hwcursor: 0 = decline the hardware cursor (WindowServer draws it)
@@ -305,6 +306,11 @@ struct NMXDpaRun { unsigned long long dpa, len; };
 // this card. xe's GGTT allocator owns all of it on Linux; here IntelXe.kext uses only the first 0xd000000 (IntelXe.h), and
 // these stay below GUC_GGTT_TOP (0xfee00000) like everything else.
 constexpr uint32_t kSlotGgtt = 0xE0000000u, kSlotSpan = 0x4000000u;
+// HiDPI (0.1.3): a mode larger than the panel (CoreDisplay's scaled timings, horizontalScaled above the active width,
+// which the plane scaler shrinks to the panel) has its home surface in a display buffer from IntelXe.kext, mapped at
+// kHomeGgtt between the scan-out slots and the cursor; the firmware's surface holds the panel's size only. The largest
+// is 4096 wide: the scaler's source width limit on display 14 (skl_scaler_max_src_size), 4096x2304 at 16:9.
+constexpr uint32_t kHomeGgtt = 0xF8000000u, kScalerMaxW = 4096, kScalerMaxH = 2304, kHomeMax = kScalerMaxW * kScalerMaxH * 4;
 constexpr int kSlots = 6;
 constexpr uint32_t kGsm = 0x800000;    // GGTT PTEs: BAR0 + 8 MB, 8 bytes per 4 KB page (xe_ggtt_init_early)
 constexpr uint64_t kPteAddr = 0x000FFFFFFFFFF000ull;
@@ -325,6 +331,14 @@ class IntelXeFramebuffer : public IOFramebuffer {
 	IOPCIDevice *fPCI = nullptr;
 	IOMemoryMap *fMMIO = nullptr;
 	IOMemoryMap *fSurfMap = nullptr;
+	// the HiDPI home surface (kHomeGgtt): in use while a mode larger than the panel is set
+	bool fHomeBig = false;
+	int fHomeOwned = -1;              // kHomeGgtt reserved in IntelXe.kext's GGTT allocator (ggttReserve)
+	void *fHomeBo = nullptr;          // its display buffer's cookie ("intelxeDispVramFree")
+	uint64_t fHomeDpa = 0;
+	IOMemoryMap *fHomeMap = nullptr;
+	uint32_t fCdclkKhz = 0;           // the display clock as the firmware set it (CDCLK_CTL): scaled timings' pixel rate
+	bool fScalerPublished = false;
 	volatile SInt64 fVramBytes = 0;   // system memory handed out as nvAllocVram   // write-combined CPU view of the scan-out surface (NMXAccel copies frames here)
 	// WindowServer paces a display on its VBL interrupt; until the pipe's vblank interrupt is wired, a timer at the
 	// measured refresh stands in (NMIntelFB, NVRMFB's fallback)
@@ -553,7 +567,7 @@ class IntelXeFramebuffer : public IOFramebuffer {
 	// are taken: the firmware's active size, horizontal timing and syncs, any vertical total from the firmware's up (LRR),
 	// any pixel clock up to the firmware's (an M/N change on the trained link).
 	struct Prog { IODisplayModeID id; IODetailedTimingInformationV2 t; };
-	static constexpr int kMaxProg = 48;
+	static constexpr int kMaxProg = 128;   // HiDPI adds CoreDisplay's scaled timings (and their variable twins) to these
 	Prog fProg[kMaxProg];
 	int fNumProg = 0;
 	uint32_t fProgRejects = 0;
@@ -565,7 +579,9 @@ class IntelXeFramebuffer : public IOFramebuffer {
 	const Prog *progFind(IODisplayModeID id) const { for (int i = 0; i < fNumProg; i++) if (fProg[i].id == id) return &fProg[i]; return nullptr; }
 	bool modeLookup(IODisplayModeID mode, uint32_t *w, uint32_t *h, uint32_t *vt, uint64_t *pclk, uint32_t *ext) const {
 		if (const Prog *pm = progFind(mode)) {
-			*w = fWidth; *h = fHeight; *vt = pm->t.verticalActive + pm->t.verticalBlanking;
+			const bool sc = pm->t.horizontalScaled && pm->t.verticalScaled;   // a HiDPI timing: the plane scans out more
+			*w = sc ? pm->t.horizontalScaled : fWidth; *h = sc ? pm->t.verticalScaled : fHeight;
+			*vt = pm->t.verticalActive + pm->t.verticalBlanking;
 			*pclk = pm->t.pixelClock; *ext = pm->t.verticalBlankingExtension;
 			return true;
 		}
@@ -698,10 +714,17 @@ private:
 		if (fFlipLock) { IOSimpleLockLock(fFlipLock); b = fPend.on && (!ggtt || fPend.ggtt == ggtt); IOSimpleLockUnlock(fFlipLock); }
 		return b;
 	}
-	// Plane back to the firmware's surface (dispLock held). A no-op when it is already there.
+	// The home surface: the firmware's, or the HiDPI buffer while a mode larger than the panel is set
+	uint32_t homeGgtt() const { return fHomeBig ? kHomeGgtt : fSurf; }
+	IOPhysicalAddress homePhys() const { return fHomeBig ? fBarBase + (IOPhysicalAddress)fHomeDpa : fSurfPhys; }
+	IOMemoryMap *homeMap() const { return fHomeBig ? fHomeMap : fSurfMap; }
+	bool homeBigAlloc();
+	void homeBigFree();
+	void publishScalerInfo();
+	// Plane back to the home surface (dispLock held). A no-op when it is already there.
 	void homeLocked() {
-		if (fPipe < 0 || surfArmed() == fSurf) return;
-		wr(PLANE_SURF(fPipe), fSurf | (rd(PLANE_SURF(fPipe)) & 0xFFFu));
+		if (fPipe < 0 || surfArmed() == homeGgtt()) return;
+		wr(PLANE_SURF(fPipe), homeGgtt() | (rd(PLANE_SURF(fPipe)) & 0xFFFu));
 		push(3);
 		abortPend();
 	}
@@ -825,7 +848,11 @@ private:
 	void programMode(uint32_t w, uint32_t h) {
 		int p = fPipe;
 		uint32_t rb = (w * 4 + 63) & ~63u;
-		if (fSurfMap) { bzero((void *)fSurfMap->getVirtualAddress(), (size_t)rb * h); __asm__ __volatile__("sfence" ::: "memory"); l2Flush(); }
+		// a mode the firmware's surface cannot hold uses the HiDPI buffer (setDisplayMode allocated it, at most kHomeMax)
+		const bool big = (uint64_t)rb * h > (uint64_t)fRowBytes * fHeight;
+		if (big && (!fHomeBo || (uint64_t)rb * h > kHomeMax)) { FBLOG("mode %ux%u: no HiDPI home surface, not programmed", w, h); return; }
+		fHomeBig = big;
+		if (IOMemoryMap *hm = homeMap()) { bzero((void *)hm->getVirtualAddress(), (size_t)rb * h); __asm__ __volatile__("sfence" ::: "memory"); l2Flush(); }
 		wr(PLANE_STRIDE(p), rb / 64);
 		wr(PLANE_POS(p), 0);
 		wr(PLANE_SIZE(p), (h - 1) << 16 | (w - 1));
@@ -841,7 +868,7 @@ private:
 		}
 		wr(PLANE_CTL(p), rd(PLANE_CTL(p)));
 		// home: a stage 3 slot holds a frame of the old size (NMXAccel's next flip to one is refused on the size)
-		wr(PLANE_SURF(p), fSurf | (rd(PLANE_SURF(p)) & 0xFFFu));
+		wr(PLANE_SURF(p), homeGgtt() | (rd(PLANE_SURF(p)) & 0xFFFu));
 		push(6);
 		abortPend();
 		fModeW = w; fModeH = h; fModeRB = rb;
@@ -982,7 +1009,7 @@ public:
 	// by IntelXe.kext's copy engine ("intelxeVramRead", kernel rb7e; without it those pages read as 0). Slow, test only.
 	bool liveGeom(uint32_t *ggtt, uint32_t *w, uint32_t *h, uint32_t *rb) const {
 		if (!fModeW || !fModeH || fPipe < 0) return false;
-		*ggtt = fSurf; *w = fModeW; *h = fModeH; *rb = fModeRB;
+		*ggtt = homeGgtt(); *w = fModeW; *h = fModeH; *rb = fModeRB;
 		const uint32_t live = surfLive();
 		for (int i = 0; i < kSlots; i++)
 			if (fSlot[i].used && live == kSlotGgtt + (uint32_t)i * kSlotSpan) {
@@ -1085,7 +1112,7 @@ public:
 	bool fCrumbRead = false;
 	IODeviceMemory *getApertureRange(IOPixelAperture aperture) override {
 		if (aperture != kIOFBSystemAperture) return nullptr;
-		return IODeviceMemory::withRange(fSurfPhys, (IOPhysicalLength)fModeRB * fModeH);
+		return IODeviceMemory::withRange(homePhys(), (IOPhysicalLength)fModeRB * fModeH);   // never past the home surface
 	}
 	IODeviceMemory *getVRAMRange() override { return getApertureRange(kIOFBSystemAperture); }
 	const char *getPixelFormats() override { return IO32BitDirectPixels "\0"; }
@@ -1160,6 +1187,11 @@ public:
 		uint32_t w, h, vt, ext; uint64_t pclk;
 		if (depth != 0 || !modeLookup(mode, &w, &h, &vt, &pclk, &ext)) return kIOReturnUnsupported;
 		if (mode == fMode) return kIOReturnSuccess;
+		const uint64_t need = (uint64_t)((w * 4 + 63) & ~63u) * h;
+		if (need > (uint64_t)fRowBytes * fHeight && (need > kHomeMax || !homeBigAlloc())) {
+			FBLOG("mode 0x%x: %ux%u needs the HiDPI home surface, which is not available", (unsigned)mode, w, h);
+			return kIOReturnNoMemory;
+		}
 		dispLock();
 		// timings change with VRR off (Linux: intel_vrr_disable before an M/N or LRR update); applyVrrLocked decides after
 		if (fVrrOn && (pclk != fPclkCur || vt != fModeVT || ext != fVrrModeExt)) vrrDisableLocked("mode change");
@@ -1480,10 +1512,11 @@ public:
 		if (fn && fn->isEqualTo("nvScanoutInfo")) {
 			NVRMVramRequest *r = (NVRMVramRequest *)p1;
 			if (!r || r->version != 2) return kIOReturnBadArgument;
-			if (!fSurfMap) return kIOReturnNotReady;
+			IOMemoryMap *hm = homeMap();
+			if (!hm) return kIOReturnNotReady;
 			fScanouts++;   // asked once per copied frame
-			r->kva = (void *)fSurfMap->getVirtualAddress();
-			r->phys = fSurfPhys; r->actualSize = (unsigned long long)fModeRB * fModeH;
+			r->kva = (void *)hm->getVirtualAddress();
+			r->phys = homePhys(); r->actualSize = (unsigned long long)fModeRB * fModeH;
 			r->width = fModeW; r->height = fModeH; r->pitch = fModeRB;
 			return kIOReturnSuccess;
 		}
@@ -1764,14 +1797,14 @@ IOReturn IntelXeFramebuffer::scanout(NMXScanout *r)
 	case 2:     // flip
 	case 3: {   // home
 		dispLock();
-		uint32_t target = fSurf;
+		uint32_t target = homeGgtt();
 		if (r->op == 2) {
 			int i = slotOf(r->ggtt, r->gen);
 			if (i < 0 || fSlot[i].w != fModeW || fSlot[i].h != fModeH || fSlot[i].pitch != fModeRB) { dispUnlock(); return kIOReturnNotFound; }
 			target = r->ggtt;
 		}
 		if (pendOn(0)) { dispUnlock(); return kIOReturnBusy; }   // NMXAccel keeps one flip in flight
-		if (r->op == 3 && surfArmed() == fSurf && surfLive() == fSurf) { dispUnlock(); r->immediate = 1; return kIOReturnSuccess; }
+		if (r->op == 3 && surfArmed() == homeGgtt() && surfLive() == homeGgtt()) { dispUnlock(); r->immediate = 1; return kIOReturnSuccess; }
 		// Adaptive-Sync window for this frame (macOS "Variable" mode): no shorter than vmin + minExt (TRANS_VRR_FLIPLINE,
 		// the earliest decision line), no longer than vmin + maxExt (TRANS_VRR_VMAX), as Apple's Intel driver programs
 		// per transaction. Without one the mode's own window applies.
@@ -2650,6 +2683,24 @@ const char *IntelXeFramebuffer::progCheck(const IODetailedTimingInformationV2 &t
 	const uint32_t vt = t.verticalActive + t.verticalBlanking;
 	if (vt < fVT || vt > 8192) return "vertical total";
 	if (t.horizontalBorderLeft || t.horizontalBorderRight || t.verticalBorderTop || t.verticalBorderBottom) return "borders";
+	// HiDPI: a scaled timing shrinks a larger image to the panel with the plane scaler (the driver's own modes do the
+	// upscaled sizes). Linux's limits for display 14 on scaler 0 (skl_scaler.c): source at most 4096 wide, a scale
+	// factor below 3; and icl_plane_min_cdclk: the pixel rate times the horizontal factor (its fraction doubled, 2 pixels
+	// per clock, intel_plane.c hscale_cdclk) times the vertical one, halved, may not exceed the display clock.
+	if (t.horizontalScaled || t.verticalScaled) {
+		const uint32_t sw = t.horizontalScaled, sh = t.verticalScaled;
+		if (sw != t.horizontalActive || sh != t.verticalActive) {
+			if (!fScalerPublished || fHomeOwned < 0) return "no HiDPI home surface";
+			if (!sw || !sh || sw < t.horizontalActive || sh < t.verticalActive) return "upscaled timing";
+			if (t.horizontalScaledInset || t.verticalScaledInset || t.scalerFlags) return "scaler inset or flags";
+			if (sw > kScalerMaxW || (uint64_t)((sw * 4 + 63) & ~63u) * sh > kHomeMax) return "scaled size above the scaler's";
+			const uint32_t hs = (uint32_t)(((uint64_t)sw << 16) / t.horizontalActive), vs = (uint32_t)(((uint64_t)sh << 16) / t.verticalActive);
+			if (hs >= 0x30000 || vs >= 0x30000) return "downscale of 3 or more";
+			const uint64_t hsc = (hs & ~0xFFFFu) + 2ull * (hs & 0xFFFFu);
+			const uint64_t rateK = ((t.pixelClock / 1000) * hsc * vs + (1ull << 32) - 1) >> 32;
+			if (!fCdclkKhz || (rateK + 1) / 2 > fCdclkKhz) return "display clock (pixel rate after the downscale)";
+		}
+	}
 	if (t.signalConfig & kIOInterlacedCEATiming) return "interlaced";
 	if (t.dynamicRange & ~(uint32_t)kIORangeDynamicRangeSDR) return "HDR";
 	// the link was trained for the firmware's pixel clock: anything up to it is an M/N change on the same link
@@ -2662,6 +2713,60 @@ const char *IntelXeFramebuffer::progCheck(const IODetailedTimingInformationV2 &t
 		if (vt + t.verticalBlankingExtension > longest + 2 || vt + t.verticalBlankingExtension > 0xFFFFF) return "blanking extension";
 	}
 	return nullptr;
+}
+
+// IOFBScalerInfo: CoreDisplay installs scaled timings (the HiDPI modes of a display override's scale-resolutions) only
+// with it (IOGraphicsLib IOFBInstallScaledModes, IOFBInstallScaledResolution). Downscaling only, up to the scaler's
+// source limit and the home surface; the upscaled sizes are the driver's own modes.
+void IntelXeFramebuffer::publishScalerInfo()
+{
+	fScalerPublished = false;
+	if (!gHidpi) { removeProperty(kIOFBScalerInfoKey); return; }   // opt-in: intelxefb-hidpi=1
+	if (!fScaling || fHomeOwned < 0 || !fCdclkKhz) { removeProperty(kIOFBScalerInfoKey); FBLOG("scaler: no HiDPI modes (scaling %d, home %d, cdclk %u)", (int)fScaling, fHomeOwned, fCdclkKhz); return; }
+	IODisplayScalerInformation si; bzero(&si, sizeof si);
+	si.scalerFeatures = kIOScaleCanDownSamplePixels;
+	si.maxHorizontalPixels = kScalerMaxW; si.maxVerticalPixels = kScalerMaxH;
+	if (OSData *d = OSData::withBytes(&si, sizeof si)) { setProperty(kIOFBScalerInfoKey, d); d->release(); fScalerPublished = true; }
+	FBLOG("scaler: IOFBScalerInfo published (downscale, up to %ux%u)", kScalerMaxW, kScalerMaxH);
+}
+
+// The HiDPI home surface: a zeroed display buffer from IntelXe.kext inside the BAR2 window, mapped write-combined and at
+// kHomeGgtt. Kept once allocated (the plane may still scan it until the next vblank after a mode change); freed at stop.
+bool IntelXeFramebuffer::homeBigAlloc()
+{
+	if (fHomeBo) return true;
+	if (fHomeOwned < 0) return false;
+	IOService *b = intelxe();
+	const OSSymbol *sym = OSSymbol::withCString("intelxeDispVramAlloc");
+	struct { uint32_t version, flags; uint64_t size, dpa; void *cookie; } r = { 1, 1, kHomeMax, 0, nullptr };   // IntelXeDispVram, zeroed
+	const IOReturn rr = (b && sym) ? b->callPlatformFunction(sym, false, &r, nullptr, nullptr, nullptr) : kIOReturnUnsupported;
+	if (sym) sym->release();
+	if (rr != kIOReturnSuccess || !r.cookie) { FBLOG("hidpi: no display buffer from IntelXe.kext (0x%x)", (unsigned)rr); return false; }
+	IOMemoryMap *m = nullptr;
+	if ((r.dpa & 0xFFF) == 0 && r.dpa + kHomeMax <= fBarLen)
+		if (IODeviceMemory *d = IODeviceMemory::withRange(fBarBase + (IOPhysicalAddress)r.dpa, kHomeMax)) { m = d->map(kIOMapWriteCombineCache); d->release(); }
+	if (!m) {
+		FBLOG("hidpi: display buffer at VRAM 0x%llx not mappable through BAR2 -- returned", r.dpa);
+		if (const OSSymbol *f = OSSymbol::withCString("intelxeDispVramFree")) { b->callPlatformFunction(f, false, r.cookie, nullptr, nullptr, nullptr); f->release(); }
+		return false;
+	}
+	for (uint32_t off = 0; off < kHomeMax; off += 0x1000) pteW(kHomeGgtt + off, (r.dpa + off) | fPteFlags);
+	(void)pte(kHomeGgtt + kHomeMax - 0x1000);
+	fHomeBo = r.cookie; fHomeDpa = r.dpa; fHomeMap = m;
+	FBLOG("hidpi: home surface %u KB at GGTT 0x%x -> VRAM 0x%llx", kHomeMax >> 10, kHomeGgtt, r.dpa);
+	return true;
+}
+
+// At stop, after the plane went back to the firmware's surface: GGTT window cleared, the buffer returned.
+void IntelXeFramebuffer::homeBigFree()
+{
+	if (!fHomeBo) return;
+	fHomeBig = false;
+	for (uint32_t off = 0; off < kHomeMax; off += 0x1000) pteW(kHomeGgtt + off, 0);
+	OSSafeReleaseNULL(fHomeMap);
+	if (IOService *b = intelxe())
+		if (const OSSymbol *f = OSSymbol::withCString("intelxeDispVramFree")) { b->callPlatformFunction(f, false, fHomeBo, nullptr, nullptr, nullptr); f->release(); }
+	fHomeBo = nullptr; fHomeDpa = 0;
 }
 
 IOReturn IntelXeFramebuffer::validateDetailedTiming(void *description, IOByteCount size)
@@ -2891,13 +2996,53 @@ void IntelXeFramebuffer::vrrModesInit()
 			changed = true;
 			FBLOG("edid: firmware timing %ux%u at %u0 kHz as a DisplayID extension (block %u) for CoreDisplay", fWidth, fHeight, want, fEdidLen / 128);
 		}
+		// HiDPI (opt-in): the downscale multiplies the pipe's pixel rate, and the display clock caps it (progCheck), so the
+		// firmware's 165/180 Hz timings take no HiDPI mode. CoreDisplay derives scaled timings only from the EDID's, so
+		// the firmware's raster at lower pixel clocks (100, 75, 60 Hz: the same totals, M/N only) goes in as one more
+		// DisplayID extension of Type I timings. Without intelxefb-hidpi nothing here changes.
+		uint32_t lowestHz = 0;
+		if (gHidpi && fEdidOutLen + 128 <= kEdidMax && fEdidOutLen >= 128) {
+			static const uint32_t kLowHz[] = { 100, 75, 60 };
+			const uint32_t ddi = rd(TRANS_DDI_FUNC_CTL(fPipe));
+			uint8_t *x = fEdidOut + fEdidOutLen;
+			bzero(x, 128);
+			uint32_t nd = 0;
+			auto w16 = [](uint8_t *q, uint32_t v) { q[0] = (uint8_t)v; q[1] = (uint8_t)(v >> 8); };
+			for (uint32_t hz : kLowHz) {
+				const uint64_t lowPc = (uint64_t)fHT * fVT * hz;
+				if (lowPc >= fPclk || lowPc < fPclk / 8) continue;
+				const uint32_t c = (uint32_t)((lowPc + 5000) / 10000) - 1;
+				uint8_t *dsc = x + 8 + nd * 20;
+				dsc[0] = (uint8_t)c; dsc[1] = (uint8_t)(c >> 8); dsc[2] = (uint8_t)(c >> 16);
+				dsc[3] = 0x04;   // 16:9, not preferred
+				w16(dsc + 4, fWidth - 1); w16(dsc + 6, fHT - fWidth - 1);
+				w16(dsc + 8, (fHSS - fWidth - 1) | (((ddi >> 16) & 1) << 15)); w16(dsc + 10, fHSE - fHSS - 1);
+				w16(dsc + 12, fHeight - 1); w16(dsc + 14, fVT - fHeight - 1);
+				w16(dsc + 16, (fVSS - fHeight - 1) | (((ddi >> 17) & 1) << 15)); w16(dsc + 18, fVSE - fVSS - 1);
+				nd++; lowestHz = hz;
+			}
+			if (nd) {
+				const uint32_t payload = 3 + 20 * nd;
+				x[0] = 0x70; x[1] = 0x13; x[2] = (uint8_t)payload; x[3] = 0x00; x[4] = 0;
+				x[5] = 0x03; x[6] = 0x00; x[7] = (uint8_t)(20 * nd);
+				uint8_t sum = 0;
+				for (uint32_t i = 1; i < 5 + payload; i++) sum = (uint8_t)(sum + x[i]);
+				x[5 + payload] = (uint8_t)(0x100 - sum);
+				edidSum(x);
+				fEdidOutLen += 128;
+				fEdidOut[126] = (uint8_t)(fEdidOutLen / 128 - 1);
+				changed = true;
+				FBLOG("edid: HiDPI: %u lower-clock timings on the firmware's raster (down to %u Hz) as a DisplayID extension", nd, lowestHz);
+			}
+		}
 		// the range limits descriptor (tag 0xFD) in the base block must take the firmware's line and frame rates
 		for (int o = 54; o <= 108; o += 18) {
 			uint8_t *d = fEdidOut + o;
 			if (d[0] || d[1] || d[2] || d[3] != 0xFD) continue;
 			const uint32_t lineK = (uint32_t)(fPclk / fHT / 1000), lineTopK = (uint32_t)(fPclkMax / fHT / 1000);   // kHz, rounded down
 			uint32_t minH = d[7] + ((d[4] & 0x04) ? 255 : 0), maxH = d[8] + ((d[4] & 0x08) ? 255 : 0);
-			const uint32_t want0 = lineK > 1 ? lineK - 1 : lineK, want1 = lineTopK + 2;
+			const uint32_t lineLowK = lowestHz ? fVT * lowestHz / 1000 : lineK;   // the HiDPI timings' lowest line rate
+			const uint32_t want0 = lineLowK > 1 ? lineLowK - 1 : lineLowK, want1 = lineTopK + 2;
 			if (minH > want0 || maxH < want1) {
 				if (minH > want0) minH = want0;
 				if (maxH < want1) maxH = want1;
@@ -3012,6 +3157,7 @@ void IntelXeFramebuffer::rewritePtes()
 	for (uint64_t off = 0; off < len; off += 0x1000) pteW(fSurf + (uint32_t)off, (fDpa + off) | fPteFlags);
 	for (int i = 0; i < kSlots; i++) if (fSlot[i].used) slotPtes(fSlot[i], kSlotGgtt + (uint32_t)i * kSlotSpan);
 	if (fCurReady) for (uint32_t off = 0; off < kCurBytes; off += 0x1000) pteW(kCurGgtt + off, (fCurDpa + off) | fPteFlags);
+	if (fHomeBo) for (uint32_t off = 0; off < kHomeMax; off += 0x1000) pteW(kHomeGgtt + off, (fHomeDpa + off) | fPteFlags);
 	(void)pte(fSurf);
 }
 
@@ -3366,6 +3512,27 @@ bool IntelXeFramebuffer::start(IOService *provider)
 	fSlotsOk = fSlotsOwned >= 0;
 	fCurOwned = ggttReserve(kCurGgtt, kCurBytes, "the cursor");
 	if (fCurOwned < 0) fCurAllowed = false;
+	fHomeOwned = ggttReserve(kHomeGgtt, kHomeMax, "the HiDPI home surface");
+	{
+		// CDCLK_CTL bits 10:0, the CD frequency decimal: (MHz - 1) x 2 in u10.1 (intel_cdclk.c bxt_set_cdclk)
+		const uint32_t cd = rd(0x46000) & 0x7FF;
+		fCdclkKhz = cd ? (cd + 2) * 500 : 0;
+		FBLOG("cdclk: %u kHz (CDCLK_CTL 0x%x)", fCdclkKhz, cd);
+	}
+	{
+		int v = 0;
+		if (intelxeBootArg("IntelXeFB", "intelxefb_hidpi", &v, sizeof v)) gHidpi = v;
+		if (IORegistryEntry *opt = IORegistryEntry::fromPath("/options", gIODTPlane)) {
+			if (OSObject *o = opt->copyProperty("intelxefb-hidpi")) {
+				OSData *d = OSDynamicCast(OSData, o); OSString *str = OSDynamicCast(OSString, o);
+				const char c = d && d->getLength() ? *(const char *)d->getBytesNoCopy() : str && str->getLength() ? str->getCStringNoCopy()[0] : '0';
+				gHidpi = c == '1';
+				o->release();
+			}
+			opt->release();
+		}
+	}
+	publishScalerInfo();
 	cursorInit();
 	{
 		// macOS Adaptive-Sync modes, on unless boot-arg intelxefb_vrrmodes=0 or NVRAM intelxefb-vrr-modes=0 (the EDID change needs it at start)
@@ -3514,9 +3681,11 @@ void IntelXeFramebuffer::stop(IOService *provider)
 	blank(false);   // unloading must not leave the panel dark
 	if (fRegs && fPipe >= 0) {   // stage 3: back to the firmware's surface, then the slots go
 		dispLock();
+		if (fHomeBig) programMode(fWidth, fHeight);   // the panel's layout on the firmware's surface again
 		homeLocked();
 		dispUnlock();
 		for (int t = 0; t < 100 && surfLive() != fSurf; t++) IOSleep(1);
+		homeBigFree();
 		dispLock();
 		for (int i = 0; i < kSlots; i++) if (fSlot[i].used) slotClearLocked(i);
 		dispUnlock();
