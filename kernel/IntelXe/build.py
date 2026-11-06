@@ -122,4 +122,7 @@ def main():
   kext('IntelXeFB','io.github.yusufklncc.IntelXeFB',[FBDIR/'IntelXeFB.cpp',FBDIR/'IntelXeLink.cpp',FBDIR/'IntelXeEdid.cpp'],fblibs,
    dict(IOProbeScore=60000,IOMatchCategory='IOFramebuffer',IOPropertyMatch=dict(IntelXeReady=True)),ioclass='IntelXeFramebuffer',
    opt=['-O0'] if a.debug else ['-O2','-Wframe-larger-than=3072'])
+  # /Library/Extensions: install.sh refuses an unsigned binary, so the kext is signed ad hoc here (IntelXe.kext stays
+  # unsigned: OpenCore injects it)
+  run(['codesign','-f','-s','-',out/'IntelXeFB.kext'])
 if __name__=='__main__':main()

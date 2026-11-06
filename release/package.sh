@@ -49,6 +49,14 @@ zipdir() { # zipdir PARENT NAME: NAME.zip with Unix modes, no resource forks, no
     (cd "$1" && ditto -c -k --norsrc --noextattr --noacl --keepParent "$2" "$OUT/$2.zip")
 }
 
+# every Mach-O that install.sh or ssv-install.sh copies must carry a valid signature (install.sh refuses it otherwise;
+# 0.1.2 was first uploaded with an unsigned IntelXeFB, which the flow test, run without the real checks, did not see)
+for src in "$T" "$S"; do
+    while IFS= read -r f; do
+        if file -b "$f" | grep -q Mach-O && ! codesign -v "$f" 2>/dev/null; then echo "not signed: ${f#$src/}"; exit 1; fi
+    done < <(find "$src/Library" "$src/system-volume" "$src/sigcheck" -type f)
+done
+
 W=$(mktemp -d -t ixepkg)
 trap 'rm -rf "$W"' EXIT
 for c in tahoe sequoia; do
