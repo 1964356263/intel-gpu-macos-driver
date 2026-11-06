@@ -22,7 +22,10 @@ static inline NSMutableData *nvmtl_fc_storage(NSUInteger count) {
     void *_hostPtr; size_t _hostLen; id _hostDealloc;
     NVMTLHeap *_subHeap; NSUInteger _subCharge; BOOL _aliased;
     nvk_buffer _shadow; int _syncOut; int _zshadow;
-    NSUInteger _dirtyLo, _dirtyHi; } @end
+    NSUInteger _dirtyLo, _dirtyHi;
+    uint32_t _gpuUse, _gpuUseSynced;   /* command buffers that took it, and that count at its last synchronizeResource */
+    uint8_t _gpuSynced;   /* synchronizeResource copied it at least once */
+    uint64_t _syncEpoch;   /* the resource set of the command buffer that last synchronized it, until it binds it again */ } @end
 #include <sched.h>
 static inline void nvmtl_buf_settle(NVMTLBuffer *b) {
     if (!__atomic_load_n(&b->_zshadow, __ATOMIC_ACQUIRE)) return;

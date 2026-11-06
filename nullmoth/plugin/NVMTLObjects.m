@@ -174,9 +174,11 @@ static Class gNVMTLTexClass;
 NVMTL_G4_SWITCH(nvmtl_resref_borrow_on, "NVMTL_RESREF_BORROW", "resource-set residency counts through borrowed references (no ARC pair per new member)")
 static void nvmtl_resref_prod7(id o, int d);
 static inline void nvmtl_resref(__unsafe_unretained id o, int d) {
-    if (!nvmtl_resref_borrow_on()) { nvmtl_resref_prod7(o, d); return; }
     static Class BC, TC; static dispatch_once_t once;
     dispatch_once(&once, ^{ BC = [NVMTLBuffer class]; TC = [NVMTLTexture class]; });
+    // a command buffer took a buffer (any binding path ends here): synchronizeResource skips a buffer none took since its last one
+    if (d > 0 && object_getClass(o) == BC) { __unsafe_unretained NVMTLBuffer *ub = o; __atomic_add_fetch(&ub->_gpuUse, 1, __ATOMIC_RELAXED); }
+    if (!nvmtl_resref_borrow_on()) { nvmtl_resref_prod7(o, d); return; }
     if (object_getClass(o) == BC) {
         __unsafe_unretained NVMTLBuffer *b = o;
         const int v = __atomic_add_fetch(&b->_resRefs, d, __ATOMIC_ACQ_REL);
@@ -230,6 +232,14 @@ static uint64_t nvmtl_resset_next_epoch(void) { return atomic_fetch_add(&gResSet
 static _Atomic unsigned gResSetHint;
 static NSUInteger nvmtl_resset_hint(void) { return atomic_load_explicit(&gResSetHint, memory_order_relaxed); }
 static void nvmtl_resset_note(NSUInteger n) { if (n > 65536) n = 65536; atomic_store_explicit(&gResSetHint, (unsigned)n, memory_order_relaxed); }
+/* A command buffer binds a buffer its own synchronizeResource made a member: the set has it already, so no new reference
+   is counted, yet a command after the copy may write it. That bind counts as a use (synchronizeResource then copies again). */
+static inline void nvmtl_sync_touch(__unsafe_unretained id o, uint64_t epoch) {
+    static Class BC; if (!BC) BC = [NVMTLBuffer class];
+    if (object_getClass(o) != BC) return;
+    __unsafe_unretained NVMTLBuffer *b = o;
+    if (__atomic_load_n(&b->_syncEpoch, __ATOMIC_ACQUIRE) == epoch) { __atomic_store_n(&b->_syncEpoch, 0, __ATOMIC_RELEASE); __atomic_add_fetch(&b->_gpuUse, 1, __ATOMIC_RELAXED); }
+}
 @implementation NVMTLResSet
 - (instancetype)init { if ((self = [super init])) { const NSUInteger h = nvmtl_resset_hint();
     _s = nvmtl_identity_set(h); _epoch = nvmtl_resset_next_epoch(); } return self; }
@@ -240,14 +250,14 @@ static void nvmtl_resset_note(NSUInteger n) { if (n > 65536) n = 65536; atomic_s
 // is only tested for nil (_s keeps it): no retain of o at entry, no retain of the answer. Off: prod7's body, strong o.
 static void nvmtl_resset_add_prod7(__unsafe_unretained NVMTLResSet *s, id o, uint64_t *tag) { os_unfair_lock_lock(&s->_lk);
     id member = [s->_s member:o]; BOOL had = member != nil;
-    if (!had) [s->_s addObject:o];
+    if (!had) [s->_s addObject:o]; else nvmtl_sync_touch(o, s->_epoch);
     __atomic_store_n(tag, s->_epoch, __ATOMIC_RELEASE);
     os_unfair_lock_unlock(&s->_lk); if (!had) nvmtl_resref(o, 1); }
 - (void)nvmtlAdd:(__unsafe_unretained id)o tag:(uint64_t *)tag { if (!o) return;
     if (!nvmtl_resref_borrow_on()) { nvmtl_resset_add_prod7(self, o, tag); return; }
     os_unfair_lock_lock(&_lk);
     __unsafe_unretained id m = [_s member:o]; const BOOL had = m != nil;
-    if (!had) [_s addObject:o];
+    if (!had) [_s addObject:o]; else nvmtl_sync_touch(o, _epoch);
     __atomic_store_n(tag, _epoch, __ATOMIC_RELEASE);
     os_unfair_lock_unlock(&_lk); if (!had) nvmtl_resref(o, 1); }
 // 10-07 (a user's crash report, RTX 5060 Ti): Hackintool died in -[__NSSetM member:] under -addObject:, called
@@ -264,9 +274,9 @@ static void nvmtl_resset_add_prod7(__unsafe_unretained NVMTLResSet *s, id o, uin
 // while it is listed). Encoders add the same few buffers, pipelines and samplers draw after draw (Apple's GL rebinds its
 // vertex, index and uniform buffers for every draw), and a hit skips the set's hash lookup.
 - (void)addObject:(id)o { if (!o) return; const void *p = (__bridge const void *)o; os_unfair_lock_lock(&_lk);
-    for (unsigned k = 0; k < 8; k++) if (_mru[k] == p) { os_unfair_lock_unlock(&_lk); return; }
+    for (unsigned k = 0; k < 8; k++) if (_mru[k] == p) { nvmtl_sync_touch(o, _epoch); os_unfair_lock_unlock(&_lk); return; }
     id member = [_s member:o]; BOOL had = member != nil;
-    if (!had) { [_s addObject:o]; member = o; }
+    if (!had) { [_s addObject:o]; member = o; } else nvmtl_sync_touch(o, _epoch);
     // An equal object need not be the object retained by NSMutableSet. Cache only the retained member's address.
     _mru[_mruNext++ & 7] = (__bridge const void *)member;
     os_unfair_lock_unlock(&_lk); if (!had) nvmtl_resref(o, 1); }
@@ -6130,14 +6140,40 @@ destinationBytesPerImage:(NSUInteger)img options:(MTLBlitOption)opt {
 - (void)insertDebugSignpost:(NSString *)s {}
 - (void)synchronizeResource:(id<MTLResource>)r {
     if (!r) return;
+    const uint32_t use0 = [(id)r isKindOfClass:[NVMTLBuffer class]] ? __atomic_load_n(&((NVMTLBuffer *)r)->_gpuUse, __ATOMIC_RELAXED) : 0;
     if (!_cb->_resources) _cb->_resources = [NVMTLResSet new];
     [_cb->_resources addObject:r];
     if ([(id)r isKindOfClass:[NVMTLBuffer class]] && ((NVMTLBuffer *)r)->_shadow.map) {
         NVMTLBuffer *b = (NVMTLBuffer *)r;
-        __atomic_store_n(&b->_zshadow, 0, __ATOMIC_RELEASE);
-        if (nvmtl_vk_cmd_copy_buffer(&_cb->_c, &b->_b, 0, &b->_shadow, 0, b->_b.size))
-            [_cb nvmtlRecordEncodingError:[NSError errorWithDomain:MTLCommandBufferErrorDomain code:MTLCommandBufferErrorInternal
-                userInfo:@{NSLocalizedDescriptionKey:@"Cannot encode managed buffer synchronization"}]];
+        // Metal copies the whole buffer back. A buffer no command buffer took since its last synchronizeResource cannot hold
+        // newer GPU bytes than that copy brought back (a CPU write since was uploaded from the shadow, so both agree): the
+        // copy is skipped. Not for a buffer in a heap (useHeap: reaches it without taking it), nor before its first copy,
+        // nor while its shadow is still owed its zero fill. Geekbench 7 Metal: 40% of the 22 GB it synchronizes in a run.
+        // NVMTL_SYNC_SKIP=0: always copy.
+        static int skipOn = -1;
+        if (skipOn < 0) { const char *e = getenv("NVMTL_SYNC_SKIP"); skipOn = !(e && e[0] == '0'); nvlog("synchronizeResource: unchanged managed buffers %s (NVMTL_SYNC_SKIP=%s)", skipOn ? "are not copied again" : "are copied every time", e ? e : "unset"); }
+        const BOOL unchanged = skipOn && b->_gpuSynced && use0 == b->_gpuUseSynced && !b->_heap && !b->_subHeap && !b->_aliased &&
+                               !__atomic_load_n(&b->_zshadow, __ATOMIC_ACQUIRE);
+        b->_gpuUseSynced = __atomic_load_n(&b->_gpuUse, __ATOMIC_RELAXED);
+        // later binds in this command buffer find it a member: untag it so the next one takes the set's path and counts
+        if (object_getClass(_cb->_resources) == [NVMTLResSet class]) {
+            __unsafe_unretained NVMTLResSet *rs = (NVMTLResSet *)_cb->_resources;
+            os_unfair_lock_lock(&rs->_lk);
+            __atomic_store_n(&b->_syncEpoch, rs->_epoch, __ATOMIC_RELEASE); __atomic_store_n(&b->_rsTag, 0, __ATOMIC_RELEASE);
+            for (unsigned q = 0; q < 8; q++) if (rs->_mru[q] == (__bridge const void *)b) rs->_mru[q] = NULL;
+            os_unfair_lock_unlock(&rs->_lk);
+        } else b->_gpuUseSynced--;   // (never today) no way to see later binds: the next synchronizeResource copies
+        static _Atomic unsigned long long nSync, nSkip, bSkip;
+        const unsigned long long k = atomic_fetch_add(&nSync, 1) + 1;
+        if (unchanged) { atomic_fetch_add(&nSkip, 1); atomic_fetch_add(&bSkip, b->_b.size); }
+        if ((k & 4095) == 0) nvlog("synchronizeResource: %llu managed buffer syncs, %llu skipped as unchanged (%llu MB not copied)", k, atomic_load(&nSkip), atomic_load(&bSkip) >> 20);
+        if (!unchanged) {
+            __atomic_store_n(&b->_zshadow, 0, __ATOMIC_RELEASE);
+            b->_gpuSynced = 1;
+            if (nvmtl_vk_cmd_copy_buffer(&_cb->_c, &b->_b, 0, &b->_shadow, 0, b->_b.size))
+                [_cb nvmtlRecordEncodingError:[NSError errorWithDomain:MTLCommandBufferErrorDomain code:MTLCommandBufferErrorInternal
+                    userInfo:@{NSLocalizedDescriptionKey:@"Cannot encode managed buffer synchronization"}]];
+        }
     }
     if ([(id)r isKindOfClass:[NVMTLTexture class]]) {
         NVMTLTexture *t = (NVMTLTexture *)r;
