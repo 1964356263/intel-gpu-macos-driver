@@ -83,7 +83,9 @@ To build everything yourself, see [Building from source](#building-from-source).
   needs it and puts background processes' buffers in system memory; many GPU-heavy apps at once can still fill it.
 - Without the system-volume copy Safari runs on macOS's software path, where some elements with CSS colour filters
   are not drawn (a CoreGraphics problem without a Metal device; the install guide has the workaround).
-- The first seconds after the first login stutter while shaders are translated for the first time.
+- The first seconds after login are still less smooth than later. 0.1.3 halved WindowServer's work there (it kept no
+  compiled shaders before: Mesa turned its disk cache off in WindowServer); the first login after an install compiles
+  them once.
 - After a restart, the login screen shows a light grey band behind "Your password is required to log in".
 - Command-line tools whose first Metal use is a VideoToolbox encode (ffmpeg) do not see our encoders in their first
   session; apps that bring Metal up first (OBS, QuickTime, HandBrake) do.

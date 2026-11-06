@@ -14,7 +14,8 @@ OpenGL'i Mesa'nın zink'iyle çalıştırabilir (`-zink-gl.zip`, aşağıda "İs
 
 Bilinen sorunlar:
 
-- İlk girişten sonraki ilk saniyelerde, shader'lar çevrilirken takılmalar oluyor.
+- Girişten sonraki ilk saniyeler sonrasına göre daha az akıcı (0.1.3'ten beri daha az: WindowServer derlenmiş
+  shader'larını saklıyor; kurulumdan sonraki ilk giriş onları bir kez derliyor).
 - Yeniden başlatmadan sonra giriş ekranında açık gri bir bant görünüyor.
 - Metal'i VideoToolbox kodlamasıyla başlatan ffmpeg benzeri araçlar, ilk oturumlarında kodlayıcılarımızı görmüyor.
 - Kartın 12 GB belleğinin yalnızca 1 GB'ını işlemci görebiliyor (macOS sınırı, 2. aşama 1. madde). Sürücü bu pencereyi
@@ -324,11 +325,13 @@ de modları kapatır (anahtar NVRAM değişkenidir).
 
 ## Yükseltme
 
-**0.1.2'den:** Yalnızca `IntelXeFB.kext`, `NMXAGDC.kext` ve video çözücü yeni (firmware'inkinden yüksek tazeleme
-hızları, varsayılan olarak açık Adaptive-Sync modları, isteğe bağlı HiDPI modları, tam aralıklı videonun tam aralıklı
-çözülmesi). Paketi kurun (uygulamada *v@VER@ sürümünü indir*, sonra
-*Bu paketi kur*; ya da `sudo ./install.sh --apply`) ve yeniden başlatın. EFI'deki `IntelXe.kext`, Metal sürücüsü ve
-sistem diski kopyası 0.1.2'ninkiler; oldukları gibi kalırlar.
+**0.1.2'den:** `IntelXeFB.kext`, `NMXAGDC.kext`, video çözücü ve Mesa'nın Vulkan sürücüsü yeni (firmware'inkinden
+yüksek tazeleme hızları, varsayılan olarak açık Adaptive-Sync modları, isteğe bağlı HiDPI modları, tam aralıklı videonun
+tam aralıklı çözülmesi, WindowServer'ın derlenmiş shader'larını saklaması). Paketi kurun (uygulamada *v@VER@ sürümünü
+indir*, sonra *Bu paketi kur*; ya da `sudo ./install.sh --apply`) ve yeniden başlatın. EFI'deki `IntelXe.kext` ve Metal
+eklentisi 0.1.2'ninkiler; oldukları gibi kalırlar. Sistem diski kopyasını kurduysanız (3.3) bu paketinkini de kurun
+(`sudo ./system-volume/ssv-install.sh --apply`), sonra `install.sh --apply`'ın, kopya eski Mesa'yı taşıdığı için
+oluşturduğu `/Library/GPUBundles/NVMTLDriver.use-library` dosyasını silin (`sudo rm ...`) ve yeniden başlatın.
 
 **0.1.0 ya da 0.1.1'den:** Bütün kext'ler, Metal sürücüsü ve video kütüphaneleri yeni, **EFI'deki `IntelXe.kext` de**
 (bir güvenlik açığını kapatıyor: yetkisiz bir süreç yalnızca okuyabileceği sayfalara yazılabilir GPU eşlemesi

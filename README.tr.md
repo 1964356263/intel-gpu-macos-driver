@@ -86,7 +86,9 @@ Her şeyi kendiniz derlemek isterseniz: [Kaynaktan derleme](#kaynaktan-derleme).
   yoğun kullanan çok sayıda uygulama aynı anda pencereyi doldurabilir.
 - Sistem diski kopyası olmadan Safari macOS'un yazılımsal yolunda çalışıyor; orada CSS renk filtresi olan bazı öğeler
   çizilmiyor (Metal aygıtı yokken CoreGraphics'te görülen bir sorun; geçici çözümü kurulum rehberinde).
-- İlk girişten sonraki ilk saniyelerde, shader'lar ilk kez çevrilirken takılmalar oluyor.
+- Girişten sonraki ilk saniyeler sonrasına göre daha az akıcı. 0.1.3 WindowServer'ın oradaki işini yarıya indirdi
+  (önceden derlenmiş shader'ları saklamıyordu: Mesa, WindowServer'da disk önbelleğini kapatıyordu); kurulumdan sonraki
+  ilk giriş onları bir kez derliyor.
 - Yeniden başlattıktan sonra giriş ekranında, "Your password is required to log in" yazısının arkasında açık gri bir
   şerit görünüyor.
 - Metal'i ilk kez bir VideoToolbox kodlamasıyla açan komut satırı araçları (ffmpeg gibi) ilk oturumda kodlayıcılarımızı

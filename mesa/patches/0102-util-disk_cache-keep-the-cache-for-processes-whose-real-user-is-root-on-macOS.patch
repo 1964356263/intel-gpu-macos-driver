@@ -18,7 +18,7 @@ after login 17.6 s -> 9.2 s, shader compiles in those 30 s 265 -> 6. The login w
 out: WindowServer compiled while loginwindow waited for the display reconfiguration (8 s once), and when the
 transition gave up before a scaled HiDPI mode was set, the login screen stayed in a corner of the panel.
 
-Applies on top of intelxe.diff (or patches/0101). Not in a release yet.
+Applies on top of intelxe.diff (or patches/0101). In 0.1.3.
 ---
 diff --git a/src/util/disk_cache_os.c b/src/util/disk_cache_os.c
 index 15b6a819b68..d14cda9ace2 100644
