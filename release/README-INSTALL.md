@@ -1,4 +1,4 @@
-# intel-gpu-macos-driver 0.1.2 for macOS 26 Tahoe (Intel Arc B580)
+# intel-gpu-macos-driver 0.1.3 for macOS 26 Tahoe (Intel Arc B580)
 
 [Türkçe](README-INSTALL.tr.md)
 
@@ -23,14 +23,14 @@ Already running an earlier build of this driver? Go to [Upgrading](#upgrading-fr
 - A PC that OpenCore can boot macOS on (Intel CPU, x86_64), with the Arc B580 and **one monitor on the B580's
   DisplayPort**. An integrated GPU is not needed: on the test machine macOS was installed on the B580 alone.
 - Any computer with Windows, Linux or macOS to prepare the USB stick and edit the EFI. You do not need a Mac.
-- Files from the [release page](https://github.com/yusufklncc/intel-gpu-macos-driver/releases/tag/v0.1.2):
+- Files from the [release page](https://github.com/yusufklncc/intel-gpu-macos-driver/releases/tag/v0.1.3):
 
   | File | What | Unpack it on |
   |---|---|---|
-  | `intel-gpu-macos-driver-0.1.2-efi.zip` | the OpenCore pieces: `IntelXe.kext`, `SSDT-ARCOFF.aml` and its source; `IntelXe-EFI.ps1`, which makes stages 2 and 4 on Windows | any system |
-  | `IntelXe-Manager-0.1.2.zip` | the IntelXe Manager app: stages 3 and 4 (and later updates) with buttons instead of Terminal; it downloads the next file itself | macOS on the PC |
-  | `intel-gpu-macos-driver-0.1.2-tahoe.zip` | everything else, with `install.sh` and `efi.sh` | **macOS on the PC** (stage 3) |
-  | `intel-gpu-macos-driver-0.1.2-zink-gl.zip` | optional: OpenGL through zink for LWJGL games | macOS on the PC, after stage 4 |
+  | `intel-gpu-macos-driver-0.1.3-efi.zip` | the OpenCore pieces: `IntelXe.kext`, `SSDT-ARCOFF.aml` and its source; `IntelXe-EFI.ps1`, which makes stages 2 and 4 on Windows | any system |
+  | `IntelXe-Manager-0.1.3.zip` | the IntelXe Manager app: stages 3 and 4 (and later updates) with buttons instead of Terminal; it downloads the next file itself | macOS on the PC |
+  | `intel-gpu-macos-driver-0.1.3-tahoe.zip` | everything else, with `install.sh` and `efi.sh` | **macOS on the PC** (stage 3) |
+  | `intel-gpu-macos-driver-0.1.3-zink-gl.zip` | optional: OpenGL through zink for LWJGL games | macOS on the PC, after stage 4 |
 
   Unpack the macOS files on macOS only: Windows and most Linux unzip tools drop the executable bits and the code
   signatures that the installer checks. The `.sha256` file on the release page lists their checksums.
@@ -125,13 +125,13 @@ Reboot into macOS. The screen still runs on the firmware output.
 The app does stages 3 and 4 on the PC with buttons and shows what each step will change before it asks for your
 password; `install.sh` and `efi.sh` from the package do the work, so it is the same as the Terminal steps in 3.2.
 
-1. Download `IntelXe-Manager-0.1.2.zip` in Terminal, which leaves no "downloaded from the internet" mark, and unpack it
+1. Download `IntelXe-Manager-0.1.3.zip` in Terminal, which leaves no "downloaded from the internet" mark, and unpack it
    into your Applications folder:
 
    ```sh
    cd ~/Downloads
-   curl -LO https://github.com/yusufklncc/intel-gpu-macos-driver/releases/download/v0.1.2/IntelXe-Manager-0.1.2.zip
-   mkdir -p ~/Applications && ditto -x -k IntelXe-Manager-0.1.2.zip ~/Applications
+   curl -LO https://github.com/yusufklncc/intel-gpu-macos-driver/releases/download/v0.1.3/IntelXe-Manager-0.1.3.zip
+   mkdir -p ~/Applications && ditto -x -k IntelXe-Manager-0.1.3.zip ~/Applications
    open ~/Applications/"IntelXe Manager.app"
    ```
 
@@ -139,7 +139,7 @@ password; `install.sh` and `efi.sh` from the package do the work, so it is the s
    run `xattr -dr com.apple.quarantine ~/Applications/"IntelXe Manager.app"`, or open it once and allow it under System
    Settings > Privacy & Security (*Open Anyway*).
 2. **System** shows what the driver needs (macOS, SIP, the AMFI boot-arg, the card) and what is installed.
-3. **Driver:** *Download v0.1.2* fetches the package for your macOS and compares it with the release's checksum list.
+3. **Driver:** *Download v0.1.3* fetches the package for your macOS and compares it with the release's checksum list.
    The EFI page takes its files from this package too.
 4. Stage 2 not done yet? The install needs it (it refuses to run without relaxed SIP and the AMFI boot-arg): on
    **EFI (OpenCore)** choose the EFI partition OpenCore booted from (or *Use an EFI folder…*), press *Change these
@@ -161,9 +161,9 @@ repeated with the app.
 
    ```sh
    cd ~/Downloads
-   curl -LO https://github.com/yusufklncc/intel-gpu-macos-driver/releases/download/v0.1.2/intel-gpu-macos-driver-0.1.2-tahoe.zip
-   ditto -x -k intel-gpu-macos-driver-0.1.2-tahoe.zip .
-   cd intel-gpu-macos-driver-0.1.2-tahoe
+   curl -LO https://github.com/yusufklncc/intel-gpu-macos-driver/releases/download/v0.1.3/intel-gpu-macos-driver-0.1.3-tahoe.zip
+   ditto -x -k intel-gpu-macos-driver-0.1.3-tahoe.zip .
+   cd intel-gpu-macos-driver-0.1.3-tahoe
    ```
 
    Downloaded with a browser instead? Unpack it with a double click, open Terminal in the folder and run
@@ -200,7 +200,7 @@ sudo ./ssv-install.sh --apply
 
 ## 4. IntelXe.kext and SSDT-ARCOFF (the EFI)
 
-Take the files from `intel-gpu-macos-driver-0.1.2-efi.zip` (the macOS package has the same files under `EFI/OC/`).
+Take the files from `intel-gpu-macos-driver-0.1.3-efi.zip` (the macOS package has the same files under `EFI/OC/`).
 Mount the EFI partition as in stage 2; on the PC itself, `sudo diskutil mount disk0s1` with your partition.
 
 On the PC itself, `efi.sh` in the macOS package does steps 1 to 3 (and stage 2's settings) for you: it finds the EFI
@@ -250,9 +250,9 @@ Terminal:
 
 ```sh
 cd ~/Downloads
-curl -LO https://github.com/yusufklncc/intel-gpu-macos-driver/releases/download/v0.1.2/intel-gpu-macos-driver-0.1.2-zink-gl.zip
-ditto -x -k intel-gpu-macos-driver-0.1.2-zink-gl.zip .
-cd intel-gpu-macos-driver-0.1.2-zink-gl
+curl -LO https://github.com/yusufklncc/intel-gpu-macos-driver/releases/download/v0.1.3/intel-gpu-macos-driver-0.1.3-zink-gl.zip
+ditto -x -k intel-gpu-macos-driver-0.1.3-zink-gl.zip .
+cd intel-gpu-macos-driver-0.1.3-zink-gl
 sudo ./install.sh                # /Library/IntelXe/GL and the Vulkan loader; backs up what it replaces
 ./install.sh --test              # a GL context through zink on the B580
 sudo ./install.sh --global on    # every LWJGL 3 application started afterwards uses zink
@@ -264,6 +264,26 @@ zink, 214–218 on the same PC under Windows with Intel's driver; without a shad
 zink against 700–1000 on Windows. A launcher that macOS reopens by itself at login can start before the setting is in
 place and then runs on Apple's OpenGL: quit it and start it again (Java prints "Picked up JAVA_TOOL_OPTIONS" when zink
 is on).
+
+## Optional: HiDPI modes (display scaling)
+
+Like display scaling on Windows: System Settings > Displays then offers "looks like" sizes (Larger Text ... More Space)
+that draw text and windows sharp at a larger size. On a 2560x1440 monitor they are 2048x1152, 1920x1080, 1706x960,
+1600x900 and 1280x720. They run at the monitor's full refresh rate (180 Hz and Variable on the test monitor): macOS draws
+at twice the size and the GPU scales each frame down to the panel. They are off unless turned on. The IntelXe Manager
+app's **Display** page turns them on and off, or in Terminal, in the package folder:
+
+```sh
+./hidpi.sh               # what is set now
+sudo ./hidpi.sh --on     # NVRAM intelxefb-hidpi=1, a display override with the HiDPI sizes, DisplayResolutionEnabled
+sudo ./hidpi.sh --off    # takes back only what --on wrote
+```
+
+Restart after either, then choose a size in System Settings > Displays. The override goes where other HiDPI tools put
+theirs (`/Library/Displays/Contents/Resources/Overrides`); if your monitor already has one from another tool
+(one-key-hidpi and the like), `hidpi.sh` leaves it alone and stops: remove it first. If a size leaves the screen black,
+turn the modes off over SSH with `sudo ./hidpi.sh --off` and restart; **Reset NVRAM** in the OpenCore picker turns them
+off as well (the switch is the NVRAM variable).
 
 ## If it does not come up
 
@@ -299,9 +319,14 @@ is on).
 
 ## Upgrading from an earlier build
 
+**From 0.1.2:** only `IntelXeFB.kext` and `NMXAGDC.kext` are new (refresh rates above the firmware's, Adaptive-Sync
+modes on by default, the optional HiDPI modes). Install the package (the app: *Download v0.1.3*, then *Install this
+package*; or `sudo ./install.sh --apply`) and restart. `IntelXe.kext` in the EFI, the Metal driver and the
+system-volume copy are those of 0.1.2 and stay as they are.
+
 **From 0.1.0 or 0.1.1:** every kext, the Metal driver and the video libraries are new, **`IntelXe.kext` in the EFI
 too** (it closes a security hole: an unprivileged process could get writable GPU mappings of pages it may only read).
-Install the package (the app: *Download v0.1.2*, then *Install this package*; or `sudo ./install.sh --apply`), then
+Install the package (the app: *Download v0.1.3*, then *Install this package*; or `sudo ./install.sh --apply`), then
 replace `IntelXe.kext` in the EFI before you reboot (the app's EFI page or `sudo ./efi.sh --apply` on macOS,
 `IntelXe-EFI.ps1` on Windows, or copy it by hand; its `config.plist` entry stays as it is).
 `--apply` also installs the boot guard's LaunchDaemon and replaces the allow-list of 0.1.0 and 0.1.1 (with or without
@@ -353,6 +378,7 @@ NVRAM settings and sysctls have only the new names: the variable `b580fb-vrr-mod
 | (made by `install.sh`) | `/Library/LaunchDaemons/io.github.yusufklncc.intelxe.guard.plist`: clears the boot guard once a boot has run for a minute |
 | `system-volume/` | optional: the copy of the Metal driver on the system volume (Safari on the GPU, 3.3) |
 | `efi.sh` | optional, on macOS: stages 2 and 4 in the EFI OpenCore booted from, with a backup and an undo |
+| `hidpi.sh` | optional: HiDPI modes for the monitor (display scaling), on and off |
 | `SHA256SUMS`, `sigcheck` | the checks `install.sh` runs |
 | `SOURCES.md`, `LICENSES/` | which source and script built each binary; the licence texts |
 

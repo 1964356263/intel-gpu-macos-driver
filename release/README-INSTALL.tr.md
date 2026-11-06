@@ -1,4 +1,4 @@
-# intel-gpu-macos-driver 0.1.2: macOS 26 Tahoe için kurulum (Intel Arc B580)
+# intel-gpu-macos-driver 0.1.3: macOS 26 Tahoe için kurulum (Intel Arc B580)
 
 [English](README-INSTALL.md)
 
@@ -29,14 +29,14 @@ Bu sürücünün eski bir sürümünü kullanıyorsanız doğrudan [Yükseltme](
   monitör**. Dahili GPU gerekmiyor: test makinesinde macOS yalnızca B580'le kuruldu.
 - USB belleği hazırlamak ve EFI'yi düzenlemek için Windows, Linux ya da macOS çalışan herhangi bir bilgisayar. Mac şart
   değil.
-- [Sürüm sayfasından](https://github.com/yusufklncc/intel-gpu-macos-driver/releases/tag/v0.1.2) dosyalar:
+- [Sürüm sayfasından](https://github.com/yusufklncc/intel-gpu-macos-driver/releases/tag/v0.1.3) dosyalar:
 
   | Dosya | İçinde ne var | Nerede açılmalı |
   |---|---|---|
-  | `intel-gpu-macos-driver-0.1.2-efi.zip` | OpenCore parçaları: `IntelXe.kext`, `SSDT-ARCOFF.aml` ve kaynağı; Windows'ta 2. ve 4. aşamaları yapan `IntelXe-EFI.ps1` | herhangi bir sistemde |
-  | `IntelXe-Manager-0.1.2.zip` | IntelXe Manager uygulaması: 3. ve 4. aşamalar (ve sonraki güncellemeler) Terminal yerine düğmelerle; sonraki dosyayı kendisi indirir | bilgisayardaki macOS'ta |
-  | `intel-gpu-macos-driver-0.1.2-tahoe.zip` | geri kalan her şey, `install.sh` ve `efi.sh` ile | **bilgisayardaki macOS'ta** (3. aşama) |
-  | `intel-gpu-macos-driver-0.1.2-zink-gl.zip` | isteğe bağlı: LWJGL oyunları için zink ile OpenGL | bilgisayardaki macOS'ta, 4. aşamadan sonra |
+  | `intel-gpu-macos-driver-0.1.3-efi.zip` | OpenCore parçaları: `IntelXe.kext`, `SSDT-ARCOFF.aml` ve kaynağı; Windows'ta 2. ve 4. aşamaları yapan `IntelXe-EFI.ps1` | herhangi bir sistemde |
+  | `IntelXe-Manager-0.1.3.zip` | IntelXe Manager uygulaması: 3. ve 4. aşamalar (ve sonraki güncellemeler) Terminal yerine düğmelerle; sonraki dosyayı kendisi indirir | bilgisayardaki macOS'ta |
+  | `intel-gpu-macos-driver-0.1.3-tahoe.zip` | geri kalan her şey, `install.sh` ve `efi.sh` ile | **bilgisayardaki macOS'ta** (3. aşama) |
+  | `intel-gpu-macos-driver-0.1.3-zink-gl.zip` | isteğe bağlı: LWJGL oyunları için zink ile OpenGL | bilgisayardaki macOS'ta, 4. aşamadan sonra |
 
   macOS dosyalarını yalnızca macOS'ta açın. Windows ve çoğu Linux arşiv aracı, çalıştırma izinlerini ve kurulum betiğinin
   kontrol ettiği kod imzalarını bozuyor. Sürüm sayfasındaki `.sha256` dosyası sağlama toplamlarını listeliyor.
@@ -133,13 +133,13 @@ macOS'u yeniden başlatın. Ekran hâlâ UEFI çıktısında çalışır.
 Uygulama 3. ve 4. aşamaları bilgisayarda düğmelerle yapar ve her adımın neyi değiştireceğini parolanızı sormadan önce
 gösterir. İşi paketteki `install.sh` ve `efi.sh` yapıyor; yani 3.2'deki Terminal adımlarıyla aynı şey.
 
-1. `IntelXe-Manager-0.1.2.zip`'i Terminal'den indirin ("internetten indirildi" işareti bırakmaz) ve Uygulamalar
+1. `IntelXe-Manager-0.1.3.zip`'i Terminal'den indirin ("internetten indirildi" işareti bırakmaz) ve Uygulamalar
    klasörünüze açın:
 
    ```sh
    cd ~/Downloads
-   curl -LO https://github.com/yusufklncc/intel-gpu-macos-driver/releases/download/v0.1.2/IntelXe-Manager-0.1.2.zip
-   mkdir -p ~/Applications && ditto -x -k IntelXe-Manager-0.1.2.zip ~/Applications
+   curl -LO https://github.com/yusufklncc/intel-gpu-macos-driver/releases/download/v0.1.3/IntelXe-Manager-0.1.3.zip
+   mkdir -p ~/Applications && ditto -x -k IntelXe-Manager-0.1.3.zip ~/Applications
    open ~/Applications/"IntelXe Manager.app"
    ```
 
@@ -147,7 +147,7 @@ gösterir. İşi paketteki `install.sh` ve `efi.sh` yapıyor; yani 3.2'deki Term
    zaman `xattr -dr com.apple.quarantine ~/Applications/"IntelXe Manager.app"` çalıştırın ya da bir kez açmayı deneyip
    Sistem Ayarları > Gizlilik ve Güvenlik'te izin verin (*Yine de Aç*).
 2. **Sistem** sürücünün neye ihtiyaç duyduğunu (macOS, SIP, AMFI boot-arg'ı, kart) ve neyin kurulu olduğunu gösterir.
-3. **Sürücü:** *v0.1.2 sürümünü indir* macOS'unuza uygun paketi indirir ve sürümün sağlama listesiyle karşılaştırır. EFI
+3. **Sürücü:** *v0.1.3 sürümünü indir* macOS'unuza uygun paketi indirir ve sürümün sağlama listesiyle karşılaştırır. EFI
    sayfası da dosyalarını bu paketten alır.
 4. 2. aşamayı henüz yapmadınız mı? Kurulum ona ihtiyaç duyuyor (SIP gevşetilmeden ve AMFI boot-arg'ı olmadan çalışmayı
    reddediyor): **EFI (OpenCore)** sayfasında OpenCore'un açıldığı EFI bölümünü seçin (ya da *Bir EFI klasörü kullan…*),
@@ -170,9 +170,9 @@ da Türkçe; buradaki adlar Türkçe arayüzdeki adlar.
 
    ```sh
    cd ~/Downloads
-   curl -LO https://github.com/yusufklncc/intel-gpu-macos-driver/releases/download/v0.1.2/intel-gpu-macos-driver-0.1.2-tahoe.zip
-   ditto -x -k intel-gpu-macos-driver-0.1.2-tahoe.zip .
-   cd intel-gpu-macos-driver-0.1.2-tahoe
+   curl -LO https://github.com/yusufklncc/intel-gpu-macos-driver/releases/download/v0.1.3/intel-gpu-macos-driver-0.1.3-tahoe.zip
+   ditto -x -k intel-gpu-macos-driver-0.1.3-tahoe.zip .
+   cd intel-gpu-macos-driver-0.1.3-tahoe
    ```
 
    Tarayıcıyla indirdiyseniz çift tıklayıp açın, klasörde Terminal açın ve önce `xattr -dr com.apple.quarantine .` çalıştırın.
@@ -209,7 +209,7 @@ sudo ./ssv-install.sh --apply
 
 ## 4. IntelXe.kext ve SSDT-ARCOFF (EFI)
 
-Dosyaları `intel-gpu-macos-driver-0.1.2-efi.zip`'ten alın (macOS paketinde de `EFI/OC/` altında aynıları var). EFI bölümünü
+Dosyaları `intel-gpu-macos-driver-0.1.3-efi.zip`'ten alın (macOS paketinde de `EFI/OC/` altında aynıları var). EFI bölümünü
 2. aşamadaki gibi bağlayın; kurulacak bilgisayarda kendi bölümünüzle `sudo diskutil mount disk0s1`.
 
 Kurulacak bilgisayarın kendisinde, macOS paketindeki `efi.sh` 1-3. maddeleri (ve 2. aşamanın ayarlarını) sizin yerinize
@@ -258,9 +258,9 @@ açar; ya da Terminal'de:
 
 ```sh
 cd ~/Downloads
-curl -LO https://github.com/yusufklncc/intel-gpu-macos-driver/releases/download/v0.1.2/intel-gpu-macos-driver-0.1.2-zink-gl.zip
-ditto -x -k intel-gpu-macos-driver-0.1.2-zink-gl.zip .
-cd intel-gpu-macos-driver-0.1.2-zink-gl
+curl -LO https://github.com/yusufklncc/intel-gpu-macos-driver/releases/download/v0.1.3/intel-gpu-macos-driver-0.1.3-zink-gl.zip
+ditto -x -k intel-gpu-macos-driver-0.1.3-zink-gl.zip .
+cd intel-gpu-macos-driver-0.1.3-zink-gl
 sudo ./install.sh                # /Library/IntelXe/GL ve Vulkan yükleyicisi; değiştirdiğini yedekler
 ./install.sh --test              # B580'de zink üzerinden bir GL bağlamı
 sudo ./install.sh --global on    # bundan sonra açılan bütün LWJGL 3 uygulamaları zink kullanır
@@ -272,6 +272,26 @@ Windows'ta Intel'in sürücüsüyle 214–218; shader paketi olmadan zink'te
 1400–1500 fps, Windows'ta 700–1000. macOS'un girişte kendiliğinden
 yeniden açtığı bir başlatıcı, ayar yerine oturmadan başlayıp Apple'ın OpenGL'inde kalabilir: kapatıp yeniden açın
 (zink açıkken Java "Picked up JAVA_TOOL_OPTIONS" yazar).
+
+## İsteğe bağlı: HiDPI modları (ekran ölçeklendirme)
+
+Windows'taki ekran ölçeklendirmesi gibi: Sistem Ayarları > Ekranlar, yazıyı ve pencereleri daha büyük ama keskin çizen
+"gibi görünür" boyutlar sunar (Daha Büyük Metin ... Daha Fazla Alan). 2560x1440 bir monitörde bunlar 2048x1152,
+1920x1080, 1706x960, 1600x900 ve 1280x720. Monitörün tam yenileme hızında çalışırlar (test monitöründe 180 Hz ve
+Değişken): macOS iki katı boyutta çizer, GPU her kareyi panelin boyutuna küçültür. Açılmadıkça kapalıdırlar. IntelXe
+Manager'ın **Ekran** sayfası açıp kapatır; ya da Terminal'de, paket klasöründe:
+
+```sh
+./hidpi.sh               # şu an ne ayarlı
+sudo ./hidpi.sh --on     # NVRAM intelxefb-hidpi=1, HiDPI boyutlarıyla bir ekran ayarı, DisplayResolutionEnabled
+sudo ./hidpi.sh --off    # yalnızca --on'un yazdıklarını geri alır
+```
+
+İkisinden sonra da yeniden başlatın, sonra Sistem Ayarları > Ekranlar'dan bir boyut seçin. Ekran ayarı, diğer HiDPI
+araçlarının kullandığı yere yazılır (`/Library/Displays/Contents/Resources/Overrides`); monitörünüz için başka bir
+aracın (one-key-hidpi vb.) yazdığı bir ayar zaten varsa `hidpi.sh` ona dokunmaz ve durur: önce onu kaldırın. Bir boyut
+ekranı siyah bırakırsa SSH'tan `sudo ./hidpi.sh --off` çalıştırıp yeniden başlatın; OpenCore menüsündeki **Reset NVRAM**
+de modları kapatır (anahtar NVRAM değişkenidir).
 
 ## Açılmazsa
 
@@ -304,9 +324,14 @@ yeniden açtığı bir başlatıcı, ayar yerine oturmadan başlayıp Apple'ın 
 
 ## Yükseltme
 
+**0.1.2'den:** Yalnızca `IntelXeFB.kext` ve `NMXAGDC.kext` yeni (firmware'inkinden yüksek tazeleme hızları, varsayılan
+olarak açık Adaptive-Sync modları, isteğe bağlı HiDPI modları). Paketi kurun (uygulamada *v0.1.3 sürümünü indir*, sonra
+*Bu paketi kur*; ya da `sudo ./install.sh --apply`) ve yeniden başlatın. EFI'deki `IntelXe.kext`, Metal sürücüsü ve
+sistem diski kopyası 0.1.2'ninkiler; oldukları gibi kalırlar.
+
 **0.1.0 ya da 0.1.1'den:** Bütün kext'ler, Metal sürücüsü ve video kütüphaneleri yeni, **EFI'deki `IntelXe.kext` de**
 (bir güvenlik açığını kapatıyor: yetkisiz bir süreç yalnızca okuyabileceği sayfalara yazılabilir GPU eşlemesi
-alabiliyordu). Paketi kurun (uygulamada *v0.1.2 sürümünü indir*, sonra *Bu paketi kur*; ya da
+alabiliyordu). Paketi kurun (uygulamada *v0.1.3 sürümünü indir*, sonra *Bu paketi kur*; ya da
 `sudo ./install.sh --apply`), sonra yeniden başlatmadan önce EFI'deki `IntelXe.kext`'i değiştirin (macOS'ta uygulamanın
 EFI sayfası ya da `sudo ./efi.sh --apply`, Windows'ta `IntelXe-EFI.ps1`, ya da elle kopyalayın; `config.plist` kaydı
 olduğu gibi kalır).
@@ -332,6 +357,7 @@ kullandırır. `config.plist`'te `UEFI > Output > ReconnectGraphicsOnConnect = f
 | (`install.sh` oluşturur) | `/Library/LaunchDaemons/io.github.yusufklncc.intelxe.guard.plist`: bir açılış bir dakika çalışınca açılış korumasını temizler |
 | `system-volume/` | isteğe bağlı: Metal sürücüsünün sistem diskindeki kopyası (GPU'da Safari, 3.3) |
 | `efi.sh` | isteğe bağlı, macOS'ta: OpenCore'un açıldığı EFI'de 2. ve 4. aşamalar, yedek ve geri alma ile |
+| `hidpi.sh` | isteğe bağlı: monitör için HiDPI modları (ekran ölçeklendirme), açma ve kapama |
 | `SHA256SUMS`, `sigcheck` | `install.sh`'nin yaptığı kontroller |
 | `SOURCES.md`, `LICENSES/` | hangi kaynağın ve betiğin hangi dosyayı ürettiği; lisans metinleri |
 
