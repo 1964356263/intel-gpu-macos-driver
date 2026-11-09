@@ -62,7 +62,8 @@ check() {
     [ -n "$old" ] && warn "boot-args with their earlier names: ${old}- they still work in this release; rename them (README-INSTALL.md, Upgrading)"
     local pci loaded; pci=$(ioreg -r -c IOPCIDevice -l 2>/dev/null || true)
     if [[ "$pci" == *'"device-id" = <0be20000>'* ]]; then ok "Arc B580 (8086:e20b) on the PCI bus"
-    else bad "no Arc B580 (8086:e20b) found"; fi
+    elif [[ "$pci" == *'"device-id" = <0ce20000>'* ]]; then warn "Arc B570 (8086:e20c) on the PCI bus: unverified, see the B570 patch"
+    else bad "no Arc B580/B570 (8086:e20b/e20c) found"; fi
     loaded=$(kmutil showloaded 2>/dev/null || true)
     if [[ "$loaded" == *"io.github.yusufklncc.IntelXe ("* ]]; then
         ok "IntelXe.kext is loaded (from OpenCore)"

@@ -842,7 +842,7 @@ int IntelXe::waitDeviceReady() {
 	uint32_t id = 0;
 	for (;;) {
 		id = pci->configRead32(kIOPCIConfigVendorID);
-		if (id == 0xe20b8086u) break;
+		if (id == 0xe20b8086u || id == 0xe20c8086u) break;
 		if (elapsedMs() >= limitMs) { say("device not ready: config space reads 0x%08x after %llu ms\n", id, elapsedMs()); return ENXIO; }
 		IOSleep(20);
 	}

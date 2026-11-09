@@ -93,7 +93,7 @@ def main():
   run(['xcrun','strip','-S',exe])
   info=dict(CFBundleIdentifier=ident,CFBundleExecutable=name,CFBundleName=name,CFBundlePackageType='KEXT',CFBundleVersion=VER,
    CFBundleShortVersionString=VER,OSBundleCompatibleVersion='0.1.0',OSBundleLibraries=libs,
-   IOKitPersonalities={name:dict(CFBundleIdentifier=ident,IOClass=ioclass or name,IOProviderClass='IOPCIDevice',IOPCIMatch='0xe20b8086',**personality),
+   IOKitPersonalities={name:dict(CFBundleIdentifier=ident,IOClass=ioclass or name,IOProviderClass='IOPCIDevice',IOPCIMatch='0xe20b8086 0xe20c8086',**personality),
     **{k:dict(CFBundleIdentifier=ident,**v) for k,v in more.items()}},**extra)
   (bundle/'Info.plist').write_bytes(plistlib.dumps(info))
   syms=subprocess.check_output(['xcrun','nm','-u',str(exe)],text=True)
